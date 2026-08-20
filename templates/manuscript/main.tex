@@ -1,0 +1,22 @@
+\documentclass[12pt]{article}
+
+\input{preamble}
+
+% Transparent in clean manuscripts; active only in marked builds.
+\providecommand{\review}[2]{#2}
+\providecommand{\selfadd}[1]{#1}
+
+\input{references/author_metadata.tex}
+
+\title{\ManuscriptTitle}
+\date{}
+
+\begin{document}
+\maketitle
+
+%%SECTION_INPUTS%%
+
+\bibliographystyle{%%BIBLIOGRAPHY_STYLE%%}
+\bibliography{%%BIBLIOGRAPHY_PATH%%}
+
+\end{document}

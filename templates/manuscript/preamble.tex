@@ -1,0 +1,40 @@
+% Core layout and engine compatibility.
+\usepackage[a4paper,margin=25mm]{geometry}
+\usepackage{iftex}
+\usepackage{xcolor}
+
+% Mathematics.
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+
+% Chemistry and SI units.
+\usepackage[version=4]{mhchem}
+\usepackage{siunitx}
+
+% Tables and figures.
+\usepackage{booktabs}
+\usepackage{threeparttable}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{subcaption}
+
+% Algorithms.
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% Publisher-selected reference support.
+%%BIBLIOGRAPHY_PACKAGE%%
+
+% Font and language support. CJK is loaded only for Chinese projects.
+\ifXeTeX
+  \usepackage{fontspec}
+  %%CJK_PACKAGE%%
+\else
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+\fi
+
+% All manuscript PDFs use continuous line numbers.
+\usepackage{lineno}
+\AtBeginDocument{\linenumbers}

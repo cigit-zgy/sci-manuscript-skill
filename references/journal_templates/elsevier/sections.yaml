@@ -1,0 +1,22 @@
+bibliography:
+  package: \usepackage[numbers,sort&compress]{natbib}
+  style: unsrtnat
+
+sections:
+  - file: 00_abstract.tex
+    source: 00_abstract.tex
+  - file: 01_introduction.tex
+    source: 01_introduction.tex
+    title: Introduction
+  - file: 02_methods.tex
+    source: 02_methods.tex
+    title: Materials and Methods
+  - file: 03_results.tex
+    source: 03_results.tex
+    title: Results
+  - file: 04_discussion.tex
+    source: 04_discussion.tex
+    title: Discussion
+  - file: 05_conclusion.tex
+    source: 05_conclusion.tex
+    title: Conclusions
