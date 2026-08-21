@@ -1,0 +1,22 @@
+revision:
+  default_scope: restricted_patch
+
+forbidden_operations:
+  - scientific_content_change
+  - paragraph_rewrite
+  - section_restructure
+  - novelty_change
+  - interpretation_change
+  - unsupported_addition
+
+allowed_operations:
+  - explicit_text_replacement
+  - explicit_text_insertion
+  - typo_fix
+  - formatting_fix
+
+require_confirmation:
+  - language_rewrite
+  - paragraph_reorganization
+  - new_reference
+  - new_claim

@@ -24,7 +24,7 @@ Keep scientific content and reviewer judgment with the user.
 | --- | --- | --- |
 | New manuscript | Read [environment.md](references/environment.md) when dependency state is unknown; read the initialization section of [workflow.md](references/workflow.md) | Run `doctor`, collect user data, then run `init` and verify the first PDF |
 | Build current manuscript | No reference is normally needed | Run the project-root `python run.py build`; do not initialize or create a revision |
-| Start a revision | Read the version and response sections of [workflow.md](references/workflow.md) | Determine the current highest round and run `revision` once |
+| Start or edit a revision | Read [revision_contract.yaml](references/revision_contract.yaml) and the version and response sections of [workflow.md](references/workflow.md) | Enforce restricted-patch scope, determine the current highest round, and run `revision` once when a new round is required |
 | Prepare submission | Read the submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for an initial version or `all` for a completed revision |
 | Configure bibliography | Read the bibliography section of [workflow.md](references/workflow.md) | Prefer Better BibTeX Automatic Export; run `setup-zotero` to prepare guidance, `check` to validate keys, and `sync-bib` only as a manual fallback |
 | Diagnose environment | Read [environment.md](references/environment.md) | Run `doctor`; report blockers without changing the environment |
@@ -43,6 +43,13 @@ publisher asset only when adapting or diagnosing that exact template.
 - Do not invent manuscript prose, results, citations, author identities, reviewer
   responses, or scientific claims. Workflow automation does not authorize content
   changes.
+- Revision mode is a controlled patch operation. Apply only text supplied or
+  explicitly requested by the user, or a concrete change directly required by a
+  reviewer comment. Do not independently rewrite paragraphs, restructure
+  sections, alter claims or interpretation, optimize narrative, or add concepts.
+  Fix typos only when the user permits it. Stop and ask before any expansion of
+  scope or any operation listed under `require_confirmation` in the revision
+  contract.
 - Before installing, upgrading, activating, or otherwise changing a dependency,
   show the missing requirement and obtain approval for the exact environment.
 - Treat authors, bibliography, manuscript sections, figures, tables, and reviewer

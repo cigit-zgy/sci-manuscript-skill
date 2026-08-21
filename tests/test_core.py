@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import subprocess
 import sys
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -367,7 +371,66 @@ class InterfaceTest(unittest.TestCase):
         style = (ROOT / "assets" / "revision_style.tex").read_text(encoding="utf-8")
         self.assertNotIn("ReviewLocationFile", style)
         self.assertNotIn("DIFadd", style)
+        self.assertNotIn("\\uwave", style)
+        self.assertNotIn("\\sout", style)
+        self.assertIn("% Equation handling", style)
+        self.assertIn("% Long text handling", style)
+        self.assertIn("\\RevisionAddedText", style)
+        self.assertIn("\\RevisionDeletedText", style)
         self.assertIn("ReviewLocationFile", diff.REVISION_RUNTIME)
+
+    def test_revision_contract_is_restricted_and_routed(self) -> None:
+        contract_path = ROOT / "references" / "revision_contract.yaml"
+        contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertEqual(
+            contract["revision"]["default_scope"],
+            "restricted_patch",
+        )
+        self.assertIn("scientific_content_change", contract["forbidden_operations"])
+        self.assertIn("new_claim", contract["require_confirmation"])
+        self.assertIn("references/revision_contract.yaml", skill)
+
+    def test_latexdiff_uses_layout_safe_options(self) -> None:
+        self.assertIn("--math-markup=whole", diff.LATEXDIFF_SAFE_OPTIONS)
+        self.assertIn("--graphics-markup=none", diff.LATEXDIFF_SAFE_OPTIONS)
+        self.assertIn(
+            "--config=MAXCHANGESLETTER=0",
+            diff.LATEXDIFF_SAFE_OPTIONS,
+        )
+
+    def test_generated_file_report_lists_complete_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp)
+            clean = project / "revision_1" / "output" / "manuscript_clean.pdf"
+            cover = (
+                project / "revision_1" / "submission" / "package" / "cover_letter.pdf"
+            )
+            package = cover.parent
+            clean.parent.mkdir(parents=True)
+            package.mkdir(parents=True)
+            clean.touch()
+            cover.touch()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                lifecycle_run._report_generated(
+                    "Submission completed",
+                    "revision_1",
+                    project,
+                    [
+                        ("Clean manuscript", clean),
+                        ("Cover letter", cover),
+                        ("Submission package", package),
+                    ],
+                )
+        report = output.getvalue()
+        self.assertIn("Generated files:", report)
+        self.assertIn("revision_1/output/manuscript_clean.pdf", report)
+        self.assertIn(
+            "revision_1/submission/package/cover_letter.pdf",
+            report,
+        )
+        self.assertIn("revision_1/submission/package/", report)
 
     def test_config_directory_is_absent(self) -> None:
         self.assertFalse((ROOT / "config").exists())

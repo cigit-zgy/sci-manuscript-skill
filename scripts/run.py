@@ -276,10 +276,11 @@ def _report_generated(
     artifacts: list[tuple[str, Path]],
 ) -> None:
     print(f"{heading}: {version}")
-    print("\nGenerated:")
+    print("\nGenerated files:")
     for label, path in artifacts:
         suffix = "/" if path.is_dir() else ""
-        print(f"  {label}: {_relative(project, path)}{suffix}")
+        print(f"\n{label}:")
+        print(f"  {_relative(project, path)}{suffix}")
 
 
 def _build_lifecycle(
@@ -415,6 +416,19 @@ def _prepare_submission(
                 ("Response letter", response_pdf),
             ]
         )
+    package_labels = {
+        "manuscript.pdf": "Packaged manuscript",
+        "marked_manuscript.pdf": "Packaged marked manuscript",
+        "response_letter.pdf": "Packaged response letter",
+        "cover_letter.pdf": "Cover letter",
+        "highlights.pdf": "Highlights",
+        "graphical_abstract.pdf": "Graphical abstract",
+        "checklist.md": "Submission checklist",
+    }
+    for name, label in package_labels.items():
+        artifact = package / name
+        if artifact.exists():
+            generated.append((label, artifact))
     generated.append(("Submission package", package))
     return generated
 

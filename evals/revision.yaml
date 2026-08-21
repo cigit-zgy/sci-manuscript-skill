@@ -5,6 +5,8 @@ expected_behavior:
   - Preserve editable manuscript and submission state.
   - Create current-round response infrastructure.
   - Keep the only references directory at the project root.
+  - Treat any later manuscript edit as a restricted patch sourced from an explicit user instruction or concrete reviewer request.
 must_not:
   - Compare initial_submission directly with revision_2.
   - Copy authors.yaml, references.bib, revision_style.tex, or journal_templates into a revision.
+  - Rewrite paragraphs, restructure sections, alter novelty or interpretation, or add unsupported scientific content.
