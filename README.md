@@ -460,6 +460,13 @@ templates retain their own licenses; see `THIRD_PARTY_NOTICES.md`.
 
 ## 12. Revision workflow
 
+The revision boundary is a machine-checked contract, not agent-facing prose
+only. `references/revision_contract.yaml` in this repository and the identical
+packaged resource `src/sci_manuscript/resources/revision_contract.yaml` declare
+the default permission `no_content_edit`; the runtime loads and validates the
+packaged copy every time a revision is started, so revision infrastructure
+creation fails fast if the installed package ever shipped a weakened contract.
+
 The ancestry is explicit and gap-free:
 
 ```mermaid

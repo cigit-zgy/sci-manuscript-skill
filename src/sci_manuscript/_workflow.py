@@ -24,7 +24,7 @@ from ._runtime.metadata import (
     load_author_library,
     render_manuscript,
 )
-from ._runtime.resources import read_resource_text, resource
+from ._runtime.resources import load_revision_contract, read_resource_text, resource
 from ._runtime.response import build_response, init_response, parse_reviews
 from ._runtime.workspace import (
     ProjectConfig,
@@ -236,6 +236,7 @@ def start_revision(
     keep_temp: bool,
 ) -> RevisionResult:
     """Create only the next adjacent workspace and response infrastructure."""
+    load_revision_contract()  # enforce the packaged no-content-edit boundary
     root = normalize_project(project)
     _require_project(root)
     latest = load_project(root)

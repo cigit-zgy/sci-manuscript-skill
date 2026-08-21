@@ -16,6 +16,7 @@ import yaml
 from sci_manuscript import Artifact
 from sci_manuscript import cli as lifecycle_run
 from sci_manuscript._runtime import diff, metadata, response, workspace
+from sci_manuscript._runtime.resources import load_revision_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = ROOT / "src" / "sci_manuscript" / "resources"
@@ -380,7 +381,10 @@ class InterfaceTest(unittest.TestCase):
 
     def test_revision_contract_is_restricted_and_routed(self) -> None:
         contract_path = ROOT / "references" / "revision_contract.yaml"
+        packaged_path = RESOURCES / "revision_contract.yaml"
         contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+        packaged = yaml.safe_load(packaged_path.read_text(encoding="utf-8"))
+        self.assertEqual(contract, packaged)
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(
             contract["revision"]["default_permission"],
@@ -391,6 +395,32 @@ class InterfaceTest(unittest.TestCase):
         self.assertIn("Agent MUST NOT autonomously modify", skill)
         self.assertNotIn("concrete change directly required", skill)
         self.assertIn("references/revision_contract.yaml", skill)
+
+    def test_revision_contract_is_enforced_by_the_runtime(self) -> None:
+        loaded = load_revision_contract()
+        revision = loaded["revision"]
+        assert isinstance(revision, dict)
+        self.assertEqual(revision["default_permission"], "no_content_edit")
+        allowed = loaded["allowed_operations"]
+        assert isinstance(allowed, list)
+        self.assertIn("user_supplied_exact_text_replacement", allowed)
+        forbidden = loaded["forbidden_operations"]
+        assert isinstance(forbidden, list)
+        for operation in (
+            "scientific_content_change",
+            "paragraph_rewrite",
+            "section_restructure",
+            "novelty_change",
+            "interpretation_change",
+            "unsupported_addition",
+        ):
+            self.assertIn(operation, forbidden)
+        self.assertIn(
+            "load_revision_contract",
+            (ROOT / "src" / "sci_manuscript" / "_workflow.py").read_text(
+                encoding="utf-8"
+            ),
+        )
 
     def test_latexdiff_uses_layout_safe_options(self) -> None:
         self.assertIn("--math-markup=whole", diff.LATEXDIFF_SAFE_OPTIONS)

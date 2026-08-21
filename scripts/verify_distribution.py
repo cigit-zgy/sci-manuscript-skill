@@ -20,6 +20,7 @@ REQUIRED = frozenset(
         "sci_manuscript/_runtime/metadata.py",
         "sci_manuscript/_runtime/response.py",
         "sci_manuscript/resources/authors.yaml",
+        "sci_manuscript/resources/revision_contract.yaml",
         "sci_manuscript/resources/revision_style.tex",
         "sci_manuscript/resources/project_run.py",
         "sci_manuscript/resources/manuscript/preamble.tex",
@@ -67,9 +68,7 @@ def verify_wheel(path: Path) -> None:
                 "Wheel contains forbidden files:\n  " + "\n  ".join(forbidden)
             )
         notices = [
-            name
-            for name in names
-            if name.endswith("licenses/THIRD_PARTY_NOTICES.md")
+            name for name in names if name.endswith("licenses/THIRD_PARTY_NOTICES.md")
         ]
         if len(notices) != 1:
             raise RuntimeError("Wheel must contain exactly one third-party notice.")

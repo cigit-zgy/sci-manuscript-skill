@@ -6,7 +6,21 @@ from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
+import yaml
+
 RESOURCE_PACKAGE = "sci_manuscript.resources"
+
+REVISION_CONTRACT_FILE = "revision_contract.yaml"
+REVISION_FORBIDDEN_OPERATIONS = frozenset(
+    {
+        "scientific_content_change",
+        "paragraph_rewrite",
+        "section_restructure",
+        "novelty_change",
+        "interpretation_change",
+        "unsupported_addition",
+    }
+)
 
 
 def resource(*parts: str) -> Traversable:
@@ -23,6 +37,37 @@ def read_resource_text(*parts: str) -> str:
     if not item.is_file():
         raise FileNotFoundError("Package resource is missing: " + "/".join(parts))
     return item.read_text(encoding="utf-8")
+
+
+def load_revision_contract() -> dict[str, object]:
+    """Load and validate the packaged revision content-boundary contract.
+
+    Revision operations fail fast when the installed package ships a contract
+    that no longer declares the no-content-edit boundary, so the documented
+    rule in ``references/revision_contract.yaml`` is enforced by the runtime
+    instead of remaining agent-facing prose only.
+    """
+    data = yaml.safe_load(read_resource_text(REVISION_CONTRACT_FILE))
+    if not isinstance(data, dict):
+        raise RuntimeError("The packaged revision contract must be a mapping.")
+    revision = data.get("revision")
+    if (
+        not isinstance(revision, dict)
+        or revision.get("default_permission") != "no_content_edit"
+    ):
+        raise RuntimeError(
+            "The packaged revision contract must default to no_content_edit."
+        )
+    forbidden = data.get("forbidden_operations")
+    if (
+        not isinstance(forbidden, list)
+        or not set(forbidden) >= REVISION_FORBIDDEN_OPERATIONS
+    ):
+        raise RuntimeError(
+            "The packaged revision contract must forbid every scientific "
+            "content-change operation."
+        )
+    return data
 
 
 def copy_resource_file(parts: tuple[str, ...], target: Path) -> None:
