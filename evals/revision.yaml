@@ -1,0 +1,10 @@
+name: revision_is_adjacent_and_shared
+prompt: Initial submission and revision 1 exist. Start revision 2.
+expected_behavior:
+  - Create revision_2 only from revision_1.
+  - Preserve editable manuscript and submission state.
+  - Create current-round response infrastructure.
+  - Keep the only references directory at the project root.
+must_not:
+  - Compare initial_submission directly with revision_2.
+  - Copy authors.yaml, references.bib, revision_style.tex, or journal_templates into a revision.

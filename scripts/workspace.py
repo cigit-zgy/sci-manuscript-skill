@@ -1,4 +1,4 @@
-"""Project structure, revision ancestry, bibliography sync, and temporary runs."""
+"""Project structure, revision ancestry, bibliography checks, and temporary runs."""
 
 from __future__ import annotations
 
@@ -26,6 +26,15 @@ ASSETS = SKILL_ROOT / "assets"
 ROUND_PATTERN = re.compile(r"^r(0|[1-9]\d*)$")
 REVISION_DIRECTORY_PATTERN = re.compile(r"^revision_([1-9]\d*)$")
 ENTRYPOINT_MARKER = "%%SCI_MANUSCRIPT_SKILL_ROOT%%"
+CITATION_PATTERN = re.compile(
+    r"\\(?:cite|citep|citet|citealp|citeauthor|citeyear|nocite|parencite|"
+    r"textcite|autocite|footcite|smartcite|supercite)"
+    r"\*?(?:\s*\[[^\]]*\]){0,2}\s*\{([^}]*)\}"
+)
+BIBTEX_ENTRY_PATTERN = re.compile(
+    r"@[A-Za-z]+\s*[({]\s*([^,\s]+)\s*,",
+    re.MULTILINE,
+)
 
 
 class WorkflowError(RuntimeError):
@@ -74,6 +83,13 @@ class ProjectConfig:
     def references(self) -> Path:
         """Return the manuscript-level shared references directory."""
         return self.project / "references"
+
+    @property
+    def journal_templates(self) -> Path:
+        """Return the shared publisher resources, including the v3.0 fallback."""
+        current = self.references / "journal_templates"
+        legacy = self.references / "journal_template"
+        return current if current.exists() or not legacy.exists() else legacy
 
     def round_dir(self, round_number: int) -> Path:
         """Return one user-facing manuscript version directory."""
@@ -134,11 +150,16 @@ def _round_numbers(project: Path) -> tuple[int, ...]:
     if not (project / "initial_submission" / "manuscript.yaml").is_file():
         raise WorkflowError(f"Project is not initialized: {project}")
     shared = project / "references"
+    template_directory = (
+        shared / "journal_templates"
+        if (shared / "journal_templates").exists()
+        else shared / "journal_template"
+    )
     required_shared = (
         shared / "authors.yaml",
         shared / "references.bib",
         shared / "revision_style.tex",
-        shared / "journal_template",
+        template_directory,
     )
     missing_shared = [path for path in required_shared if not path.exists()]
     if missing_shared:
@@ -240,12 +261,7 @@ def _install_project_entrypoint(project: Path) -> None:
 def _publisher_layout(
     config: ProjectConfig,
 ) -> tuple[list[dict[str, str]], str, str]:
-    path = (
-        config.references
-        / "journal_template"
-        / config.metadata.publisher
-        / "sections.yaml"
-    )
+    path = config.journal_templates / config.metadata.publisher / "sections.yaml"
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
@@ -286,10 +302,7 @@ def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
         f"\\input{{sections/{Path(item['file']).stem}}}" for item in plan[1:]
     )
     render_template(
-        config.references
-        / "journal_template"
-        / config.metadata.publisher
-        / "workflow.tex",
+        config.journal_templates / config.metadata.publisher / "workflow.tex",
         version / "manuscript.tex",
         {
             "ABSTRACT_INPUT": (f"\\input{{sections/{Path(abstract['file']).stem}}}"),
@@ -338,13 +351,14 @@ def initialize_project(
         initial / "sections",
         initial / "figures",
         initial / "tables",
+        initial / "submission",
         initial / "output",
         root / "tmp",
     ):
         directory.mkdir(parents=True, exist_ok=True)
     shutil.copytree(
         ASSETS / "journal_templates",
-        config.references / "journal_template",
+        config.references / "journal_templates",
     )
     author_library = authors_source or ASSETS / "authors.yaml"
     if not author_library.is_file():
@@ -358,6 +372,7 @@ def initialize_project(
     if not bibliography.is_file():
         raise WorkflowError(f"Bibliography source is missing: {bibliography}")
     shutil.copy2(bibliography, config.references / "references.bib")
+    setup_zotero(root)
     _create_manuscript_sources(config, initial)
     save_manuscript(initial / "manuscript.yaml", config.metadata)
     generate_author_metadata(root, initial)
@@ -460,14 +475,35 @@ def start_revision(
             shutil.copytree(source_dir, staged / directory_name)
         else:
             (staged / directory_name).mkdir()
+    source_submission = source / "submission"
+    if source_submission.exists():
+        shutil.copytree(
+            source_submission,
+            staged / "submission",
+            ignore=shutil.ignore_patterns("package"),
+        )
+    else:
+        (staged / "submission").mkdir()
+    source_response = source / "response"
+    if source_response.exists():
+        shutil.copytree(
+            source_response,
+            staged / "response",
+            ignore=shutil.ignore_patterns(
+                "response_letter.tex",
+                "reviewer_comments.md",
+                "*.pdf",
+            ),
+        )
+    else:
+        (staged / "response").mkdir()
     for tex_file in [
         staged / "manuscript.tex",
         *sorted((staged / "sections").rglob("*.tex")),
     ]:
         normalized = strip_provenance_wrappers(tex_file.read_text(encoding="utf-8"))
         tex_file.write_text(normalized, encoding="utf-8")
-    for generated_directory in (staged / "output", staged / "response"):
-        generated_directory.mkdir()
+    (staged / "output").mkdir()
     (staged / "response" / "reviewer_comments.md").write_text(
         "# Reviewer #1\n\nGeneral comment.\n\n1. First specific comment.\n",
         encoding="utf-8",
@@ -552,6 +588,84 @@ def sync_bibliography(project: Path, explicit: Path | None = None) -> tuple[Path
     temporary.write_text(text, encoding="utf-8")
     os.replace(temporary, target)
     return (target,)
+
+
+def setup_zotero(project: Path) -> tuple[Path, Path]:
+    """Prepare the shared export target and user guide without controlling Zotero."""
+    references = project / "references"
+    if not references.is_dir():
+        raise WorkflowError(f"Shared references directory is missing: {references}")
+    bibliography = references / "references.bib"
+    if bibliography.exists() and not bibliography.is_file():
+        raise WorkflowError(f"Bibliography target is not a file: {bibliography}")
+    if not bibliography.exists():
+        bibliography.write_text("", encoding="utf-8")
+    guide = references / "zotero_setup.md"
+    if guide.exists() and not guide.is_file():
+        raise WorkflowError(f"Zotero setup target is not a file: {guide}")
+    if not guide.exists():
+        render_template(
+            ASSETS / "manuscript" / "zotero_setup.md",
+            guide,
+            {"EXPORT_PATH": str(bibliography.resolve())},
+        )
+    return bibliography, guide
+
+
+def _without_latex_comments(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        cursor = 0
+        while True:
+            marker = line.find("%", cursor)
+            if marker < 0:
+                lines.append(line)
+                break
+            backslashes = 0
+            index = marker - 1
+            while index >= 0 and line[index] == "\\":
+                backslashes += 1
+                index -= 1
+            if backslashes % 2 == 0:
+                lines.append(line[:marker])
+                break
+            cursor = marker + 1
+    return "\n".join(lines)
+
+
+def _manuscript_tex_sources(round_dir: Path) -> tuple[Path, ...]:
+    candidates = [round_dir / "manuscript.tex", round_dir / "preamble.tex"]
+    for directory_name in ("sections", "tables"):
+        directory = round_dir / directory_name
+        if directory.is_dir():
+            candidates.extend(sorted(directory.rglob("*.tex")))
+    return tuple(dict.fromkeys(path for path in candidates if path.is_file()))
+
+
+def check_citations(config: ProjectConfig, round_number: int) -> tuple[str, ...]:
+    """Return manuscript citation keys absent from the shared BibTeX database."""
+    if round_number != config.current_round:
+        raise WorkflowError("Citation config must match the selected version.")
+    bibliography = config.references / "references.bib"
+    if not bibliography.is_file():
+        raise WorkflowError(f"Shared bibliography is missing: {bibliography}")
+    cited: set[str] = set()
+    for source in _manuscript_tex_sources(config.round_dir(round_number)):
+        text = _without_latex_comments(source.read_text(encoding="utf-8"))
+        for match in CITATION_PATTERN.finditer(text):
+            cited.update(
+                key.strip()
+                for key in match.group(1).split(",")
+                if key.strip() and key.strip() != "*"
+            )
+    bibliography_text = _without_latex_comments(
+        bibliography.read_text(encoding="utf-8")
+    )
+    available = {
+        match.group(1).strip()
+        for match in BIBTEX_ENTRY_PATTERN.finditer(bibliography_text)
+    }
+    return tuple(sorted(cited - available))
 
 
 @contextlib.contextmanager

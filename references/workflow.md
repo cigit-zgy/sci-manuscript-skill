@@ -16,7 +16,9 @@ generated metadata, bibliography, revision style, and all publisher resources.
 No version may contain `references/`. `python run.py revision` is the only
 normal revision creator. It copies manuscript state from the current highest
 version, removes inherited provenance wrappers from manuscript prose, resets
-outputs, and creates a response workspace. It never copies or regenerates
+outputs, inherits editable submission sources and non-round-specific response
+attachments, and creates a fresh response letter for the new reviewer round.
+It never copies a prior response letter, a generated submission package, or
 shared references. Gaps, duplicates, `revision_0`, and non-adjacent parents are
 rejected.
 
@@ -40,6 +42,10 @@ python scripts/run.py init \
   --bib /absolute/path/to/references.bib
 ```
 
+Ask whether the user wants Zotero Better BibTeX Automatic Export. Initialization
+always creates the non-invasive `references/zotero_setup.md` guide and the
+single shared `references/references.bib` export target. If the user declines
+Zotero integration, the bibliography remains available for manual maintenance.
 When the user accepts bundled placeholders, omit `--authors` or `--bib` and
 identify the copied files that must be replaced. Initialization creates and
 builds only `initial_submission`; it must not create a revision or a submission
@@ -104,10 +110,25 @@ numbers. Cover letters, response letters, highlights, and graphical abstracts
 do not use manuscript line numbering. Editable submission and response sources
 are created once and survive later builds.
 
-## Bibliography synchronization
+## Bibliography workflow
 
-Every version reads the single root `references/references.bib`. Explicit
-Better BibTeX synchronization atomically replaces that shared file:
+Every version reads the single root `references/references.bib`. The recommended
+workflow is Zotero Better BibTeX Automatic Export with format `Better BibTeX`,
+the export path shown in `references/zotero_setup.md`, and `Keep updated`
+enabled. The skill creates only the guide and export target; it does not access
+Zotero, modify Zotero settings, or connect to a Zotero API.
+
+Validate the selected manuscript version without changing files:
+
+```bash
+python run.py check
+```
+
+The command reports citation keys that do not exist in the shared BibTeX file.
+It never exports, repairs, or inserts citations. A normal build does not run a
+Zotero export or `sync-bib`.
+
+Explicit synchronization remains an atomic manual fallback:
 
 ```bash
 python run.py sync-bib --bib-export /absolute/path/to/export.bib

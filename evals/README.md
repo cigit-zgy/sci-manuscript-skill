@@ -11,6 +11,10 @@ not replace the software tests in `tests/`.
 - `trigger_evals.json` contains realistic bilingual near-boundary queries for
   description triggering. It uses the query/`should_trigger` format accepted by
   skill-creator's trigger evaluator.
+- `initialization.yaml`, `revision.yaml`, `missing_information.yaml`,
+  `zotero.yaml`, and `publisher_template.yaml` are focused v3.1 behavior cases
+  for user-information gates, shared references, Zotero boundaries, and real
+  publisher resource selection.
 
 ## Evaluation boundary
 

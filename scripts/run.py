@@ -114,7 +114,7 @@ def _doctor() -> int:
     _print_check(
         "MANUAL",
         "Zotero Better BibTeX",
-        "optional; provide an exported .bib file explicitly",
+        "recommended Automatic Export; the skill never controls Zotero",
     )
     for name, label in (("ruff", "Ruff"), ("mypy", "Mypy")):
         available, detail = tools[name]
@@ -189,6 +189,7 @@ from response import build_response, init_response, parse_reviews  # noqa: E402
 from workspace import (  # noqa: E402
     ProjectConfig,
     WorkflowError,
+    check_citations,
     ensure_submission_workspace,
     initialize_project,
     is_initialized,
@@ -197,10 +198,18 @@ from workspace import (  # noqa: E402
     parse_round,
     round_directory_name,
     round_name,
+    setup_zotero,
     start_revision,
     sync_bibliography,
     temporary_run,
 )
+
+COMMAND_ALIASES = {
+    "render": "build",
+    "revise": "revision",
+    "package": "submission",
+    "validation": "check",
+}
 
 
 def _new_config(args: argparse.Namespace, project: Path) -> ProjectConfig:
@@ -455,10 +464,11 @@ def _load_selected_project(args: argparse.Namespace) -> tuple[Path, ProjectConfi
 
 def execute(args: argparse.Namespace) -> int:
     """Execute one explicit lifecycle command."""
-    if args.command == "doctor":
+    command = COMMAND_ALIASES.get(args.command, args.command)
+    if command == "doctor":
         return _doctor()
     project = normalize_project(args.project)
-    if args.command == "init":
+    if command == "init":
         authors_source = (
             Path(args.authors).expanduser().resolve() if args.authors else None
         )
@@ -482,14 +492,34 @@ def execute(args: argparse.Namespace) -> int:
         if args.authors is None:
             print("\nACTION REQUIRED: replace references/authors.yaml.")
         if args.bib is None:
-            print("ACTION REQUIRED: replace references/references.bib.")
+            print(
+                "ACTION REQUIRED: configure Better BibTeX Automatic Export using "
+                "references/zotero_setup.md, or maintain references/references.bib "
+                "manually."
+            )
         return 0
-    if args.command == "status":
+    if command == "status":
         if not is_initialized(project):
             raise WorkflowError(f"Project is not initialized: {project}")
         _status(project)
         return 0
-    if args.command == "sync-bib":
+    if command == "setup-zotero":
+        if not is_initialized(project):
+            raise WorkflowError(f"Project is not initialized: {project}")
+        bibliography, guide = setup_zotero(project)
+        _report_generated(
+            "Zotero export target prepared",
+            "manual setup required",
+            project,
+            [("Bibliography target", bibliography), ("Setup guide", guide)],
+        )
+        print("\nNo Zotero settings were changed.")
+        print("Next: in Zotero Better BibTeX, create an Automatic Export using")
+        print("  Format: Better BibTeX")
+        print(f"  Path: {bibliography.resolve()}")
+        print("  Keep updated: Enabled")
+        return 0
+    if command == "sync-bib":
         if not is_initialized(project):
             raise WorkflowError(f"Project is not initialized: {project}")
         explicit = Path(args.bib_export) if args.bib_export else None
@@ -501,7 +531,7 @@ def execute(args: argparse.Namespace) -> int:
             [("Bibliography", target) for target in targets],
         )
         return 0
-    if args.command == "revision":
+    if command == "revision":
         latest = load_project(project)
         target = parse_round(args.round, latest.current_round + 1)
         reviews = Path(args.reviews).expanduser().resolve() if args.reviews else None
@@ -525,7 +555,21 @@ def execute(args: argparse.Namespace) -> int:
         return 0
     project, config, round_number = _load_selected_project(args)
     version = round_directory_name(round_number)
-    if args.command == "build":
+    if command == "check":
+        missing = check_citations(config, round_number)
+        if missing:
+            print(f"Citation check failed: {version}")
+            for key in missing:
+                print(f"Missing citation key {key}")
+            print(
+                "Run Zotero Better BibTeX Automatic Export or use the manual "
+                "sync-bib fallback, then run check again."
+            )
+            return 1
+        print(f"Citation check passed: {version}")
+        print("All manuscript citation keys exist in references/references.bib.")
+        return 0
+    if command == "build":
         with temporary_run(project, args.keep_temp) as run_dir:
             generate_author_metadata(config.project, config.round_dir(round_number))
             clean = build_clean_manuscript(config, round_number, run_dir, args.engine)
@@ -536,7 +580,7 @@ def execute(args: argparse.Namespace) -> int:
             [("Clean manuscript", clean)],
         )
         return 0
-    if args.command in {"submission", "all"}:
+    if command in {"submission", "all"}:
         with temporary_run(project, args.keep_temp) as run_dir:
             generated = _prepare_submission(
                 config,
@@ -595,12 +639,17 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--engine", choices=("auto", "tectonic", "latex"))
     init.add_argument("--keep-temp", action="store_true")
 
-    build = commands.add_parser("build", help="Compile the selected clean manuscript.")
+    build = commands.add_parser(
+        "build",
+        aliases=["render"],
+        help="Compile the selected clean manuscript (alias: render).",
+    )
     _add_build_arguments(build)
 
     revision = commands.add_parser(
         "revision",
-        help="Create the next adjacent revision and response source.",
+        aliases=["revise"],
+        help="Create the next adjacent revision and response source (alias: revise).",
     )
     _add_project_argument(revision)
     revision.add_argument("--round", help="Advanced explicit next round selector.")
@@ -609,7 +658,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     submission = commands.add_parser(
         "submission",
-        help="Build submission materials and the selected version package.",
+        aliases=["package"],
+        help="Build submission materials and package (alias: package).",
     )
     _add_build_arguments(submission)
     submission.add_argument("--allow-placeholders", action="store_true")
@@ -621,9 +671,26 @@ def build_parser() -> argparse.ArgumentParser:
     _add_build_arguments(all_command)
     all_command.add_argument("--allow-placeholders", action="store_true")
 
-    sync = commands.add_parser("sync-bib", help="Synchronize a Better BibTeX export.")
+    zotero = commands.add_parser(
+        "setup-zotero",
+        help="Prepare Better BibTeX Automatic Export guidance and target files.",
+    )
+    _add_project_argument(zotero)
+
+    sync = commands.add_parser(
+        "sync-bib",
+        help="Manually synchronize a Better BibTeX export as a fallback.",
+    )
     _add_project_argument(sync)
     sync.add_argument("--bib-export", help="Explicit Better BibTeX export path.")
+
+    check = commands.add_parser(
+        "check",
+        aliases=["validation"],
+        help="Validate manuscript citation keys (alias: validation).",
+    )
+    _add_project_argument(check)
+    check.add_argument("--round", help="Optional rN or revision_N selector.")
 
     status = commands.add_parser("status", help="Show lifecycle state and outputs.")
     _add_project_argument(status)

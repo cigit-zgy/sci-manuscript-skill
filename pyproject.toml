@@ -1,6 +1,6 @@
 [project]
 name = "sci-manuscript-skill"
-version = "3.0.0"
+version = "3.1.0"
 description = "LaTeX scientific manuscript lifecycle management skill."
 requires-python = ">=3.11"
 license = {text = "MIT"}

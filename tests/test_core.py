@@ -148,6 +148,7 @@ class InitializationTest(unittest.TestCase):
                 "sections",
                 "figures",
                 "tables",
+                "submission",
                 "output",
             )
             initial = project / "initial_submission"
@@ -165,7 +166,8 @@ class InitializationTest(unittest.TestCase):
                 "authors.yaml",
                 "references.bib",
                 "revision_style.tex",
-                "journal_template",
+                "zotero_setup.md",
+                "journal_templates",
                 "author_metadata.tex",
                 "publisher_metadata.tex",
             ):
@@ -191,7 +193,7 @@ class InitializationTest(unittest.TestCase):
                 self.assertIn(Path(filename).stem, manuscript)
                 class_name = metadata.PUBLISHER_TEMPLATES[publisher]
                 self.assertIn(
-                    f"../references/journal_template/{publisher}/{class_name}",
+                    f"../references/journal_templates/{publisher}/{class_name}",
                     manuscript,
                 )
 
@@ -328,7 +330,9 @@ class InterfaceTest(unittest.TestCase):
             "revision",
             "submission",
             "all",
+            "setup-zotero",
             "sync-bib",
+            "check",
             "status",
         ):
             arguments = [command]

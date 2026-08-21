@@ -9,7 +9,7 @@
       "expectations": [
         "The agent runs doctor before initialization when the environment is not already verified and asks before any dependency installation.",
         "The generated project contains initial_submission and does not contain revision_1.",
-        "The supplied author YAML and BibTeX data are copied into the version-local references directory.",
+        "The supplied author YAML and BibTeX data are copied into the single project-root references directory.",
         "initial_submission/output/manuscript.pdf exists and the successful run leaves tmp empty.",
         "The agent identifies manuscript sections, figures, bibliography, and author data as user-owned content rather than generating scientific replacements."
       ]

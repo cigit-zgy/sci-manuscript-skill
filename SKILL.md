@@ -4,11 +4,13 @@ description: >
   Automate an existing LaTeX manuscript workflow: initialize a structured
   project, inspect its build environment, compile the current manuscript, create
   adjacent revisions, prepare reviewer-response infrastructure and marked
-  manuscripts, synchronize explicit BibTeX exports, and build version-local
-  submission packages. Use for manuscript lifecycle engineering requests in
-  English or Chinese, even when the user does not name this skill. Do not use for
-  scientific writing, literature interpretation, claim assessment, experiment
-  analysis, or deciding how to answer reviewers scientifically.
+  manuscripts, guide Zotero Better BibTeX Automatic Export, validate citation
+  keys, synchronize explicit BibTeX exports as a manual fallback, and build
+  version-local submission packages. Use for manuscript lifecycle engineering
+  requests in English or Chinese, even when the user does not name this skill.
+  Do not use for scientific writing, literature interpretation, claim
+  assessment, experiment analysis, or deciding how to answer reviewers
+  scientifically.
 ---
 
 # SCI manuscript workflow
@@ -24,7 +26,7 @@ Keep scientific content and reviewer judgment with the user.
 | Build current manuscript | No reference is normally needed | Run the project-root `python run.py build`; do not initialize or create a revision |
 | Start a revision | Read the version and response sections of [workflow.md](references/workflow.md) | Determine the current highest round and run `revision` once |
 | Prepare submission | Read the submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for an initial version or `all` for a completed revision |
-| Synchronize bibliography | Read the bibliography section of [workflow.md](references/workflow.md) | Run `sync-bib` only with an explicit export path or configured local export |
+| Configure bibliography | Read the bibliography section of [workflow.md](references/workflow.md) | Prefer Better BibTeX Automatic Export; run `setup-zotero` to prepare guidance, `check` to validate keys, and `sync-bib` only as a manual fallback |
 | Diagnose environment | Read [environment.md](references/environment.md) | Run `doctor`; report blockers without changing the environment |
 
 Do not read `.cls`, `.bst`, `.dtx`, or other bundled assets as routine reasoning
@@ -50,6 +52,9 @@ publisher asset only when adapting or diagnosing that exact template.
 - Keep author data, bibliography, revision style, generated metadata, and
   publisher resources only under project-root `references/`. Never create or
   copy a `references/` directory inside a version.
+- Never open Zotero, modify its settings or database, or call a Zotero API.
+  `setup-zotero` creates only project files and instructions. A build never
+  synchronizes bibliography data implicitly.
 - Successful commands remove their `tmp/run_*` directory. Failed commands may
   retain a project-relative diagnostic directory and must report it.
 
@@ -67,12 +72,17 @@ From an initialized project:
 ```bash
 python run.py doctor
 python run.py build
+python run.py check
 python run.py revision --reviews /absolute/path/to/reviewer-comments.md
 python run.py submission
 python run.py all
+python run.py setup-zotero
 python run.py sync-bib --bib-export /absolute/path/to/export.bib
 python run.py status
 ```
+
+Compatibility aliases are `render` for `build`, `revise` for `revision`,
+`package` for `submission`, and `validation` for `check`.
 
 Select an existing version with `--round rN` where supported. `revision` creates
 only the next version. `--allow-placeholders` is diagnostic and never makes a
@@ -80,10 +90,22 @@ submission ready.
 
 ## New-project inputs
 
-Before `init`, obtain a new or empty project path, user-supplied title and journal,
-publisher key (`elsevier`, `nature`, `acs`, or `chinese`), language (`en` or `zh`),
-article type, author order, and optional existing author YAML and BibTeX paths.
-Copy bundled examples only after the user accepts that they are placeholders.
+For a request such as "start writing a paper", do not initialize immediately.
+Use this order:
+
+1. run `doctor` when the environment has not already been verified;
+2. ask for manuscript location, title, journal, publisher, language, article
+   type, ordered authors, corresponding authors, bibliography source, Zotero
+   Better BibTeX preference, and any existing LaTeX files;
+3. initialize only after the required identity and project information is known;
+4. compile and validate the initial PDF, citation state, shared references, and
+   empty `tmp/`.
+
+Never fill missing authors, journal facts, submission declarations, citations,
+or scientific prose. Ask whether the user wants Better BibTeX Automatic Export.
+If yes, point them to `references/zotero_setup.md`; if no, retain the shared
+`references/references.bib` for manual maintenance. Do not require repeated
+manual BibTeX copying when Automatic Export is acceptable.
 
 Initialization must leave the user with
 `initial_submission/output/manuscript.pdf` and identify these editable locations:
@@ -91,6 +113,7 @@ Initialization must leave the user with
 - `initial_submission/manuscript.yaml`;
 - root `references/authors.yaml`, `references/references.bib`, and
   `references/revision_style.tex`;
+- root `references/zotero_setup.md` and `references/journal_templates/`;
 - `initial_submission/sections/`, `figures/`, and `tables/`.
 
 Each version YAML groups selected names under `authors.first_authors`,

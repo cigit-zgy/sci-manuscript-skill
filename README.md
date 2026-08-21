@@ -29,7 +29,8 @@ and submission decisions.
 | Revision comparison | Produces clean and marked manuscripts from adjacent versions with `latexdiff` |
 | Response letter | Creates structured reviewer-response sources and validates unfinished placeholders |
 | Submission packaging | Builds cover letter, highlights, graphical abstract, manuscript, response, and checklist artifacts on demand |
-| Shared bibliography | Keeps one manuscript-level BibTeX database and supports explicit Better BibTeX export synchronization |
+| Zotero workflow | Recommends Better BibTeX Automatic Export to the one shared bibliography without controlling Zotero |
+| Citation validation | Reports manuscript citation keys missing from the shared BibTeX database without modifying sources |
 | Isolated builds | Routes compiler intermediates through `tmp/` and removes successful temporary runs |
 | PDF verification | Uses Poppler text extraction and rendering tools for output QA |
 
@@ -47,14 +48,14 @@ and submission decisions.
   Biber.
 
 Ruff and Mypy are development-only tools. Zotero Better BibTeX is an optional
-manual integration; the workflow can use an exported `.bib` file but never
-connects to Zotero automatically.
+desktop integration. The recommended workflow uses its Automatic Export, but
+the skill never opens Zotero, changes its settings, or accesses its database.
 
 Clone the repository, create or activate a Python environment, and install the
 single Python runtime dependency:
 
 ```bash
-git clone <repository-url> sci-manuscript-skill
+git clone https://github.com/cigit-zgy/sci-manuscript-skill.git
 cd sci-manuscript-skill
 
 python3 -m venv .venv
@@ -90,26 +91,18 @@ Execute /absolute/path/to/sci-manuscript-skill/SKILL.md.
 
 The agent follows this sequence:
 
-```text
-Execute SKILL.md
-        |
-        v
-Check environment
-        |
-        v
-Collect project and author information
-        |
-        v
-Select publisher resource
-        |
-        v
-Initialize initial_submission
-        |
-        v
-Compile and validate the first PDF
-        |
-        v
-Write manuscript -> build -> submit or revise
+```mermaid
+flowchart TD
+    A[Execute SKILL.md] --> B[Check environment]
+    B --> C[Collect project, journal, author, and bibliography information]
+    C --> D[Select publisher resource]
+    D --> E[Initialize initial_submission]
+    E --> F[Compile and validate the first PDF]
+    F --> G[Write manuscript]
+    G --> H{Next action}
+    H -->|Build| I[Clean manuscript]
+    H -->|Revise| J[Adjacent revision]
+    H -->|Submit| K[Version-local package]
 ```
 
 If a required dependency is missing, the agent reports it and asks before any
@@ -140,6 +133,7 @@ Continue from the generated project root:
 ```bash
 cd /absolute/path/to/my-paper
 python run.py build
+python run.py check
 python run.py submission
 python run.py status
 ```
@@ -162,7 +156,9 @@ all later operations.
 | `revision` | Create the next adjacent revision and initialize its response source |
 | `submission` | Build version-local submission materials and package |
 | `all` | Build clean, marked, response, and submission outputs for the selected version |
-| `sync-bib` | Atomically replace the manuscript-level BibTeX database from an explicit export |
+| `setup-zotero` | Prepare the Better BibTeX Automatic Export guide and shared export target |
+| `check` | Report citation keys absent from the shared BibTeX database |
+| `sync-bib` | Atomically replace the shared BibTeX database from an explicit export as a manual fallback |
 | `status` | Report lifecycle ancestry and generated artifacts |
 
 Run `python run.py <command> --help` for command-specific options. `build`,
@@ -170,6 +166,10 @@ Run `python run.py <command> --help` for command-specific options. `build`,
 `revision` accepts reviewer comments as Markdown through `--reviews`. The
 `--allow-placeholders` option is diagnostic only; a package containing pending
 responses is not submission-ready.
+
+Compatibility aliases are `render` for `build`, `revise` for `revision`,
+`package` for `submission`, and `validation` for `check`. They are visible in
+`python run.py --help` and preserve the canonical command behavior.
 
 ## 6. User configuration
 
@@ -228,9 +228,10 @@ do not edit them directly.
 
 ### `references/references.bib`
 
-Replace the bundled example with the paper's real BibTeX database. It is shared
-by every version and exists only at the project root. To atomically replace it
-from an explicit Better BibTeX export, run:
+This is the only bibliography used by every version. Prefer Zotero Better
+BibTeX Automatic Export as described below. When Automatic Export is
+unavailable, atomically replace it from an explicit export using the manual
+fallback:
 
 ```bash
 python run.py sync-bib --bib-export /absolute/path/to/export.bib
@@ -246,7 +247,7 @@ create scientific figures or infer missing content.
 ## 7. Project structure
 
 ```text
-project/
+manuscript/
 ├── run.py
 ├── references/                   # manuscript-level shared resources
 │   ├── authors.yaml
@@ -254,7 +255,8 @@ project/
 │   ├── publisher_metadata.tex    # generated
 │   ├── references.bib
 │   ├── revision_style.tex
-│   └── journal_template/
+│   ├── zotero_setup.md
+│   └── journal_templates/
 │       ├── elsevier/
 │       ├── nature/
 │       ├── acs/
@@ -266,7 +268,7 @@ project/
 │   ├── sections/
 │   ├── figures/
 │   ├── tables/
-│   ├── submission/              # created on demand
+│   ├── submission/              # editable sources populated on demand
 │   └── output/
 ├── revision_1/                  # r1, parent r0
 ├── revision_2/                  # r2, parent r1
@@ -276,7 +278,9 @@ project/
 `initial_submission` is the complete first-submission state. Each
 `revision_N` is copied only from `revision_(N-1)` (or from
 `initial_submission` for revision 1) and adds its own response source,
-submission material, and outputs. Revision directories never contain a
+submission material, and outputs. Editable submission sources and response
+attachments are inherited, while the previous round's response letter and
+generated package are excluded. Revision directories never contain a
 `references/` directory. `tmp/` contains isolated
 compiler and diff work and is empty after successful commands. Manuscript
 sources, outputs, and submission files never live directly at the project
@@ -284,7 +288,32 @@ root. Shared author data, bibliography, revision style, and all publisher
 classes exist exactly once under root `references/`. Workflow execution still
 uses the installed skill code.
 
-## 8. Publisher templates
+## 8. Zotero and bibliography workflow
+
+The recommended bibliography workflow is Zotero Better BibTeX Automatic
+Export. It keeps the BibTeX database current while leaving LaTeX with one
+explicit, reproducible input:
+
+```mermaid
+flowchart LR
+    A[Zotero collection] --> B[Better BibTeX Automatic Export]
+    B --> C[references/references.bib]
+    C --> D[LaTeX compilation]
+    D --> E[PDF]
+```
+
+1. Install the Zotero Better BibTeX extension.
+2. Export the manuscript collection using format **Better BibTeX**.
+3. Choose the exact export path shown in `references/zotero_setup.md`.
+4. Enable **Keep updated**.
+5. Run `python run.py check`, then build normally.
+
+`python run.py setup-zotero` recreates a missing bibliography target and setup
+guide. It does **not** open Zotero, change Zotero settings, access the Zotero
+database, or call a Zotero API. Builds never synchronize the bibliography
+implicitly. `sync-bib` remains an explicit manual fallback.
+
+## 9. Publisher templates
 
 | Publisher key | Bundled resource | Intended use |
 | --- | --- | --- |
@@ -304,18 +333,14 @@ content, but journals update instructions independently. Check the current
 Guide for Authors and update the selected resource when necessary. Upstream
 templates retain their own licenses; see `THIRD_PARTY_NOTICES.md`.
 
-## 9. Revision workflow
+## 10. Revision workflow
 
 The ancestry is explicit and gap-free:
 
-```text
-initial_submission (r0)
-          |
-          v
-revision_1 (r1)
-          |
-          v
-revision_2 (r2)
+```mermaid
+flowchart LR
+    R0[initial_submission r0] --> R1[revision_1 r1]
+    R1 --> R2[revision_2 r2]
 ```
 
 Create the next version with:
@@ -332,6 +357,15 @@ current version against its direct parent, so added and deleted text remain
 traceable. User-adjustable colors and markup appearance are isolated in
 `references/revision_style.tex`.
 
+```mermaid
+flowchart LR
+    A[Parent clean manuscript] --> B[latexdiff]
+    C[Current clean manuscript] --> B
+    B --> D[Marked manuscript]
+    D --> E[Computed line locations]
+    E --> F[Response letter]
+```
+
 Complete each `\ResponsePending{review-id}` in the version-local response
 letter, then run `python run.py all`. A revision package contains the clean
 manuscript, marked manuscript, response letter, cover letter, highlights,
@@ -339,7 +373,17 @@ graphical abstract, and checklist according to the YAML submission switches.
 Manuscript PDFs have continuous line numbers; correspondence and supplementary
 submission files do not.
 
-## 10. Development
+```mermaid
+flowchart TD
+    A[Version-local submission source] --> B[Submission package]
+    C[Manuscript PDF] --> B
+    D[Cover letter] --> B
+    E[Highlights] --> B
+    F[Graphical abstract] --> B
+    G[Marked manuscript and response] --> B
+```
+
+## 11. Validation and development
 
 The repository separates agent routing, deterministic execution, on-demand
 guidance, static output resources, and the two validation layers:
@@ -372,13 +416,17 @@ submission packages, PDF text extraction, rendered pages, temporary-file
 cleanup, and the skill frontmatter validator. Development tools are optional
 for manuscript users but required before publishing changes.
 
-## 11. License
+`.github/workflows/test.yml` runs Pytest, Ruff format/check, and Mypy on pushes
+and pull requests. Publisher class compilation remains part of the local
+release gate when Tectonic is available.
+
+## 12. License
 
 Original workflow code, documentation, tests, and original templates are
 released under the MIT License in `LICENSE`. Bundled publisher class and
 bibliography resources are third-party works and retain their upstream terms.
 The maintainer-provided Chinese class is documented separately because its
 source did not include an embedded license notice; the maintainer has confirmed
-that it may be distributed publicly with the v3.0.0 project. Review
+that it may be distributed publicly with the project. Review
 `THIRD_PARTY_NOTICES.md` and each publisher-resource README before
 redistribution.

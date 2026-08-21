@@ -1,0 +1,10 @@
+name: zotero_automatic_export_boundary
+prompt: Configure Zotero for this manuscript and keep the bibliography synchronized.
+expected_behavior:
+  - Recommend Better BibTeX Automatic Export to references/references.bib.
+  - Run setup-zotero only to create the project guide and export target.
+  - Explain that Keep updated must be enabled inside Zotero by the user.
+  - Offer sync-bib only as a manual fallback.
+must_not:
+  - Open or control Zotero, edit Zotero settings, access its database, or call a Zotero API.
+  - Claim that build automatically synchronizes the bibliography.
