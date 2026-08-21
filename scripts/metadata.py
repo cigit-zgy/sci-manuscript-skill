@@ -124,6 +124,14 @@ def _text(value: Any, location: str) -> str:
     return value.strip()
 
 
+def _optional_text(value: Any, location: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise MetadataError(f"{location} must be a string when provided.")
+    return value.strip()
+
+
 def _boolean(value: Any, location: str) -> bool:
     if not isinstance(value, bool):
         raise MetadataError(f"{location} must be true or false.")
@@ -389,7 +397,7 @@ def load_author_library(path: Path) -> AuthorLibrary:
         authors[name] = AuthorRecord(
             name=_text(record.get("name_en", name), f"authors.{name}.name_en"),
             name_zh=_text(record.get("name_zh", name), f"authors.{name}.name_zh"),
-            email=_text(record.get("email"), f"authors.{name}.email"),
+            email=_optional_text(record.get("email"), f"authors.{name}.email"),
             role=role,
             affiliations=tuple(str(key) for key in raw_keys),
         )
@@ -422,6 +430,12 @@ def resolve_authors(
     corresponding = tuple(
         library.authors[name] for name in metadata.corresponding_authors
     )
+    missing_emails = [author.name for author in corresponding if not author.email]
+    if missing_emails:
+        raise MetadataError(
+            "Corresponding authors must have email addresses: "
+            + ", ".join(missing_emails)
+        )
     used_keys = {key for author in authors for key in author.affiliations}
     affiliations = tuple(
         record for record in library.affiliations if record.key in used_keys

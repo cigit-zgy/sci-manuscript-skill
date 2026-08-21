@@ -82,6 +82,42 @@ class MetadataTest(unittest.TestCase):
             with self.assertRaises(metadata.MetadataError):
                 metadata.generate_author_metadata(project, initial)
 
+    def test_email_is_optional_except_for_corresponding_authors(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            library_path = Path(temp) / "authors.yaml"
+            library_path.write_text(
+                """authors:
+  Ordinary Author:
+    name_en: Ordinary Author
+    name_zh: 普通作者
+    role: author
+    affiliations: [1]
+  Corresponding Author:
+    name_en: Corresponding Author
+    name_zh: 通讯作者
+    role: corresponding_author
+    affiliations: [1]
+affiliations:
+  1:
+    name_en: Example Institute
+    address: Example City
+""",
+                encoding="utf-8",
+            )
+            library = metadata.load_author_library(library_path)
+            self.assertEqual(library.authors["Ordinary Author"].email, "")
+            selected = replace(
+                _metadata(),
+                first_authors=("Ordinary Author",),
+                corresponding_authors=("Corresponding Author",),
+                authors=(),
+            )
+            with self.assertRaisesRegex(
+                metadata.MetadataError,
+                "Corresponding authors must have email addresses",
+            ):
+                metadata.resolve_authors(selected, library)
+
     def test_chinese_project_uses_chinese_author_names(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"

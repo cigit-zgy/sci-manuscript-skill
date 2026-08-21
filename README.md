@@ -217,10 +217,11 @@ authors:
 ### `references/authors.yaml`
 
 This manuscript-level author library stores complete English and Chinese
-names, email addresses, default roles, affiliation references, and affiliation
-addresses. The names selected in each version's `manuscript.yaml` must exactly
-match keys in this file. Multiple first and corresponding authors are
-supported. Python expands the selected version and shared library into
+names, default roles, affiliation references, affiliation addresses, and known
+email addresses. Email is optional for ordinary authors but required for every
+author selected as corresponding. The names selected in each version's
+`manuscript.yaml` must exactly match keys in this file. Multiple first and
+corresponding authors are supported. Python expands the selected version and shared library into
 `references/author_metadata.tex` and `references/publisher_metadata.tex`.
 Manuscript and correspondence templates use these generated shared sources;
 do not edit them directly.
