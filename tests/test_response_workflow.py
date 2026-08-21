@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from sci_manuscript._runtime import diff, metadata, response, workspace
+from sci_manuscript.latex import diff
+from sci_manuscript.metadata import manuscript as metadata
+from sci_manuscript.workflow import revision as response
+from sci_manuscript.workflow import project as workspace
 
 
 def _config(project: Path) -> workspace.ProjectConfig:

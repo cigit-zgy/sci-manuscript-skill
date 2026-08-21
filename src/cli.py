@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ._runtime.rounds import parse_round, round_directory_name, round_name
+from .latex.numbering import parse_round, round_directory_name, round_name
 from .api import ManuscriptError, ManuscriptProject, initialize_manuscript
 from .results import Artifact, DoctorResult
 
@@ -75,7 +75,7 @@ def _add_project_argument(
     parser.add_argument(
         "--project",
         default=str(default_project),
-        help="Project root; defaults to the copied run.py directory.",
+        help="Project root; defaults to the current directory.",
     )
 
 

@@ -98,3 +98,4 @@ def copy_resource_tree(parts: tuple[str, ...], target: Path) -> None:
                 child_target.write_bytes(child.read_bytes())
 
     copy_children(source, target)
+

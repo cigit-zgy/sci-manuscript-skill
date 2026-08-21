@@ -22,7 +22,6 @@ REQUIRED = frozenset(
         "sci_manuscript/resources/authors.yaml",
         "sci_manuscript/resources/revision_contract.yaml",
         "sci_manuscript/resources/revision_style.tex",
-        "sci_manuscript/resources/project_run.py",
         "sci_manuscript/resources/manuscript/preamble.tex",
         "sci_manuscript/resources/response/response_en.tex",
         "sci_manuscript/resources/response/response_zh.tex",

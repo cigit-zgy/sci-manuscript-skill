@@ -7,11 +7,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from .rounds import round_directory_name, round_name
+from ..latex.numbering import round_directory_name, round_name
 
 
-class MetadataError(RuntimeError):
-    """Raised when manuscript or author-library metadata is invalid."""
+from ..exceptions import MetadataError  # noqa: F401 (re-exported)
 
 
 try:

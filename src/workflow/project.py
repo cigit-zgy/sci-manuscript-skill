@@ -15,28 +15,28 @@ from typing import Iterator
 
 import yaml
 
-from .metadata import (
+from ..metadata.manuscript import (
     ManuscriptMetadata,
     generate_author_metadata,
     load_manuscript,
     save_manuscript,
     with_revision,
 )
-from .resources import (
+from ..resources import (
     copy_resource_file,
     copy_resource_tree,
     read_resource_text,
 )
-from .rounds import (
+from ..latex.numbering import (
     REVISION_DIRECTORY_PATTERN as REVISION_DIRECTORY_PATTERN,
 )
-from .rounds import (
+from ..latex.numbering import (
     ROUND_PATTERN as ROUND_PATTERN,
 )
-from .rounds import (
+from ..latex.numbering import (
     parse_round as parse_round_value,
 )
-from .rounds import (
+from ..latex.numbering import (
     round_directory_name,
     round_name,
 )
@@ -52,8 +52,15 @@ BIBTEX_ENTRY_PATTERN = re.compile(
 )
 
 
-class WorkflowError(RuntimeError):
-    """Raised when a lifecycle invariant or required resource is violated."""
+from ..exceptions import WorkflowError  # noqa: F401 (re-exported)
+from ..results import (
+    Artifact,
+    ChainDiagnosticsResult,
+    CheckResult,
+    StatusResult,
+    ZoteroSetupResult,
+    BibliographySyncResult,
+)
 
 
 @dataclass(frozen=True)
@@ -335,11 +342,6 @@ def _render_template_text(
     target.write_text(text, encoding="utf-8")
 
 
-def _install_project_entrypoint(project: Path) -> None:
-    target = project / "run.py"
-    copy_resource_file(("project_run.py",), target)
-    target.chmod(0o755)
-
 
 def _publisher_layout(
     config: ProjectConfig,
@@ -463,11 +465,10 @@ def initialize_project(
                 f"Bibliography source is missing: {bibliography_source}"
             )
         shutil.copy2(bibliography_source, config.references / "references.bib")
-    setup_zotero(root)
+    _setup_zotero_files(root)
     _create_manuscript_sources(config, initial)
     save_manuscript(initial / "manuscript.yaml", config.metadata)
     generate_author_metadata(root, initial)
-    _install_project_entrypoint(root)
     return config
 
 
@@ -681,7 +682,7 @@ def sync_bibliography(project: Path, explicit: Path | None = None) -> tuple[Path
     return (target,)
 
 
-def setup_zotero(project: Path) -> tuple[Path, Path]:
+def _setup_zotero_files(project: Path) -> tuple[Path, Path]:
     """Prepare the shared export target and user guide without controlling Zotero."""
     references = project / "references"
     if not references.is_dir():
@@ -783,3 +784,112 @@ def temporary_run(project: Path, keep: bool) -> Iterator[Path]:
             desktop_metadata = root / ".DS_Store"
             if desktop_metadata.exists():
                 desktop_metadata.unlink()
+
+def check(
+    project: str | Path,
+    selected_round: str | int | None,
+) -> CheckResult:
+    """Validate shared bibliography coverage for one version."""
+    root, config, round_number = _selected_project(project, selected_round)
+    return CheckResult(
+        project=root,
+        version=round_directory_name(round_number),
+        missing_citations=check_citations(config, round_number),
+    )
+
+
+def status(project: str | Path) -> StatusResult:
+    """Resolve current lifecycle state and published final artifacts."""
+    root = normalize_project(project)
+    _require_project(root)
+    latest = load_project(root)
+    artifacts: list[Artifact] = []
+    for number in range(latest.current_round + 1):
+        config = load_project(root, number)
+        version_directory = config.round_dir(number)
+        paths = sorted((version_directory / "output").glob("*.pdf"))
+        paths.extend(sorted((version_directory / "submission" / "package").glob("*")))
+        artifacts.extend(Artifact("Generated artifact", path) for path in paths)
+    parent = latest.metadata.parent_round
+    return StatusResult(
+        project=root,
+        version=actual_round_directory(root, latest.current_round).name,
+        round_number=latest.current_round,
+        parent=(
+            actual_round_directory(root, parent).name if parent is not None else None
+        ),
+        authors=latest.metadata.author_names,
+        publisher=latest.metadata.publisher,
+        journal=latest.journal,
+        project_format_version=latest.metadata.format_version,
+        artifacts=tuple(artifacts),
+    )
+
+
+def setup_zotero(project: str | Path) -> ZoteroSetupResult:
+    """Prepare the shared bibliography target and non-invasive setup guide."""
+    root = normalize_project(project)
+    _require_project(root)
+    bibliography, guide = _setup_zotero_files(root)
+    return ZoteroSetupResult(
+        project=root,
+        artifacts=(
+            Artifact("Bibliography target", bibliography),
+            Artifact("Setup guide", guide),
+        ),
+    )
+
+
+def sync_bib(
+    project: str | Path,
+    export: str | Path | None,
+) -> BibliographySyncResult:
+    """Synchronize the explicit export into the one shared bibliography."""
+    root = normalize_project(project)
+    _require_project(root)
+    explicit = Path(export).expanduser().resolve() if export is not None else None
+    targets = sync_bibliography(root, explicit)
+    return BibliographySyncResult(
+        project=root,
+        artifacts=tuple(Artifact("Bibliography", target) for target in targets),
+    )
+
+
+def _legacy_wrapper_hash(text: str) -> str:
+    normalized = _LEGACY_ROOT_LINE.sub(
+        '_SKILL_ROOT_HINT = Path("<GENERATED_SKILL_ROOT>")',
+        text,
+    )
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def chain_diagnostics(project: str | Path) -> ChainDiagnosticsResult:
+    """Inspect the round sequence without requiring a continuous chain."""
+    root = normalize_project(project)
+    _require_project(root)
+    numbers = runtime_workspace.scan_round_directories(root)
+    expected = list(range(len(numbers)))
+    broken = list(numbers) != expected
+    missing = tuple(
+        round_directory_name(number) for number in expected if number not in numbers
+    )
+    versions = tuple(
+        (actual_round_directory(root, number).name, round_name(number))
+        for number in numbers
+    )
+    current = versions[-1][0] if versions and not broken else None
+    return ChainDiagnosticsResult(
+        project=root,
+        versions=versions,
+        current=current,
+        broken=broken,
+        missing=missing,
+    )
+
+
+def _require_project(project: Path) -> None:
+    if not is_initialized(project):
+        raise WorkflowError(
+            f"Project is not initialized: {project}. Run the init command first."
+        )
+

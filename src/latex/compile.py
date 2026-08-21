@@ -7,7 +7,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .workspace import ProjectConfig, WorkflowError
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..workflow.project import ProjectConfig
+from ..exceptions import WorkflowError
 
 
 @dataclass(frozen=True)

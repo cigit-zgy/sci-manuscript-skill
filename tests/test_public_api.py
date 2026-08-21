@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import io
 import shutil
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,15 +15,17 @@ from unittest import mock
 
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
+
 import sci_manuscript
 from sci_manuscript import (
     Artifact,
     ManuscriptProject,
-    _workflow,
     cli,
     initialize_manuscript,
 )
-from sci_manuscript._runtime import workspace
+from sci_manuscript import workflow as _workflow
+from sci_manuscript.workflow import project as workspace
 
 
 def test_public_exports_exclude_runtime_internals() -> None:
@@ -50,7 +53,7 @@ def _fake_clean(
 
 
 def _initialize(path: Path) -> None:
-    with mock.patch.object(_workflow, "build_clean_manuscript", _fake_clean):
+    with mock.patch.object(workflow.build, "build_clean_manuscript", _fake_clean):
         initialize_manuscript(
             path=path,
             title="Anonymous Lifecycle Example",
@@ -125,7 +128,7 @@ def test_build_and_cli_report_the_same_artifact() -> None:
         project_path = Path(temp) / "paper"
         _initialize(project_path)
         project = ManuscriptProject(project_path)
-        with mock.patch.object(_workflow, "build_clean_manuscript", _fake_clean):
+        with mock.patch.object(workflow.build, "build_clean_manuscript", _fake_clean):
             api_result = project.build()
             arguments = cli.build_parser().parse_args(
                 ["build", "--project", str(project_path)]
@@ -161,7 +164,7 @@ def test_build_all_returns_every_existing_final_artifact() -> None:
             Artifact("Submission package", package),
         )
         with mock.patch.object(
-            _workflow, "_prepare_submission", return_value=artifacts
+            workflow.submission, "_prepare_submission", return_value=artifacts
         ):
             result = ManuscriptProject(project_path).build_all()
 
@@ -238,12 +241,13 @@ def test_real_public_api_r0_r1_r2_and_cli_parity() -> None:
         latest = project_path / "revision_02"
         before_cli = _tex_digest(latest)
         cli_result = subprocess.run(
-            [sys.executable, str(project_path / "run.py"), "all"],
+            [sys.executable, "-m", "sci_manuscript", "all", "--project", "."],
             cwd=project_path,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
         )
         assert cli_result.returncode == 0, cli_result.stderr
         assert _tex_digest(latest) == before_cli

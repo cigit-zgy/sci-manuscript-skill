@@ -15,11 +15,14 @@ import yaml
 
 from sci_manuscript import Artifact
 from sci_manuscript import cli as lifecycle_run
-from sci_manuscript._runtime import diff, metadata, response, workspace
-from sci_manuscript._runtime.resources import load_revision_contract
+from sci_manuscript.latex import diff
+from sci_manuscript.metadata import manuscript as metadata
+from sci_manuscript.workflow import revision as response
+from sci_manuscript.workflow import project as workspace
+from sci_manuscript.resources import load_revision_contract
 
 ROOT = Path(__file__).resolve().parents[1]
-RESOURCES = ROOT / "src" / "sci_manuscript" / "resources"
+RESOURCES = ROOT / "src" / "resources"
 
 
 def _metadata(publisher: str = "elsevier") -> metadata.ManuscriptMetadata:
@@ -138,11 +141,12 @@ affiliations:
 class InitializationTest(unittest.TestCase):
     """Verify nested initial submission and publisher adaptation."""
 
-    def test_initializes_root_workspace_and_local_entrypoint(self) -> None:
+    def test_initializes_root_workspace_without_local_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
             workspace.initialize_project(_config(project))
-            for name in ("run.py", "references", "initial_submission", "tmp"):
+            self.assertFalse((project / "run.py").exists())
+            for name in ("references", "initial_submission", "tmp"):
                 self.assertTrue((project / name).exists(), name)
             expected = (
                 "manuscript.yaml",
@@ -175,10 +179,6 @@ class InitializationTest(unittest.TestCase):
                 "publisher_metadata.tex",
             ):
                 self.assertTrue((shared / name).exists(), name)
-            entrypoint = (project / "run.py").read_text(encoding="utf-8")
-            self.assertNotIn("SCI_MANUSCRIPT_SKILL_ROOT", entrypoint)
-            self.assertNotIn(str(ROOT), entrypoint)
-
     def test_publisher_section_mappings_are_applied(self) -> None:
         expected = {
             "elsevier": "02_methods.tex",
@@ -354,19 +354,6 @@ class InterfaceTest(unittest.TestCase):
                 )
             self.assertEqual(parser.parse_args(arguments).command, command)
 
-    def test_generated_wrapper_reports_missing_package_without_traceback(self) -> None:
-        wrapper = RESOURCES / "project_run.py"
-        result = subprocess.run(
-            [sys.executable, "-I", "-S", str(wrapper), "doctor"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("is not installed", result.stderr)
-        self.assertNotIn("Traceback", result.stderr)
-
     def test_revision_style_contains_only_user_settings(self) -> None:
         style = (RESOURCES / "revision_style.tex").read_text(encoding="utf-8")
         self.assertNotIn("ReviewLocationFile", style)
@@ -431,7 +418,7 @@ class InterfaceTest(unittest.TestCase):
             self.assertIn(operation, forbidden)
         self.assertIn(
             "load_revision_contract",
-            (ROOT / "src" / "sci_manuscript" / "_workflow.py").read_text(
+            (ROOT / "src" / "_workflow.py").read_text(
                 encoding="utf-8"
             ),
         )
@@ -508,7 +495,7 @@ class CitationProtectionTest(unittest.TestCase):
     """Inline citations are protected so decorations survive natbib output."""
 
     def test_protects_single_and_multi_key_citations(self) -> None:
-        from sci_manuscript._runtime.diff import _protect_inline_citations
+        from sci_manuscript.latex.diff import _protect_inline_citations
 
         text = "A \\cite{a} and \\cite{a,b,c} and \\cite[see]{d}.\n"
         protected = _protect_inline_citations(text)
@@ -517,7 +504,7 @@ class CitationProtectionTest(unittest.TestCase):
         self.assertIn(r"\mbox{\cite[see]{d}}", protected)
 
     def test_leaves_comment_lines_untouched(self) -> None:
-        from sci_manuscript._runtime.diff import _protect_inline_citations
+        from sci_manuscript.latex.diff import _protect_inline_citations
 
         text = "% \\cite{comment}\nText \\cite{real} % trailing \\cite{no}\n"
         protected = _protect_inline_citations(text)
@@ -526,7 +513,7 @@ class CitationProtectionTest(unittest.TestCase):
         self.assertIn("% trailing \\cite{no}", protected)
 
     def test_leaves_bibliography_and_plain_lines_alone(self) -> None:
-        from sci_manuscript._runtime.diff import _protect_inline_citations
+        from sci_manuscript.latex.diff import _protect_inline_citations
 
         text = "\\bibliography{references}\nPlain text.\n"
         protected = _protect_inline_citations(text)

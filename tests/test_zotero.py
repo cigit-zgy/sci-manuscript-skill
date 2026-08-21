@@ -8,7 +8,7 @@ from pathlib import Path
 from test_core import _config
 
 from sci_manuscript import cli as lifecycle_run
-from sci_manuscript._runtime import workspace
+from sci_manuscript.workflow import project as workspace
 
 
 def test_init_creates_shared_bibliography_and_zotero_guide() -> None:
@@ -40,7 +40,7 @@ def test_setup_zotero_recreates_missing_files_without_overwriting_guide() -> Non
         bibliography.unlink()
         guide.write_text("USER EDIT\n", encoding="utf-8")
 
-        created_bibliography, retained_guide = workspace.setup_zotero(project)
+        created_bibliography, retained_guide = workspace._setup_zotero_files(project)
 
         assert created_bibliography.is_file()
         assert created_bibliography.read_text(encoding="utf-8") == ""

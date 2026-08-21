@@ -20,7 +20,6 @@ def test_critical_runtime_and_publisher_resources_are_importable() -> None:
     required = (
         "authors.yaml",
         "revision_style.tex",
-        "project_run.py",
         "manuscript/preamble.tex",
         "response/response_en.tex",
         "response/response_zh.tex",
@@ -46,7 +45,7 @@ def test_revision_style_and_runtime_visual_semantics_are_frozen() -> None:
     style = resources.joinpath("revision_style.tex").read_bytes()
     assert hashlib.sha256(style).hexdigest() == STYLE_SHA256
 
-    path = ROOT / "src" / "sci_manuscript" / "_runtime" / "diff.py"
+    path = ROOT / "src" / "_runtime" / "diff.py"
     module = ast.parse(path.read_text(encoding="utf-8"))
     runtime = None
     for node in module.body:
@@ -70,7 +69,7 @@ def test_public_package_is_typed_and_version_comes_from_distribution_metadata() 
 
 
 def test_package_runtime_has_no_repo_or_sys_path_fallback() -> None:
-    package_root = ROOT / "src" / "sci_manuscript"
+    package_root = ROOT / "src"
     python_sources = [
         path
         for path in package_root.rglob("*.py")
@@ -82,14 +81,3 @@ def test_package_runtime_has_no_repo_or_sys_path_fallback() -> None:
     assert ' / "scripts"' not in combined
     assert "SCI_MANUSCRIPT_SKILL_ROOT" not in combined
 
-
-def test_generated_project_wrapper_depends_only_on_installed_package() -> None:
-    wrapper = (
-        files("sci_manuscript.resources")
-        .joinpath("project_run.py")
-        .read_text(encoding="utf-8")
-    )
-    assert "from sci_manuscript.cli import main" in wrapper
-    assert "SCI_MANUSCRIPT_SKILL_ROOT" not in wrapper
-    assert "sys.path" not in wrapper
-    assert str(ROOT) not in wrapper

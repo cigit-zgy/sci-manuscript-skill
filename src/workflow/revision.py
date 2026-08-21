@@ -1,4 +1,4 @@
-"""Internal reviewer-comment parsing and response-letter rendering."""
+"""Shared revision workflow: response-letter pipeline and start_revision."""
 
 from __future__ import annotations
 
@@ -7,21 +7,22 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .compile import compile_tex
-from .resources import read_resource_text
-from .review_ids import is_review_id
-from .workspace import ProjectConfig, WorkflowError, round_name
+from ..exceptions import WorkflowError
+from ..latex.compile import compile_tex
+from ..latex.numbering import parse_round, round_directory_name, round_name
+from ..latex.review_ids import is_review_id
+from ..resources import load_revision_contract, read_resource_text
+from ..results import Artifact, RevisionResult
+from . import project as runtime_workspace
+from .project import _require_project
+from .project import (
+    ProjectConfig,
+    actual_round_directory,
+    load_project,
+    normalize_project,
+    temporary_run,
+)
 
-EDITOR_HEADING = re.compile(r"^\s*#\s*Editor\s*$", re.IGNORECASE)
-ASSOCIATE_EDITOR_HEADING = re.compile(
-    r"^\s*#\s*Associate\s+Editor\s*$",
-    re.IGNORECASE,
-)
-REVIEWER_HEADING = re.compile(
-    r"^\s*#\s*Reviewer\s*#?\s*([^\s#]+)\s*$",
-    re.IGNORECASE,
-)
-COMMENT_START = re.compile(r"^\s*(\d+)\\?\.\s*(.*)$")
 PENDING_RESPONSE = re.compile(r"\\ResponsePending\{([^}]+)\}")
 LOCATION_USE = re.compile(r"\\ReviewLocation\{([^}]+)\}")
 
@@ -321,3 +322,33 @@ def build_response(
     output.parent.mkdir(exist_ok=True)
     shutil.copy2(result.pdf, output)
     return output
+
+def start_revision(
+    project: str | Path,
+    reviews: str | Path | None,
+    selected_round: str | int | None,
+    keep_temp: bool,
+) -> RevisionResult:
+    """Create only the next adjacent workspace and response infrastructure."""
+    load_revision_contract()  # enforce the packaged no-content-edit boundary
+    root = normalize_project(project)
+    _require_project(root)
+    latest = load_project(root)
+    target = parse_round(selected_round, latest.current_round + 1)
+    review_source = Path(reviews).expanduser().resolve() if reviews else None
+    if review_source is not None:
+        parse_reviews(review_source)
+    with temporary_run(root, keep_temp) as run_dir:
+        config = runtime_workspace.start_revision(latest, target, run_dir)
+        local_reviews = config.round_dir(target) / "response" / "reviewer_comments.md"
+        response_source = init_response(
+            config,
+            target,
+            review_source or local_reviews,
+        )
+    return RevisionResult(
+        project=root,
+        version=round_directory_name(target),
+        parent=round_directory_name(target - 1),
+        artifacts=(Artifact("Response source", response_source),),
+    )

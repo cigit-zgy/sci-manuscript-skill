@@ -10,7 +10,8 @@ from pathlib import Path
 
 from .compile import compile_tex, run_command
 from .review_ids import is_review_id
-from .workspace import ProjectConfig, WorkflowError, strip_provenance_wrappers
+from ..workflow.project import ProjectConfig, strip_provenance_wrappers
+from ..exceptions import WorkflowError
 
 INPUT_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
 LABEL_PATTERN = re.compile(r"\\newlabel\{review:(\d+):(start|end)\}\{\{(\d+)\}")

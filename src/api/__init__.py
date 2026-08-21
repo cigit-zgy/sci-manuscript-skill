@@ -1,26 +1,24 @@
-"""Public Python interface for sci-manuscript-skill."""
+"""Public programmatic interface for the manuscript workflow engine."""
 
-from ._version import package_version
-from .api import ManuscriptError, ManuscriptProject, initialize_manuscript
-from .results import (
+from .exceptions import ManuscriptError
+from .project import ManuscriptProject, initialize_manuscript, inspect_environment
+from .revision import ReindexResult, RevisionResult, RollbackResult
+from .status import (
+    ChainDiagnosticsResult,
+    DependencyCheck,
+    DoctorResult,
+    StatusResult,
+)
+from .validation import CheckResult
+from ..results import (
     Artifact,
     BibliographySyncResult,
     BuildResult,
-    ChainDiagnosticsResult,
-    CheckResult,
-    DependencyCheck,
-    DoctorResult,
     InitializationResult,
-    ReindexResult,
-    RevisionResult,
-    RollbackResult,
-    StatusResult,
     SubmissionResult,
     UpgradeResult,
     ZoteroSetupResult,
 )
-
-__version__ = package_version()
 
 __all__ = [
     "Artifact",
@@ -40,6 +38,6 @@ __all__ = [
     "SubmissionResult",
     "UpgradeResult",
     "ZoteroSetupResult",
-    "__version__",
     "initialize_manuscript",
+    "inspect_environment",
 ]

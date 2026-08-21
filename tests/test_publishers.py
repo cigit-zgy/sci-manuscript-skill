@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar
 
 ROOT = Path(__file__).resolve().parents[1]
-PUBLISHER_ASSETS = ROOT / "src" / "sci_manuscript" / "resources" / "journal_templates"
+PUBLISHER_ASSETS = ROOT / "src" / "resources" / "journal_templates"
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
     "AScY42YAAAAASUVORK5CYII="

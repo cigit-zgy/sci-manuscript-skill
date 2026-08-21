@@ -32,11 +32,16 @@ sci-manuscript = "sci_manuscript.cli:main"
 Repository = "https://github.com/cigit-zgy/sci-manuscript-skill"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"sci_manuscript" = "src"}
 include-package-data = true
-
-[tool.setuptools.packages.find]
-where = ["src"]
+packages = [
+    "sci_manuscript",
+    "sci_manuscript.api",
+    "sci_manuscript.latex",
+    "sci_manuscript.metadata",
+    "sci_manuscript.workflow",
+    "sci_manuscript.resources",
+]
 
 [tool.setuptools.package-data]
 sci_manuscript = ["py.typed"]

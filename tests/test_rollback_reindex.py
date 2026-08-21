@@ -12,7 +12,8 @@ import yaml
 
 from sci_manuscript import ManuscriptError, ManuscriptProject, initialize_manuscript
 from sci_manuscript import cli as lifecycle_run
-from sci_manuscript._runtime import rounds, workspace
+from sci_manuscript.latex import numbering as rounds
+from sci_manuscript.workflow import project as workspace
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,7 +36,7 @@ def _fake_clean(
 
 def _initialize(path: Path) -> ManuscriptProject:
     with mock.patch.object(
-        __import__("sci_manuscript._workflow", fromlist=["x"]),
+        __import__("sci_manuscript.workflow.initialize", fromlist=["x"]),
         "build_clean_manuscript",
         _fake_clean,
     ):
@@ -221,7 +222,7 @@ def test_reindex_transaction_rolls_back_on_failure() -> None:
             if path.is_dir() and path.name != "tmp"
         )
 
-        workflow = __import__("sci_manuscript._workflow", fromlist=["x"])
+        workflow = __import__("sci_manuscript.workflow.initialize", fromlist=["x"])
         original_move = shutil.move
 
         def flaky_move(source: Path, target: Path) -> None:

@@ -9,7 +9,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .results import (
+from ..exceptions import ManuscriptError
+from ..results import (
     BibliographySyncResult,
     BuildResult,
     ChainDiagnosticsResult,
@@ -27,15 +28,29 @@ from .results import (
 )
 
 
-class ManuscriptError(RuntimeError):
-    """Raised when a public lifecycle operation cannot complete safely."""
-
-
 def _run(operation: str, *args: object, **kwargs: object) -> object:
+    """Dispatch one operation into the workflow layer."""
     try:
-        from . import _workflow
+        from .. import workflow
 
-        action = getattr(_workflow, operation)
+        modules = {
+            "initialize_manuscript": "initialize",
+            "build": "build",
+            "check": "project",
+            "start_revision": "revision",
+            "prepare_submission": "submission",
+            "status": "project",
+            "setup_zotero": "project",
+            "sync_bib": "project",
+            "upgrade_project": "initialize",
+            "rollback_inspect": "rollback",
+            "remove_revision": "rollback",
+            "reindex_plan": "rollback",
+            "reindex_execute": "rollback",
+            "chain_diagnostics": "project",
+        }
+        module = getattr(workflow, modules[operation])
+        action = getattr(module, operation)
         return action(*args, **kwargs)
     except (RuntimeError, OSError) as exc:
         if isinstance(exc, ManuscriptError):
@@ -64,7 +79,6 @@ def _tool_version(name: str) -> tuple[bool, str]:
     )
     output = result.stdout.strip() or result.stderr.strip()
     return True, output.splitlines()[0] if output else executable
-
 
 def inspect_environment() -> DoctorResult:
     """Inspect required tools without importing runtime dependencies or changing them."""
@@ -137,7 +151,6 @@ def inspect_environment() -> DoctorResult:
     ready = all(check.available for check in checks if check.required)
     return DoctorResult(ready=ready, checks=checks)
 
-
 def initialize_manuscript(
     path: str | Path,
     title: str,
@@ -170,7 +183,6 @@ def initialize_manuscript(
     if not isinstance(result, InitializationResult):
         raise ManuscriptError("Initialization returned an invalid result.")
     return result
-
 
 class ManuscriptProject:
     """High-level lifecycle operations bound to one manuscript project root."""
