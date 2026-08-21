@@ -1,5 +1,5 @@
 revision:
-  default_scope: restricted_patch
+  default_permission: no_content_edit
 
 forbidden_operations:
   - scientific_content_change
@@ -10,12 +10,13 @@ forbidden_operations:
   - unsupported_addition
 
 allowed_operations:
-  - explicit_text_replacement
-  - explicit_text_insertion
-  - typo_fix
-  - formatting_fix
+  - user_supplied_exact_text_replacement
+  - user_supplied_exact_text_insertion
+  - user_confirmed_concrete_edit_operation
 
 require_confirmation:
+  - typo_fix
+  - formatting_fix
   - language_rewrite
   - paragraph_reorganization
   - new_reference

@@ -67,6 +67,12 @@ next revision, submission sources, or scientific content.
 
 ## Revision response
 
+Starting a revision creates infrastructure only. It must not change the parent
+or current manuscript content. Reviewer comments do not authorize the agent to
+draft, infer, or apply manuscript wording. Use the markup commands below only
+for an exact patch or concrete edit operation supplied or explicitly confirmed
+by the user.
+
 Reviewer comments use Markdown headings and consecutive numbered comments:
 
 ```text

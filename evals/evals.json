@@ -84,6 +84,39 @@
         "No manuscript project, revision, response letter, or submission artifact is created.",
         "The agent does not fabricate scientific claims or decide whether the reviewer is correct."
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "Reviewer asks for clarification. Please prepare the revision.",
+      "expected_output": "The agent creates revision infrastructure but does not infer or apply manuscript wording from the reviewer comment.",
+      "files": [],
+      "expectations": [
+        "The parent manuscript source hash is unchanged.",
+        "The agent asks for exact user-supplied or explicitly confirmed edit text before changing manuscript content.",
+        "Response and diff infrastructure may be created without a manuscript edit."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "开始第一轮修回。",
+      "expected_output": "The agent creates revision_1 and response infrastructure only.",
+      "files": [],
+      "expectations": [
+        "revision_1 is created from initial_submission.",
+        "No manuscript prose is authored, polished, rewritten, or reorganized.",
+        "The initial_submission manuscript source hash is unchanged."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "生成 marked PDF，不要做其他操作。",
+      "expected_output": "The agent builds the marked PDF from existing adjacent sources without modifying any TeX file.",
+      "files": [],
+      "expectations": [
+        "The marked PDF is generated from the existing parent and current revision.",
+        "Every manuscript TeX source hash is unchanged before and after the build.",
+        "No autonomous content edit is applied."
+      ]
     }
   ]
 }

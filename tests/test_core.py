@@ -14,13 +14,16 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import diff  # noqa: E402
 import metadata  # noqa: E402
 import response  # noqa: E402
-import run as lifecycle_run  # noqa: E402
 import workspace  # noqa: E402
+
+from sci_manuscript import Artifact  # noqa: E402
+from sci_manuscript import cli as lifecycle_run  # noqa: E402
 
 
 def _metadata(publisher: str = "elsevier") -> metadata.ManuscriptMetadata:
@@ -384,11 +387,13 @@ class InterfaceTest(unittest.TestCase):
         contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(
-            contract["revision"]["default_scope"],
-            "restricted_patch",
+            contract["revision"]["default_permission"],
+            "no_content_edit",
         )
         self.assertIn("scientific_content_change", contract["forbidden_operations"])
         self.assertIn("new_claim", contract["require_confirmation"])
+        self.assertIn("Agent MUST NOT autonomously modify", skill)
+        self.assertNotIn("concrete change directly required", skill)
         self.assertIn("references/revision_contract.yaml", skill)
 
     def test_latexdiff_uses_layout_safe_options(self) -> None:
@@ -413,18 +418,18 @@ class InterfaceTest(unittest.TestCase):
             cover.touch()
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                lifecycle_run._report_generated(
+                lifecycle_run._report_artifacts(
                     "Submission completed",
                     "revision_1",
                     project,
-                    [
-                        ("Clean manuscript", clean),
-                        ("Cover letter", cover),
-                        ("Submission package", package),
-                    ],
+                    (
+                        Artifact("Clean manuscript", clean),
+                        Artifact("Cover letter", cover),
+                        Artifact("Submission package", package),
+                    ),
                 )
         report = output.getvalue()
-        self.assertIn("Generated files:", report)
+        self.assertIn("Generated:", report)
         self.assertIn("revision_1/output/manuscript_clean.pdf", report)
         self.assertIn(
             "revision_1/submission/package/cover_letter.pdf",

@@ -34,7 +34,18 @@ and submission decisions.
 | Isolated builds | Routes compiler intermediates through `tmp/` and removes successful temporary runs |
 | PDF verification | Uses Poppler text extraction and rendering tools for output QA |
 
-## 3. Installation
+## 3. Actual output
+
+The images below come from an anonymous test fixture compiled by the public API.
+They contain no unpublished research content or local filesystem paths.
+
+| Marked manuscript | Response letter |
+| --- | --- |
+| ![Anonymous marked manuscript example](docs/images/marked_manuscript.png) | ![Anonymous response letter example](docs/images/response_letter.png) |
+
+![Anonymous submission package structure](docs/images/submission_package.png)
+
+## 4. Installation
 
 ### Runtime requirements
 
@@ -60,7 +71,7 @@ cd sci-manuscript-skill
 
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "PyYAML>=6,<7"
+python -m pip install -e .
 ```
 
 On macOS with Homebrew, the supported compact toolchain is:
@@ -81,7 +92,7 @@ python scripts/run.py doctor
 were found. A `BLOCKED` result lists missing requirements and exits with status
 2; it never installs or upgrades anything.
 
-## 4. Quick Start
+## 5. Quick Start
 
 The preferred interface is to ask an agent to execute the skill entrypoint:
 
@@ -143,7 +154,7 @@ recorded during initialization. Keep that installation available. If the skill
 repository is moved, set `SCI_MANUSCRIPT_SKILL_ROOT` to its new absolute path
 before running project commands.
 
-## 5. Command line
+## 6. Command line
 
 Every generated project contains one copied `run.py`. Use that entrypoint for
 all later operations.
@@ -171,7 +182,56 @@ Compatibility aliases are `render` for `build`, `revise` for `revision`,
 `package` for `submission`, and `validation` for `check`. They are visible in
 `python run.py --help` and preserve the canonical command behavior.
 
-## 6. User configuration
+`submission` and `all` print every final artifact actually produced, including
+clean, marked, response, cover-letter, highlights, graphical-abstract, checklist,
+and package paths when enabled. Paths are project-relative; compiler staging and
+temporary files are never presented as deliverables.
+
+## 7. Python API
+
+The installable `sci_manuscript` package is the stable programmatic interface.
+CLI commands and Python calls use the same lifecycle implementation; modules in
+`scripts/` remain internal runtime details.
+
+```python
+from sci_manuscript import ManuscriptProject, initialize_manuscript
+
+initialized = initialize_manuscript(
+    path="/absolute/path/to/my-paper",
+    title="Anonymous manuscript title",
+    journal="Target Journal",
+    publisher="elsevier",
+    language="en",
+    authors="/absolute/path/to/authors.yaml",
+    selected_authors=("First Author", "Corresponding Author"),
+    bib="/absolute/path/to/references.bib",
+)
+
+project = ManuscriptProject(initialized.project)
+status = project.status()
+build = project.build()
+revision = project.start_revision(reviews="/absolute/path/to/reviews.md")
+submission = project.build_all()
+```
+
+All operations return frozen dataclass results containing `Path` objects for
+final artifacts. They do not expose `argparse.Namespace` or compiler, diff,
+metadata-rendering, and temporary-file internals.
+
+| CLI | Python API |
+| --- | --- |
+| `run.py doctor` | `project.doctor()` |
+| `run.py init ...` | `initialize_manuscript(...)` |
+| `run.py status` | `project.status()` |
+| `run.py build` | `project.build()` |
+| `run.py revision` | `project.start_revision(reviews=...)` |
+| `run.py submission` | `project.prepare_submission()` |
+| `run.py all` | `project.build_all()` |
+| `run.py check` | `project.check()` |
+| `run.py setup-zotero` | `project.setup_zotero()` |
+| `run.py sync-bib` | `project.sync_bib(...)` |
+
+## 8. User configuration
 
 ### `manuscript.yaml`
 
@@ -244,7 +304,7 @@ placeholder prose with author-written content. The figures and tables
 directories start empty; add only manuscript assets. The workflow does not
 create scientific figures or infer missing content.
 
-## 7. Project structure
+## 9. Project structure
 
 ```text
 manuscript/
@@ -288,7 +348,7 @@ root. Shared author data, bibliography, revision style, and all publisher
 classes exist exactly once under root `references/`. Workflow execution still
 uses the installed skill code.
 
-## 8. Zotero and bibliography workflow
+## 10. Zotero and bibliography workflow
 
 The recommended bibliography workflow is Zotero Better BibTeX Automatic
 Export. It keeps the BibTeX database current while leaving LaTeX with one
@@ -313,7 +373,7 @@ guide. It does **not** open Zotero, change Zotero settings, access the Zotero
 database, or call a Zotero API. Builds never synchronize the bibliography
 implicitly. `sync-bib` remains an explicit manual fallback.
 
-## 9. Publisher templates
+## 11. Publisher templates
 
 | Publisher key | Bundled resource | Intended use |
 | --- | --- | --- |
@@ -333,7 +393,7 @@ content, but journals update instructions independently. Check the current
 Guide for Authors and update the selected resource when necessary. Upstream
 templates retain their own licenses; see `THIRD_PARTY_NOTICES.md`.
 
-## 10. Revision workflow
+## 12. Revision workflow
 
 The ancestry is explicit and gap-free:
 
@@ -351,6 +411,10 @@ python run.py revision --reviews /absolute/path/to/reviewer-comments.md
 
 The command rejects r0-to-r2 jumps and copies manuscript state only from the
 immediate parent; it never copies or regenerates the shared references tree.
+Starting a revision does not authorize or perform a manuscript edit, and the
+parent source hash remains unchanged. Reviewer comments alone never authorize
+the agent to decide or draft replacement text; an exact patch or concrete edit
+operation must be supplied or explicitly confirmed by the user.
 Reviewer-linked additions use `\review{1-1}{Revised text.}`; author-initiated
 additions use `\selfadd{Additional text.}`. The marked manuscript compares the
 current version against its direct parent, so added and deleted text remain
@@ -383,7 +447,7 @@ flowchart TD
     G[Marked manuscript and response] --> B
 ```
 
-## 11. Validation and development
+## 13. Validation and development
 
 The repository separates agent routing, deterministic execution, on-demand
 guidance, static output resources, and the two validation layers:
@@ -391,7 +455,8 @@ guidance, static output resources, and the two validation layers:
 | Directory | Purpose |
 | --- | --- |
 | `SKILL.md` | Agent routing, authorization boundaries, and workflow invariants |
-| `scripts/` | Deterministic CLI, workspace, metadata, compiler, diff, and response runtime |
+| `src/sci_manuscript/` | Stable Python API, structured results, shared lifecycle orchestration, and thin CLI adapter |
+| `scripts/` | Internal deterministic workspace, metadata, compiler, diff, and response runtime plus the project bootstrap |
 | `references/` | Agent-readable environment and lifecycle guidance loaded only when needed |
 | `assets/` | Author examples, revision style, manuscript sources, correspondence templates, and publisher resources copied or compiled by the runtime |
 | `evals/` | Agent triggering, routing, authorization, and scope-boundary evaluations |
@@ -408,7 +473,7 @@ Run the release checks from the repository root:
 pytest
 ruff format --check .
 ruff check .
-mypy scripts tests
+mypy src scripts tests
 ```
 
 Release validation additionally exercises a fresh r0 -> r1 -> r2 lifecycle,
@@ -420,7 +485,7 @@ for manuscript users but required before publishing changes.
 and pull requests. Publisher class compilation remains part of the local
 release gate when Tectonic is available.
 
-## 12. License
+## 14. License
 
 Original workflow code, documentation, tests, and original templates are
 released under the MIT License in `LICENSE`. Bundled publisher class and

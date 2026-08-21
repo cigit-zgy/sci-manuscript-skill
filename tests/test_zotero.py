@@ -7,11 +7,13 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import run as lifecycle_run  # noqa: E402
 import workspace  # noqa: E402
 from test_core import _config  # noqa: E402
+
+from sci_manuscript import cli as lifecycle_run  # noqa: E402
 
 
 def test_init_creates_shared_bibliography_and_zotero_guide() -> None:

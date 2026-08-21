@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "sci-manuscript-skill"
 version = "3.1.0"
@@ -5,6 +9,12 @@ description = "LaTeX scientific manuscript lifecycle management skill."
 requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = ["PyYAML>=6.0,<7"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.ruff]
 line-length = 88
@@ -20,3 +30,6 @@ disallow_untyped_defs = true
 no_implicit_optional = true
 warn_return_any = true
 warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "scripts"]
