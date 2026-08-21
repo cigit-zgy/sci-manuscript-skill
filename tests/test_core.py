@@ -30,12 +30,9 @@ def _metadata(publisher: str = "elsevier") -> metadata.ManuscriptMetadata:
         round_number=0,
         parent_round=None,
         submission=metadata.SubmissionSettings(True, True, True),
-        first_authors=("First Author", "Co-first Author"),
-        corresponding_authors=(
-            "Corresponding Author",
-            "Co-corresponding Author",
-        ),
-        authors=(),
+        first_authors=("Guangyao Zhao", "Fengjun Yin"),
+        corresponding_authors=("Di Wu", "Hong Liu"),
+        authors=("Cheng Song",),
     )
 
 
@@ -59,14 +56,14 @@ class MetadataTest(unittest.TestCase):
             self.assertEqual(loaded, config.metadata)
             self.assertEqual(
                 tuple(author.name for author in selection.first_authors),
-                ("First Author", "Co-first Author"),
+                ("Guangyao Zhao", "Fengjun Yin"),
             )
             self.assertEqual(
                 tuple(author.name for author in selection.corresponding_authors),
-                ("Corresponding Author", "Co-corresponding Author"),
+                ("Di Wu", "Hong Liu"),
             )
-            self.assertIn("corresponding.author@example.org", generated)
-            self.assertIn("cocorresponding.author@example.org", generated)
+            self.assertIn("wd@cigit.ac.cn", generated)
+            self.assertIn("liuhong@cigit.ac.cn", generated)
             yaml_text = (initial / "manuscript.yaml").read_text(encoding="utf-8")
             self.assertIn("name: initial_submission", yaml_text)
             self.assertIn("template: elsarticle", yaml_text)
@@ -130,8 +127,8 @@ affiliations:
                 encoding="utf-8"
             )
             preamble = (initial / "preamble.tex").read_text(encoding="utf-8")
-            self.assertIn("\\author{第一作者", generated)
-            self.assertIn("共同通讯作者", generated)
+            self.assertIn("\\author{赵光耀", generated)
+            self.assertIn("刘鸿", generated)
             self.assertIn("\\renewcommand{\\abstractname}{摘要}", preamble)
 
 

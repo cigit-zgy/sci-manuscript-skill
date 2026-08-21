@@ -1,37 +1,53 @@
 authors:
-  First Author:
-    name_en: First Author
-    name_zh: 第一作者
-    email: first.author@example.org
+  Guangyao Zhao:
+    name_en: Guangyao Zhao
+    name_zh: 赵光耀
+    email: zhaoguangyao@cigit.ac.cn
     role: first_author
     affiliations:
       - 1
+      - 2
 
-  Co-first Author:
-    name_en: Co-first Author
-    name_zh: 共同第一作者
-    email: cofirst.author@example.org
-    role: first_author
+  Fengjun Yin:
+    name_en: Fengjun Yin
+    name_zh: 殷逢俊
+    email: yinfengjun@cigit.ac.cn
+    role: author
     affiliations:
       - 1
+      - 2
 
-  Corresponding Author:
-    name_en: Corresponding Author
-    name_zh: 通讯作者
-    email: corresponding.author@example.org
+  Di Wu:
+    name_en: Di Wu
+    name_zh: 吴镝
+    email: wd@cigit.ac.cn
+    role: author
+    affiliations:
+      - 1
+      - 2
+
+  Cheng Song:
+    name_en: Cheng Song
+    name_zh: 宋诚
+    role: author
+    affiliations:
+      - 1
+      - 2
+
+  Hong Liu:
+    name_en: Hong Liu
+    name_zh: 刘鸿
+    email: liuhong@cigit.ac.cn
     role: corresponding_author
     affiliations:
       - 1
-
-  Co-corresponding Author:
-    name_en: Co-corresponding Author
-    name_zh: 共同通讯作者
-    email: cocorresponding.author@example.org
-    role: corresponding_author
-    affiliations:
-      - 1
+      - 2
 
 affiliations:
   1:
-    name_en: Example Research Institute
-    address: Example City, Example Country
+    name_en: Chongqing Institute of Green and Intelligent Technology, Chinese Academy of Sciences
+    address: Chongqing 400714, China
+
+  2:
+    name_en: Three Gorges Laboratory
+    address: Chongqing 400714, China
