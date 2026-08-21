@@ -1,37 +1,44 @@
-% =========================
-% Color definition
-% =========================
+% =====================================
+% Added text
+% =====================================
 
+% Added text color.
 \definecolor{RevisionAddedColor}{RGB}{0,92,153}
-\definecolor{RevisionDeletedColor}{RGB}{190,35,35}
-\definecolor{RevisionSelfColor}{RGB}{0,120,80}
 
-% =========================
-% Addition style
-% =========================
+% Added text underline style. Alternatives include \uline and identity (#1).
+% The runtime loads xeCJKfntef for CJK projects, which patches ulem so wavy
+% and strike lines can break across CJK text while staying compatible with
+% embedded natbib citations; plain ulem suffices for Latin scripts.
+\newcommand{\RevisionAddedUnderline}[1]{\uwave{#1}}
 
-% Color-only markup preserves normal word and CJK line breaking.
-\newcommand{\RevisionAddedText}[1]{{\color{RevisionAddedColor}#1}}
-\newcommand{\RevisionSelfText}[1]{{\color{RevisionSelfColor}#1}}
+% =====================================
+% Deleted text
+% =====================================
 
-% =========================
-% Deletion style
-% =========================
+% Deleted text color.
+\definecolor{RevisionDeletedColor}{RGB}{220,45,45}
 
-% Deleted text remains visible in red without a non-breaking strikeout box.
-\newcommand{\RevisionDeletedText}[1]{{\color{RevisionDeletedColor}#1}}
+% Deleted text strikeout style. Use identity (#1) to disable the strikeout.
+\newcommand{\RevisionDeletedStrikeout}[1]{\sout{#1}}
 
-% =========================
-% Equation handling
-% =========================
+% =====================================
+% Background
+% =====================================
 
-% scripts/diff.py marks changed display equations as whole units. The color-only
-% text commands above are safe in both text and math mode.
+% Background wrappers. Replace #1 with \colorbox{color}{#1} to enable.
+\newcommand{\RevisionAddedBackground}[1]{#1}
+\newcommand{\RevisionDeletedBackground}[1]{#1}
+\newcommand{\RevisionSelfBackground}[1]{#1}
 
-% =========================
-% Long text handling
-% =========================
+% =====================================
+% Font
+% =====================================
 
-% Applied only to marked builds; it gives TeX limited extra line-break freedom
-% without changing the manuscript margins or font size.
-\newcommand{\RevisionEmergencyStretch}{2em}
+% Leave empty to inherit the manuscript font.
+\newcommand{\RevisionAddedFont}{}
+\newcommand{\RevisionDeletedFont}{}
+\newcommand{\RevisionSelfFont}{}
+
+% Author-initiated additions are visually distinct from reviewer-linked text.
+\definecolor{RevisionSelfColor}{RGB}{0,135,90}
+\newcommand{\RevisionSelfUnderline}[1]{\uline{#1}}

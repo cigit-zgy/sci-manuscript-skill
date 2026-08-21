@@ -1,0 +1,37 @@
+% =========================
+% Color definition
+% =========================
+
+\definecolor{RevisionAddedColor}{RGB}{0,92,153}
+\definecolor{RevisionDeletedColor}{RGB}{190,35,35}
+\definecolor{RevisionSelfColor}{RGB}{0,120,80}
+
+% =========================
+% Addition style
+% =========================
+
+% Color-only markup preserves normal word and CJK line breaking.
+\newcommand{\RevisionAddedText}[1]{{\color{RevisionAddedColor}#1}}
+\newcommand{\RevisionSelfText}[1]{{\color{RevisionSelfColor}#1}}
+
+% =========================
+% Deletion style
+% =========================
+
+% Deleted text remains visible in red without a non-breaking strikeout box.
+\newcommand{\RevisionDeletedText}[1]{{\color{RevisionDeletedColor}#1}}
+
+% =========================
+% Equation handling
+% =========================
+
+% scripts/diff.py marks changed display equations as whole units. The color-only
+% text commands above are safe in both text and math mode.
+
+% =========================
+% Long text handling
+% =========================
+
+% Applied only to marked builds; it gives TeX limited extra line-break freedom
+% without changing the manuscript margins or font size.
+\newcommand{\RevisionEmergencyStretch}{2em}

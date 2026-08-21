@@ -63,6 +63,15 @@ _LEGACY_WRAPPER_HASHES = frozenset(
 )
 _LEGACY_ROOT_LINE = re.compile(r'_SKILL_ROOT_HINT = Path\("[^"]*"\)')
 
+# Color-only revision styles shipped before the breakable underline/strikeout
+# hook style; projects carrying one of these generated copies are upgraded to
+# the packaged style, while user-customized styles are preserved.
+_LEGACY_REVISION_STYLE_HASHES = frozenset(
+    {
+        "329eb1336c01e87af1eb4f19e1f3f434e408a4e9069c8837d67d17d3ebb0eb4a",
+    }
+)
+
 
 def _require_project(project: Path) -> None:
     if not is_initialized(project):
@@ -566,7 +575,25 @@ def upgrade_project(project: str | Path) -> UpgradeResult:
             "overwrite."
         )
 
-    if from_format == CURRENT_PROJECT_FORMAT and wrapper_current:
+    style_target = root / "references" / "revision_style.tex"
+    current_style = read_resource_text("revision_style.tex")
+    style_text = (
+        style_target.read_text(encoding="utf-8") if style_target.is_file() else None
+    )
+    style_current = style_text == current_style
+    style_legacy = (
+        style_text is not None
+        and hashlib.sha256(style_target.read_bytes()).hexdigest()
+        in _LEGACY_REVISION_STYLE_HASHES
+    )
+    if style_text is not None and not style_current and not style_legacy:
+        raise WorkflowError(
+            "Existing references/revision_style.tex is user-customized; refusing "
+            "to overwrite it. Copy the packaged style manually to adopt the "
+            "current appearance."
+        )
+
+    if from_format == CURRENT_PROJECT_FORMAT and wrapper_current and style_current:
         return UpgradeResult(
             project=root,
             status="already_current",
@@ -580,6 +607,10 @@ def upgrade_project(project: str | Path) -> UpgradeResult:
     changes: list[tuple[Path, str, int]] = []
     if not wrapper_current:
         changes.append((wrapper, current_wrapper, 0o755))
+    if not style_current:
+        changes.append(
+            (style_target, current_style, style_target.stat().st_mode & 0o777)
+        )
     for config in configs:
         target = config.round_dir(config.current_round) / "manuscript.yaml"
         if config.metadata.format_version == CURRENT_PROJECT_FORMAT:

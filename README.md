@@ -215,9 +215,12 @@ and package paths when enabled. Paths are project-relative; compiler staging and
 temporary files are never presented as deliverables.
 
 `upgrade-project` is a no-op for a current project, upgrades only recognized
-legacy wrappers and workflow metadata, refuses customized wrappers and future
-format versions, and never changes manuscript prose, sections, figures, tables,
-bibliography, author data, response text, or editable submission sources.
+legacy wrappers and workflow metadata, replaces a recognized generated
+color-only `references/revision_style.tex` with the packaged appearance style,
+refuses customized wrappers and future format versions, and never changes
+manuscript prose, sections, figures, tables, bibliography, author data, response
+text, or editable submission sources. A user-customized revision style is
+preserved and blocks the upgrade rather than being overwritten.
 
 ## 7. Python API
 
@@ -490,8 +493,16 @@ operation must be supplied or explicitly confirmed by the user.
 Reviewer-linked additions use `\review{1-1}{Revised text.}`; author-initiated
 additions use `\selfadd{Additional text.}`. The marked manuscript compares the
 current version against its direct parent, so added and deleted text remain
-traceable. User-adjustable colors and markup appearance are isolated in
-`references/revision_style.tex`.
+traceable. All appearance — colors, underline style, strikeout style,
+backgrounds, and fonts — is isolated in the user-editable
+`references/revision_style.tex`, which defines appearance hooks such as
+`\RevisionAddedUnderline`, `\RevisionDeletedStrikeout`, and background
+wrappers. The runtime wires those hooks to `latexdiff` output: added text is
+blue with a wavy underline by default, deleted text is red with a strikeout,
+and author-initiated additions are green with a single underline. Projects
+initialized before the hook style keep their color-only appearance because the
+runtime provides identity defaults for missing hooks; a recognized old
+color-only style is replaced atomically by `upgrade-project`.
 
 ### Response input and stable IDs
 

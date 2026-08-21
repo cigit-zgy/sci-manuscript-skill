@@ -11,8 +11,8 @@ from pathlib import Path
 import sci_manuscript
 
 ROOT = Path(__file__).resolve().parents[1]
-STYLE_SHA256 = "329eb1336c01e87af1eb4f19e1f3f434e408a4e9069c8837d67d17d3ebb0eb4a"
-RUNTIME_SHA256 = "9e1fdf98879911d71a83a314a9ed409acad2270287865bccafad25ea8acacc48"
+STYLE_SHA256 = "490884f07113dcc8d2e6cd611a9aa53a9777f7333b2de7a0aef515d00fbdcf38"
+RUNTIME_SHA256 = "75ed945995a1d687d66e0059496eff72b998728f22edb4491d3d86ac9aa977d8"
 
 
 def test_critical_runtime_and_publisher_resources_are_importable() -> None:

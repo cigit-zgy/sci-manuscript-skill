@@ -36,7 +36,7 @@ building a marked PDF changes no manuscript source.
 | --- | --- | --- |
 | New manuscript | [environment.md](references/environment.md) when dependency state is unknown; initialization section of [workflow.md](references/workflow.md) | Run `doctor`, collect required user data, run `init`, and verify the first PDF |
 | Build or inspect | No reference normally needed | Run project `python run.py build`, `check`, or `status`; do not initialize or create a revision |
-| Start a revision | [revision_contract.yaml](references/revision_contract.yaml) and revision/response sections of [workflow.md](references/workflow.md) | Enforce no-content-edit, identify the highest round, and create only its adjacent child |
+| Start a revision | [revision_contract.yaml](src/sci_manuscript/resources/revision_contract.yaml) and revision/response sections of [workflow.md](references/workflow.md) | Enforce no-content-edit, identify the highest round, and create only its adjacent child |
 | Prepare submission | Submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for r0 or `all` for a completed revision |
 | Configure bibliography | Bibliography section of [workflow.md](references/workflow.md) | Prefer Better BibTeX Automatic Export; use `setup-zotero`, `check`, and explicit `sync-bib` fallback only |
 | Upgrade an existing project | Version model in [workflow.md](references/workflow.md) | Run `upgrade-project` only on recognized generated infrastructure; verify user-content hashes before and after |

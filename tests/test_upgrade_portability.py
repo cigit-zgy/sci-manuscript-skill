@@ -151,3 +151,44 @@ def test_project_moves_between_unicode_paths_without_embedded_origin() -> None:
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             assert not any(value in text for value in forbidden), path
+
+
+def test_upgrade_syncs_legacy_revision_style_and_preserves_sources() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        project_path = Path(temp) / "Style Upgrade"
+        project = _initialize(project_path)
+        legacy_style = ROOT / "tests" / "fixtures" / "legacy_revision_style_v31.tex"
+        style_target = project_path / "references" / "revision_style.tex"
+        style_target.write_text(
+            legacy_style.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        before = workspace.scientific_source_hashes(project_path)
+
+        result = project.upgrade_project()
+
+        assert result.status == "upgraded"
+        assert result.from_format == metadata.CURRENT_PROJECT_FORMAT
+        assert result.to_format == metadata.CURRENT_PROJECT_FORMAT
+        packaged = ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.tex"
+        assert style_target.read_text(encoding="utf-8") == packaged.read_text(
+            encoding="utf-8"
+        )
+        assert workspace.scientific_source_hashes(project_path) == before
+
+
+def test_upgrade_refuses_user_customized_revision_style() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        project_path = Path(temp) / "Custom Style"
+        project = _initialize(project_path)
+        style_target = project_path / "references" / "revision_style.tex"
+        style_target.write_text(
+            "\\definecolor{RevisionAddedColor}{RGB}{1,2,3}\n"
+            "\\newcommand{\\RevisionAddedUnderline}[1]{#1}\n",
+            encoding="utf-8",
+        )
+        before = style_target.read_text(encoding="utf-8")
+
+        with pytest.raises(ManuscriptError, match="user-customized"):
+            project.upgrade_project()
+
+        assert style_target.read_text(encoding="utf-8") == before

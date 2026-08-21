@@ -371,20 +371,34 @@ class InterfaceTest(unittest.TestCase):
         style = (RESOURCES / "revision_style.tex").read_text(encoding="utf-8")
         self.assertNotIn("ReviewLocationFile", style)
         self.assertNotIn("DIFadd", style)
-        self.assertNotIn("\\uwave", style)
-        self.assertNotIn("\\sout", style)
-        self.assertIn("% Equation handling", style)
-        self.assertIn("% Long text handling", style)
-        self.assertIn("\\RevisionAddedText", style)
-        self.assertIn("\\RevisionDeletedText", style)
+        self.assertNotIn("DIFdel", style)
+        # Style owns appearance hooks; the runtime wires them to latexdiff.
+        self.assertIn("\\RevisionAddedUnderline", style)
+        self.assertIn("\\uwave", style)
+        self.assertIn("\\RevisionDeletedStrikeout", style)
+        self.assertIn("\\sout", style)
+        self.assertIn("\\RevisionSelfUnderline", style)
+        self.assertIn("\\RevisionAddedBackground", style)
+        self.assertIn("\\RevisionDeletedBackground", style)
+        self.assertIn("\\RevisionSelfBackground", style)
+        # The style must not hard-code the latexdiff commands themselves.
+        self.assertIn("\\RequirePackage{ulem}", diff.REVISION_RUNTIME)
+        self.assertIn(
+            "\\RevisionAddedUnderline",
+            diff.REVISION_RUNTIME,
+        )
+        self.assertIn(
+            "\\RevisionDeletedStrikeout",
+            diff.REVISION_RUNTIME,
+        )
         self.assertIn("ReviewLocationFile", diff.REVISION_RUNTIME)
 
     def test_revision_contract_is_restricted_and_routed(self) -> None:
-        contract_path = ROOT / "references" / "revision_contract.yaml"
+        # Single source of truth: the packaged resource only. The repository
+        # must not maintain a second agent-facing copy under references/.
+        self.assertFalse((ROOT / "references" / "revision_contract.yaml").exists())
         packaged_path = RESOURCES / "revision_contract.yaml"
-        contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
-        packaged = yaml.safe_load(packaged_path.read_text(encoding="utf-8"))
-        self.assertEqual(contract, packaged)
+        contract = yaml.safe_load(packaged_path.read_text(encoding="utf-8"))
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(
             contract["revision"]["default_permission"],
@@ -394,7 +408,7 @@ class InterfaceTest(unittest.TestCase):
         self.assertIn("new_claim", contract["require_confirmation"])
         self.assertIn("Agent MUST NOT autonomously modify", skill)
         self.assertNotIn("concrete change directly required", skill)
-        self.assertIn("references/revision_contract.yaml", skill)
+        self.assertIn("resources/revision_contract.yaml", skill)
 
     def test_revision_contract_is_enforced_by_the_runtime(self) -> None:
         loaded = load_revision_contract()
@@ -488,3 +502,32 @@ class LocationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CitationProtectionTest(unittest.TestCase):
+    """Inline citations are protected so decorations survive natbib output."""
+
+    def test_protects_single_and_multi_key_citations(self) -> None:
+        from sci_manuscript._runtime.diff import _protect_inline_citations
+
+        text = "A \\cite{a} and \\cite{a,b,c} and \\cite[see]{d}.\n"
+        protected = _protect_inline_citations(text)
+        self.assertIn(r"\mbox{\cite{a}}", protected)
+        self.assertIn(r"\mbox{\cite{a,b,c}}", protected)
+        self.assertIn(r"\mbox{\cite[see]{d}}", protected)
+
+    def test_leaves_comment_lines_untouched(self) -> None:
+        from sci_manuscript._runtime.diff import _protect_inline_citations
+
+        text = "% \\cite{comment}\nText \\cite{real} % trailing \\cite{no}\n"
+        protected = _protect_inline_citations(text)
+        self.assertIn("% \\cite{comment}", protected)
+        self.assertIn(r"\mbox{\cite{real}}", protected)
+        self.assertIn("% trailing \\cite{no}", protected)
+
+    def test_leaves_bibliography_and_plain_lines_alone(self) -> None:
+        from sci_manuscript._runtime.diff import _protect_inline_citations
+
+        text = "\\bibliography{references}\nPlain text.\n"
+        protected = _protect_inline_citations(text)
+        self.assertEqual(protected, text)
