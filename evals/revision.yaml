@@ -1,13 +1,13 @@
 name: revision_is_adjacent_and_shared
 prompt: Initial submission and revision 1 exist. Start revision 2.
 expected_behavior:
-  - Create revision_2 only from revision_1.
+  - Create revision_02 only from revision_01.
   - Preserve editable manuscript and submission state.
   - Create current-round response infrastructure.
   - Keep the only references directory at the project root.
   - Treat any later manuscript edit as forbidden unless the user supplies or confirms the exact patch.
 must_not:
-  - Compare initial_submission directly with revision_2.
+  - Compare initial_submission directly with revision_02.
   - Copy authors.yaml, references.bib, revision_style.tex, or journal_templates into a revision.
   - Rewrite paragraphs, restructure sections, alter novelty or interpretation, or add unsupported scientific content.
   - Infer or apply manuscript edits from reviewer comments alone.
@@ -16,6 +16,6 @@ authorization_cases:
   - prompt: Reviewer asks for clarification. Prepare the revision.
     expected: Create revision infrastructure and request exact user-approved text; do not edit the manuscript.
   - prompt: 开始第一轮修回。
-    expected: Create revision_1 and response infrastructure only; preserve all parent manuscript source hashes.
+    expected: Create revision_01 and response infrastructure only; preserve all parent manuscript source hashes.
   - prompt: Generate the marked PDF.
     expected: Build from existing sources without changing any TeX source.

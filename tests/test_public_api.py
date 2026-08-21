@@ -113,7 +113,7 @@ def test_start_revision_preserves_all_parent_tex_hashes() -> None:
 
         result = ManuscriptProject(project_path).start_revision(reviews=reviews)
 
-        assert result.version == "revision_1"
+        assert result.version == "revision_01"
         assert result.parent == "initial_submission"
         assert _tex_digest(parent) == before
         assert result.artifacts[0].path.is_file()
@@ -196,7 +196,7 @@ def test_real_public_api_r0_r1_r2_and_cli_parity() -> None:
             parent_name = (
                 "initial_submission"
                 if round_number == 1
-                else f"revision_{round_number - 1}"
+                else f"revision_{round_number - 1:02d}"
             )
             parent = project_path / parent_name
             before = _tex_digest(parent)
@@ -235,7 +235,7 @@ def test_real_public_api_r0_r1_r2_and_cli_parity() -> None:
                 "graphical_abstract.pdf",
             }.issubset(names)
 
-        latest = project_path / "revision_2"
+        latest = project_path / "revision_02"
         before_cli = _tex_digest(latest)
         cli_result = subprocess.run(
             [sys.executable, str(project_path / "run.py"), "all"],

@@ -7,6 +7,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from .rounds import round_directory_name, round_name
+
 
 class MetadataError(RuntimeError):
     """Raised when manuscript or author-library metadata is invalid."""
@@ -145,10 +147,10 @@ def _round_number(value: Any, location: str) -> int | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value.startswith("r"):
-        raise MetadataError(f"{location} must be null or a round such as r0.")
+        raise MetadataError(f"{location} must be null or a round such as r01.")
     suffix = value[1:]
-    if not suffix.isdigit() or (suffix.startswith("0") and suffix != "0"):
-        raise MetadataError(f"{location} must be null or a round such as r0.")
+    if not suffix.isdigit():
+        raise MetadataError(f"{location} must be null or a round such as r01.")
     return int(suffix)
 
 
@@ -173,7 +175,7 @@ def _revision_directory(value: Any, location: str) -> int | None:
     prefix = "revision_"
     if not name.startswith(prefix) or not name[len(prefix) :].isdigit():
         raise MetadataError(
-            f"{location} must be null, initial_submission, or revision_N."
+            f"{location} must be null, initial_submission, or revision_01."
         )
     number = int(name[len(prefix) :])
     if number < 1:
@@ -225,12 +227,17 @@ def load_manuscript(path: Path) -> ManuscriptMetadata:
         raise MetadataError("revision.round cannot be null.")
     declared_name = _revision_directory(revision.get("name"), "revision.name")
     if declared_name != current:
-        raise MetadataError(f"revision.name does not match revision.round: r{current}.")
+        raise MetadataError(
+            f"revision.name does not match revision.round: {round_name(current)}."
+        )
     parent = _revision_directory(revision.get("parent"), "revision.parent")
     if current == 0 and parent is not None:
         raise MetadataError("R0 must have revision.parent: null.")
     if current > 0 and parent != current - 1:
-        raise MetadataError(f"R{current} must declare revision.parent: r{current - 1}.")
+        raise MetadataError(
+            f"{round_name(current)} must declare revision.parent: "
+            f"{round_name(current - 1)}."
+        )
     language = _text(manuscript.get("language"), "manuscript.language")
     if language not in {"en", "zh"}:
         raise MetadataError("manuscript.language must be en or zh.")
@@ -320,21 +327,13 @@ def render_manuscript(metadata: ManuscriptMetadata) -> str:
             "Revision",
             {
                 "revision": {
-                    "name": (
-                        "initial_submission"
-                        if metadata.round_number == 0
-                        else f"revision_{metadata.round_number}"
-                    ),
+                    "name": round_directory_name(metadata.round_number),
                     "parent": (
                         None
                         if metadata.parent_round is None
-                        else (
-                            "initial_submission"
-                            if metadata.parent_round == 0
-                            else f"revision_{metadata.parent_round}"
-                        )
+                        else round_directory_name(metadata.parent_round)
                     ),
-                    "round": f"r{metadata.round_number}",
+                    "round": round_name(metadata.round_number),
                 }
             },
         ),

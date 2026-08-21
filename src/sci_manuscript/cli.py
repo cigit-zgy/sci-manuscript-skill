@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from ._runtime.rounds import parse_round, round_directory_name, round_name
 from .api import ManuscriptError, ManuscriptProject, initialize_manuscript
 from .results import Artifact, DoctorResult
 
@@ -96,7 +97,7 @@ def build_parser(default_project: Path | None = None) -> argparse.ArgumentParser
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor", help="Check Python and LaTeX workflow tools.")
-    init = commands.add_parser("init", help="Initialize initial_submission (r0).")
+    init = commands.add_parser("init", help="Initialize initial_submission (r00).")
     _add_project_argument(init, project)
     init.add_argument("--title", required=True, help="Manuscript title.")
     init.add_argument("--journal", required=True, help="Target journal name.")
@@ -125,12 +126,37 @@ def build_parser(default_project: Path | None = None) -> argparse.ArgumentParser
     revision = commands.add_parser(
         "revision",
         aliases=["revise"],
-        help="Create the next adjacent revision and response source (alias: revise).",
+        help="Create the next adjacent revision after confirmation (alias: revise).",
     )
     _add_project_argument(revision, project)
     revision.add_argument("--round", help="Advanced explicit next round selector.")
     revision.add_argument("--reviews", help="Reviewer-comments Markdown file.")
     revision.add_argument("--keep-temp", action="store_true")
+    revision.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt (non-interactive use).",
+    )
+    rollback = commands.add_parser(
+        "rollback",
+        help="Safely remove an unchanged accidental latest revision.",
+    )
+    _add_project_argument(rollback, project)
+    rollback.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt (non-interactive use).",
+    )
+    reindex = commands.add_parser(
+        "reindex",
+        help="Repair and renumber a broken revision sequence.",
+    )
+    _add_project_argument(reindex, project)
+    reindex.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt (non-interactive use).",
+    )
     submission = commands.add_parser(
         "submission",
         aliases=["package"],
@@ -170,6 +196,44 @@ def build_parser(default_project: Path | None = None) -> argparse.ArgumentParser
     )
     _add_project_argument(upgrade, project)
     return parser
+
+
+def _print_revision_chain(
+    diagnostics: object,
+) -> None:
+    from .results import ChainDiagnosticsResult
+
+    if not isinstance(diagnostics, ChainDiagnosticsResult):
+        raise ManuscriptError("Invalid chain diagnostics.")
+    if diagnostics.broken:
+        print("Revision chain: BROKEN")
+        print("\nDetected:")
+        for name, label in diagnostics.versions:
+            print(f"{name} ({label})")
+        if diagnostics.missing:
+            print("\nMissing:")
+            for name in diagnostics.missing:
+                print(name)
+        print("\nSuggested command:")
+        print("python -m sci_manuscript reindex")
+        return
+    print("Revision chain:")
+    print()
+    for index, (name, label) in enumerate(diagnostics.versions):
+        if index == 0:
+            print(f"{name} ({label})")
+        else:
+            indent = "    " * index
+            marker = " [current]" if name == diagnostics.current else ""
+            print(f"{indent}└── {name} ({label}){marker}")
+
+
+def _confirm(prompt: str, yes: bool) -> bool:
+    """Return whether the user explicitly confirmed a destructive action."""
+    if yes:
+        return True
+    answer = input(prompt).strip().lower()
+    return answer in {"y", "yes"}
 
 
 def execute(args: argparse.Namespace) -> int:
@@ -212,9 +276,15 @@ def execute(args: argparse.Namespace) -> int:
         engine=getattr(args, "engine", None) or "auto",
     )
     if command == "status":
-        status = manuscript.status()
+        manuscript_for_status = ManuscriptProject(project)
+        diagnostics = manuscript_for_status.chain_diagnostics()
+        _print_revision_chain(diagnostics)
+        if diagnostics.broken:
+            return 0
+        print()
+        status = manuscript_for_status.status()
         print(f"Project: {status.project.name}")
-        print(f"Current version: {status.version} (r{status.round_number})")
+        print(f"Current version: {status.version} ({round_name(status.round_number)})")
         print(f"Parent: {status.parent or 'none'}")
         print(f"Authors: {', '.join(status.authors)}")
         print(f"Publisher: {status.publisher}")
@@ -264,6 +334,17 @@ def execute(args: argparse.Namespace) -> int:
         )
         return 0
     if command == "revision":
+        latest = manuscript.status()
+        target = parse_round(args.round, latest.round_number + 1)
+        if target is None:
+            raise ManuscriptError("Cannot determine the next revision round.")
+        new_name = round_directory_name(target)
+        print(f"Current revision: {latest.version} ({round_name(latest.round_number)})")
+        print(f"New revision:     {new_name} ({round_name(target)})")
+        print(f"Parent:           {latest.version} ({round_name(latest.round_number)})")
+        if not _confirm(f"\nCreate {new_name}? [y/N]: ", args.yes):
+            print("Cancelled.")
+            return 0
         revision = manuscript.start_revision(
             args.reviews,
             round=args.round,
@@ -274,6 +355,58 @@ def execute(args: argparse.Namespace) -> int:
         print("\nGenerated:")
         for artifact in revision.artifacts:
             print(f"  {artifact.label}: {_relative(revision.project, artifact.path)}")
+        return 0
+    if command == "rollback":
+        rollback_plan = manuscript.rollback_plan()
+        print(f"Latest revision: {rollback_plan.version}")
+        print(f"Parent:          {rollback_plan.parent}")
+        if rollback_plan.changed_files:
+            print("\nRollback refused.")
+            print("User modifications detected:")
+            for name in rollback_plan.changed_files:
+                print(f"  {name}")
+            print("\nNo files were removed.")
+            return 1
+        print("\nNo user source modifications detected.")
+        if not _confirm(f"\nRemove {rollback_plan.version}? [y/N]: ", args.yes):
+            print("Cancelled.")
+            return 0
+        manuscript.remove_latest_revision()
+        print(f"Removed: {rollback_plan.version}")
+        return 0
+    if command == "reindex":
+        plan = manuscript.reindex(apply=False)
+        if not plan.renames:
+            print("Revision chain is already ordered.")
+            return 0
+        print("Broken revision sequence detected.")
+        print("\nPlanned changes:")
+        for old_name, new_name in plan.renames:
+            old_number = parse_round(old_name)
+            new_number = parse_round(new_name)
+            if old_number is None or new_number is None:
+                raise ManuscriptError("Cannot map reindex round names.")
+            print(
+                f"  {old_name} ({round_name(old_number)}) "
+                f"-> {new_name} ({round_name(new_number)})"
+            )
+        if plan.parent_updates:
+            print("\nParent updates:")
+            for version, old_label, new_label in plan.parent_updates:
+                print(f"  {version}: {old_label} -> {new_label}")
+        print("\nGenerated revision artifacts will be invalidated.")
+        if not _confirm("\nProceed? [y/N]: ", args.yes):
+            print("Cancelled.")
+            return 0
+        result = manuscript.reindex(apply=True)
+        print("\nRevision chain reindexed successfully.")
+        if result.invalidated:
+            print("Generated revision artifacts were invalidated:")
+            for name in result.invalidated:
+                print(f"  {name}")
+        print("\nRun:")
+        print("  python -m sci_manuscript all")
+        print("to regenerate outputs.")
         return 0
     if command == "check":
         checked = manuscript.check(args.round)

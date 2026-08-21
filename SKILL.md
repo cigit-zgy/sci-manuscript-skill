@@ -36,8 +36,10 @@ building a marked PDF changes no manuscript source.
 | --- | --- | --- |
 | New manuscript | [environment.md](references/environment.md) when dependency state is unknown; initialization section of [workflow.md](references/workflow.md) | Run `doctor`, collect required user data, run `init`, and verify the first PDF |
 | Build or inspect | No reference normally needed | Run project `python run.py build`, `check`, or `status`; do not initialize or create a revision |
-| Start a revision | [revision_contract.yaml](src/sci_manuscript/resources/revision_contract.yaml) and revision/response sections of [workflow.md](references/workflow.md) | Enforce no-content-edit, identify the highest round, and create only its adjacent child |
-| Prepare submission | Submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for r0 or `all` for a completed revision |
+| Start a revision | [revision_contract.yaml](src/sci_manuscript/resources/revision_contract.yaml) and revision/response sections of [workflow.md](references/workflow.md) | Run `status` first, then `revision`; creation always requires explicit user confirmation unless the user already authorized it in natural language, in which case use the non-interactive confirmation flag |
+| Undo an accidental revision | No reference normally needed | Route to `rollback`, never a manual `rm -rf`; the command refuses when user sources were modified |
+| Repair a broken revision sequence | No reference normally needed | Route to `reindex`, never manual directory renames; the command shows a plan and requires confirmation |
+| Prepare submission | Submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for r00 or `all` for a completed revision |
 | Configure bibliography | Bibliography section of [workflow.md](references/workflow.md) | Prefer Better BibTeX Automatic Export; use `setup-zotero`, `check`, and explicit `sync-bib` fallback only |
 | Upgrade an existing project | Version model in [workflow.md](references/workflow.md) | Run `upgrade-project` only on recognized generated infrastructure; verify user-content hashes before and after |
 | Diagnose environment | [environment.md](references/environment.md) | Run `doctor`; report blockers without changing the environment |
@@ -49,9 +51,11 @@ diagnosing or updating that exact packaged resource.
 
 ## Preserve the stable contract
 
-- The lifecycle is adjacent and gap-free:
-  `initial_submission (r0) -> revision_1 (r1) -> revision_2 (r2) -> ...`.
-  Never create `r0 -> r2` or compare non-adjacent versions.
+- The lifecycle is adjacent and gap-free, with canonical two-digit identity:
+  `initial_submission (r00) -> revision_01 (r01) -> revision_02 (r02) -> ...`.
+  Legacy one-digit projects (`revision_1`, `r1`) remain readable; newly
+  created metadata always uses the two-digit form. Never create `r00 -> r02`
+  or compare non-adjacent versions.
 - The installed Python package is the runtime. Generated project `run.py` must
   not depend on, record, or search for the Skill source checkout. Moving either
   the source checkout or the manuscript directory must not change behavior.
@@ -94,6 +98,8 @@ python run.py doctor
 python run.py build
 python run.py check
 python run.py revision --reviews /absolute/path/to/reviewer-comments.md
+python run.py rollback
+python run.py reindex
 python run.py submission
 python run.py all
 python run.py setup-zotero
@@ -104,8 +110,11 @@ python run.py upgrade-project
 
 The equivalent external form is
 `sci-manuscript <command> --project /absolute/path/to/manuscript`; the module
-form is identical. Select an existing round with `--round rN` where supported.
-`--allow-placeholders` is diagnostic and never makes a package submission-ready.
+form is identical. Select an existing round with `--round rNN` where supported.
+`revision`, `rollback`, and `reindex` are interactive by default and refuse
+without an explicit `y`/`yes` answer; use `--yes` only when the user already
+authorized the action in natural language. `--allow-placeholders` is
+diagnostic and never makes a package submission-ready.
 
 ## Initialize without inventing data
 

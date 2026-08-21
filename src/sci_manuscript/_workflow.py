@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import shutil
+import uuid
 from collections.abc import Sequence
 from dataclasses import replace
 from importlib.resources import as_file
@@ -22,6 +23,7 @@ from ._runtime.metadata import (
     SubmissionSettings,
     generate_author_metadata,
     load_author_library,
+    load_manuscript,
     render_manuscript,
 )
 from ._runtime.resources import load_revision_contract, read_resource_text, resource
@@ -29,6 +31,7 @@ from ._runtime.response import build_response, init_response, parse_reviews
 from ._runtime.workspace import (
     ProjectConfig,
     WorkflowError,
+    actual_round_directory,
     check_citations,
     ensure_submission_workspace,
     initialize_project,
@@ -37,6 +40,7 @@ from ._runtime.workspace import (
     normalize_project,
     parse_round,
     round_directory_name,
+    round_name,
     scientific_source_hashes,
     sync_bibliography,
     temporary_run,
@@ -46,9 +50,12 @@ from .results import (
     Artifact,
     BibliographySyncResult,
     BuildResult,
+    ChainDiagnosticsResult,
     CheckResult,
     InitializationResult,
+    ReindexResult,
     RevisionResult,
+    RollbackResult,
     StatusResult,
     SubmissionResult,
     UpgradeResult,
@@ -458,14 +465,220 @@ def status(project: str | Path) -> StatusResult:
     parent = latest.metadata.parent_round
     return StatusResult(
         project=root,
-        version=round_directory_name(latest.current_round),
+        version=actual_round_directory(root, latest.current_round).name,
         round_number=latest.current_round,
-        parent=round_directory_name(parent) if parent is not None else None,
+        parent=(
+            actual_round_directory(root, parent).name if parent is not None else None
+        ),
         authors=latest.metadata.author_names,
         publisher=latest.metadata.publisher,
         journal=latest.journal,
         project_format_version=latest.metadata.format_version,
         artifacts=tuple(artifacts),
+    )
+
+
+def rollback_inspect(project: str | Path) -> RollbackResult:
+    """Compare the latest revision against its parent at the user-source layer."""
+    root = normalize_project(project)
+    _require_project(root)
+    latest = load_project(root)
+    if latest.current_round == 0:
+        raise WorkflowError("initial_submission (r00) cannot be rolled back.")
+    parent = latest.metadata.parent_round
+    assert parent is not None
+    version_dir = actual_round_directory(root, latest.current_round)
+    parent_dir = actual_round_directory(root, parent)
+    latest_sources = runtime_workspace.user_source_hashes(
+        version_dir, normalize_tex=True
+    )
+    parent_sources = runtime_workspace.user_source_hashes(
+        parent_dir, normalize_tex=True
+    )
+    changed: list[str] = []
+    for relative, digest in latest_sources.items():
+        if relative == "manuscript.yaml":
+            continue  # revision identity is rewritten automatically
+        if relative.startswith("response/"):
+            if relative.endswith("response_letter.tex"):
+                # An untouched scaffold still contains pending placeholders,
+                # whether or not the parent already carries a filled letter.
+                path = version_dir / relative
+                if "\\ResponsePending" not in path.read_text(encoding="utf-8"):
+                    changed.append(relative)
+            continue  # reviewer-comments copies are generated input, not edits
+        if relative in parent_sources:
+            if parent_sources[relative] != digest:
+                changed.append(relative)
+            continue
+        changed.append(relative)
+    missing = [
+        relative
+        for relative in parent_sources
+        if relative not in latest_sources and relative != "manuscript.yaml"
+    ]
+    changed.extend(missing)
+    return RollbackResult(
+        project=root,
+        version=round_directory_name(latest.current_round),
+        parent=round_directory_name(parent),
+        changed_files=tuple(sorted(changed)),
+    )
+
+
+def remove_revision(project: str | Path) -> None:
+    """Delete the latest revision directory (caller must have confirmed)."""
+    root = normalize_project(project)
+    inspection = rollback_inspect(root)
+    if inspection.changed_files:
+        raise WorkflowError("Rollback refused; user source modifications detected.")
+    latest = load_project(root)
+    target = actual_round_directory(root, latest.current_round)
+    if target.name == "initial_submission":
+        raise WorkflowError("initial_submission (r00) cannot be rolled back.")
+    shutil.rmtree(target)
+
+
+def _rewrite_revision_identity(
+    target: Path,
+    round_number: int,
+    parent_round: int | None,
+) -> None:
+    """Rewrite name/parent/round inside the revision section, preserving prose."""
+    lines = target.read_text(encoding="utf-8").split("\n")
+    in_revision = False
+    for index, line in enumerate(lines):
+        if line.rstrip().startswith("revision:"):
+            in_revision = True
+            continue
+        if in_revision:
+            if line and not line.startswith("  "):
+                break  # left the revision section
+            if line.startswith("  name:"):
+                lines[index] = f"  name: {round_directory_name(round_number)}"
+            elif line.startswith("  parent:"):
+                parent_value = (
+                    "null"
+                    if parent_round is None
+                    else round_directory_name(parent_round)
+                )
+                lines[index] = f"  parent: {parent_value}"
+            elif line.startswith("  round:"):
+                lines[index] = f"  round: {round_name(round_number)}"
+    target.write_text("\n".join(lines), encoding="utf-8")
+    loaded = load_manuscript(target)
+    if loaded.round_number != round_number:
+        raise WorkflowError(
+            f"Revision identity rewrite failed for {target}; refusing to continue."
+        )
+
+
+def reindex_plan(project: str | Path) -> ReindexResult:
+    """Plan renumbering of a broken or legacy round sequence (read-only)."""
+    root = normalize_project(project)
+    _require_project(root)
+    numbers = runtime_workspace.scan_round_directories(root)
+    renames: list[tuple[str, str]] = []
+    parent_updates: list[tuple[str, str, str]] = []
+    for index, number in enumerate(numbers):
+        source = actual_round_directory(root, number).name
+        target = round_directory_name(index)
+        if source != target:
+            renames.append((source, target))
+        if number > 0:
+            parent_updates.append((source, round_name(number), round_name(index)))
+    return ReindexResult(
+        project=root,
+        applied=False,
+        renames=tuple(renames),
+        parent_updates=tuple(parent_updates),
+        invalidated=(),
+    )
+
+
+def _invalidated_artifacts(root: Path) -> list[str]:
+    """Return generated artifact paths invalidated by a reindex (relative names)."""
+    invalidated: list[str] = []
+    for number in runtime_workspace.scan_round_directories(root):
+        version = actual_round_directory(root, number)
+        for pattern in ("output/*.pdf", "submission/package/*"):
+            for path in sorted(version.glob(pattern)):
+                if path.is_file():
+                    invalidated.append(path.relative_to(root).as_posix())
+        package = version / "submission" / "package"
+        if package.is_dir():
+            invalidated.append(package.relative_to(root).as_posix())
+    staging = root / "tmp"
+    if staging.is_dir():
+        for path in sorted(staging.rglob("*")):
+            if path.is_file():
+                invalidated.append(path.relative_to(root).as_posix())
+    return invalidated
+
+
+def reindex_execute(project: str | Path) -> ReindexResult:
+    """Transactionally renumber the round sequence and invalidate generated PDFs."""
+    root = normalize_project(project)
+    plan = reindex_plan(root)
+    if not plan.renames:
+        return ReindexResult(
+            project=root,
+            applied=False,
+            renames=(),
+            parent_updates=plan.parent_updates,
+            invalidated=(),
+            status="already_ordered",
+        )
+    numbers = runtime_workspace.scan_round_directories(root)
+    staging = root / "tmp" / f"reindex_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    staging.mkdir(parents=True)
+    moved: list[tuple[Path, Path]] = []
+    placed: list[tuple[Path, Path]] = []
+    original_metadata: dict[str, str] = {}
+    source_dirs = [actual_round_directory(root, number) for number in numbers]
+    try:
+        for index, source_dir in enumerate(source_dirs):
+            staged = staging / f"{index:02d}_{source_dir.name}"
+            shutil.move(str(source_dir), staged)
+            moved.append((staged, source_dir))
+        for index, source_dir in enumerate(source_dirs):
+            staged = staging / f"{index:02d}_{source_dir.name}"
+            target = root / round_directory_name(index)
+            shutil.move(str(staged), target)
+            placed.append((target, source_dir))
+        for index, _ in enumerate(numbers):
+            if index == 0:
+                continue
+            target = root / round_directory_name(index)
+            yaml_path = target / "manuscript.yaml"
+            relative = yaml_path.relative_to(root).as_posix()
+            original_metadata[relative] = yaml_path.read_text(encoding="utf-8")
+            _rewrite_revision_identity(yaml_path, index, index - 1)
+    except (OSError, WorkflowError):
+        for relative, original_text in original_metadata.items():
+            (root / relative).write_text(original_text, encoding="utf-8")
+        for target, original in reversed(placed):
+            if target.exists():
+                shutil.move(str(target), original)
+        for staged, original in reversed(moved):
+            if staged.exists():
+                shutil.move(str(staged), original)
+        raise
+    shutil.rmtree(staging, ignore_errors=True)
+    invalidated = _invalidated_artifacts(root)
+    for name in invalidated:
+        path = root / name
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.is_file():
+            path.unlink(missing_ok=True)
+    return ReindexResult(
+        project=root,
+        applied=True,
+        renames=plan.renames,
+        parent_updates=plan.parent_updates,
+        invalidated=tuple(invalidated),
+        status="reindexed",
     )
 
 
@@ -593,10 +806,23 @@ def upgrade_project(project: str | Path) -> UpgradeResult:
             "current appearance."
         )
 
+    numbering = reindex_plan(root)
+    numbering_renamed = bool(numbering.renames)
+    if numbering_renamed:
+        reindex_execute(root)  # transactional legacy-directory renumbering
+
     if from_format == CURRENT_PROJECT_FORMAT and wrapper_current and style_current:
+        if not numbering_renamed:
+            return UpgradeResult(
+                project=root,
+                status="already_current",
+                from_format=from_format,
+                to_format=CURRENT_PROJECT_FORMAT,
+                artifacts=(),
+            )
         return UpgradeResult(
             project=root,
-            status="already_current",
+            status="upgraded",
             from_format=from_format,
             to_format=CURRENT_PROJECT_FORMAT,
             artifacts=(),
@@ -644,4 +870,28 @@ def upgrade_project(project: str | Path) -> UpgradeResult:
         artifacts=tuple(
             Artifact("Upgraded infrastructure", item[0]) for item in changes
         ),
+    )
+
+
+def chain_diagnostics(project: str | Path) -> ChainDiagnosticsResult:
+    """Inspect the round sequence without requiring a continuous chain."""
+    root = normalize_project(project)
+    _require_project(root)
+    numbers = runtime_workspace.scan_round_directories(root)
+    expected = list(range(len(numbers)))
+    broken = list(numbers) != expected
+    missing = tuple(
+        round_directory_name(number) for number in expected if number not in numbers
+    )
+    versions = tuple(
+        (actual_round_directory(root, number).name, round_name(number))
+        for number in numbers
+    )
+    current = versions[-1][0] if versions and not broken else None
+    return ChainDiagnosticsResult(
+        project=root,
+        versions=versions,
+        current=current,
+        broken=broken,
+        missing=missing,
     )

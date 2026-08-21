@@ -27,9 +27,20 @@ from .resources import (
     copy_resource_tree,
     read_resource_text,
 )
+from .rounds import (
+    REVISION_DIRECTORY_PATTERN as REVISION_DIRECTORY_PATTERN,
+)
+from .rounds import (
+    ROUND_PATTERN as ROUND_PATTERN,
+)
+from .rounds import (
+    parse_round as parse_round_value,
+)
+from .rounds import (
+    round_directory_name,
+    round_name,
+)
 
-ROUND_PATTERN = re.compile(r"^r(0|[1-9]\d*)$")
-REVISION_DIRECTORY_PATTERN = re.compile(r"^revision_([1-9]\d*)$")
 CITATION_PATTERN = re.compile(
     r"\\(?:cite|citep|citet|citealp|citeauthor|citeyear|nocite|parencite|"
     r"textcite|autocite|footcite|smartcite|supercite)"
@@ -99,50 +110,38 @@ class ProjectConfig:
         """Return one user-facing manuscript version directory."""
         if round_number < 0:
             raise WorkflowError("Round numbers must be non-negative.")
-        return self.project / round_directory_name(round_number)
-
-
-def round_name(round_number: int) -> str:
-    """Format a non-negative internal round number as ``rN``."""
-    if round_number < 0:
-        raise WorkflowError("Round numbers must be non-negative.")
-    return f"r{round_number}"
-
-
-def round_directory_name(round_number: int) -> str:
-    """Map an internal round number to its user-facing directory name."""
-    if round_number < 0:
-        raise WorkflowError("Round numbers must be non-negative.")
-    return "initial_submission" if round_number == 0 else f"revision_{round_number}"
+        return actual_round_directory(self.project, round_number)
 
 
 def parse_round(value: str | int | None, default: int | None = None) -> int:
-    """Parse ``rN`` or a semantic directory name into an internal number."""
-    if value is None:
-        if default is None:
+    """Parse ``rN``/``rNN`` or a semantic directory name into an internal number."""
+    parsed = parse_round_value(value, default)
+    if parsed is None:
+        if value is None:
             raise WorkflowError("A round is required.")
-        return default
-    if isinstance(value, int):
-        if value < 0:
-            raise WorkflowError("Round numbers must be non-negative.")
-        return value
-    normalized = value.strip().lower()
-    if normalized == "initial_submission":
-        return 0
-    internal_match = ROUND_PATTERN.fullmatch(normalized)
-    if internal_match is not None:
-        return int(internal_match.group(1))
-    semantic_match = REVISION_DIRECTORY_PATTERN.fullmatch(normalized)
-    if semantic_match is not None:
-        return int(semantic_match.group(1))
-    raise WorkflowError(
-        f"Invalid round {value!r}; use r0, r1, initial_submission, or revision_N."
-    )
+        raise WorkflowError(
+            f"Invalid round {value!r}; use r00, r01, initial_submission, or revision_01."
+        )
+    return parsed
 
 
 def normalize_project(path: str | Path) -> Path:
     """Resolve a user-selected project root without inventing a child path."""
     return Path(path).expanduser().resolve()
+
+
+def actual_round_directory(project: Path, round_number: int) -> Path:
+    """Resolve one version directory, accepting legacy single-digit names.
+
+    New projects use canonical names (``revision_01``); legacy projects may
+    still carry ``revision_1`` directories. The canonical name wins when both
+    exist.
+    """
+    canonical = project / round_directory_name(round_number)
+    if canonical.is_dir() or round_number == 0:
+        return canonical
+    legacy = project / f"revision_{round_number}"
+    return legacy if legacy.is_dir() else canonical
 
 
 def _round_number_from_directory(name: str) -> int | None:
@@ -203,7 +202,7 @@ def load_project(
     if selected not in numbers:
         raise WorkflowError(f"Round {round_name(selected)} does not exist yet.")
     for number in numbers:
-        version = root / round_directory_name(number)
+        version = actual_round_directory(root, number)
         if (version / "references").exists():
             raise WorkflowError(
                 f"Version directories must not contain references/: {version}"
@@ -214,7 +213,7 @@ def load_project(
             raise WorkflowError(
                 f"{path} declares r{metadata.round_number}, expected r{number}."
             )
-    selected_dir = root / round_directory_name(selected)
+    selected_dir = actual_round_directory(root, selected)
     metadata = load_manuscript(selected_dir / "manuscript.yaml")
     return ProjectConfig(root, metadata)
 
@@ -223,7 +222,7 @@ def scientific_source_hashes(project: Path) -> dict[str, str]:
     """Hash user-controlled manuscript TeX sources across every version."""
     hashes: dict[str, str] = {}
     for number in _round_numbers(project):
-        version = project / round_directory_name(number)
+        version = actual_round_directory(project, number)
         sources = [version / "manuscript.tex", version / "preamble.tex"]
         for directory in ("sections", "figures", "tables"):
             root = version / directory
@@ -234,6 +233,57 @@ def scientific_source_hashes(project: Path) -> dict[str, str]:
                 relative = source.relative_to(project).as_posix()
                 hashes[relative] = hashlib.sha256(source.read_bytes()).hexdigest()
     return hashes
+
+
+GENERATED_VERSION_PART = frozenset({"output", "tmp", "package"})
+
+
+def user_source_hashes(
+    version_dir: Path,
+    *,
+    normalize_tex: bool = False,
+) -> dict[str, str]:
+    """Hash user-editable sources of one version, excluding generated artifacts.
+
+    Generated outputs (``output/``), submission packages (``submission/package/``),
+    and compiler staging are not user sources and never block a rollback. With
+    ``normalize_tex``, TeX sources are compared after stripping inherited
+    provenance wrappers, so a fresh revision copied from its parent is not
+    mistaken for a user edit.
+    """
+    hashes: dict[str, str] = {}
+    if not version_dir.is_dir():
+        return hashes
+    for path in sorted(version_dir.rglob("*")):
+        if not path.is_file() or path.suffix not in {".tex", ".md", ".yaml", ".bib"}:
+            continue
+        parts = path.relative_to(version_dir).parts
+        if parts[0] in GENERATED_VERSION_PART or "package" in parts:
+            continue
+        relative = path.relative_to(version_dir).as_posix()
+        if normalize_tex and path.suffix == ".tex":
+            text = strip_provenance_wrappers(path.read_text(encoding="utf-8"))
+            hashes[relative] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        else:
+            hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashes
+
+
+def scan_round_directories(project: Path) -> tuple[int, ...]:
+    """Scan existing round directories allowing gaps (for broken-chain repair).
+
+    Unlike :func:`_round_numbers`, this does not require a continuous sequence,
+    so it can inspect a chain after a user deleted an intermediate revision.
+    """
+    if not (project / "initial_submission" / "manuscript.yaml").is_file():
+        raise WorkflowError(f"Project is not initialized: {project}")
+    numbers = sorted(
+        number
+        for path in project.iterdir()
+        if path.is_dir()
+        if (number := _round_number_from_directory(path.name)) is not None
+    )
+    return (0, *numbers)
 
 
 def _latex_escape(value: str) -> str:

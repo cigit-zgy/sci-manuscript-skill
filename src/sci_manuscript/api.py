@@ -12,11 +12,14 @@ from pathlib import Path
 from .results import (
     BibliographySyncResult,
     BuildResult,
+    ChainDiagnosticsResult,
     CheckResult,
     DependencyCheck,
     DoctorResult,
     InitializationResult,
+    ReindexResult,
     RevisionResult,
+    RollbackResult,
     StatusResult,
     SubmissionResult,
     UpgradeResult,
@@ -223,6 +226,32 @@ class ManuscriptProject:
         )
         if not isinstance(result, RevisionResult):
             raise ManuscriptError("Revision creation returned an invalid result.")
+        return result
+
+    def chain_diagnostics(self) -> ChainDiagnosticsResult:
+        """Inspect the round sequence even when the chain is broken."""
+        result = _run("chain_diagnostics", self.path)
+        if not isinstance(result, ChainDiagnosticsResult):
+            raise ManuscriptError("Chain inspection returned an invalid result.")
+        return result
+
+    def rollback_plan(self) -> RollbackResult:
+        """Compare the latest revision against its parent at the user-source layer."""
+        result = _run("rollback_inspect", self.path)
+        if not isinstance(result, RollbackResult):
+            raise ManuscriptError("Rollback inspection returned an invalid result.")
+        return result
+
+    def remove_latest_revision(self) -> None:
+        """Delete the latest revision directory after explicit confirmation."""
+        _run("remove_revision", self.path)
+
+    def reindex(self, apply: bool = False) -> ReindexResult:
+        """Plan (apply=False) or transactionally execute a round-sequence reindex."""
+        operation = "reindex_execute" if apply else "reindex_plan"
+        result = _run(operation, self.path)
+        if not isinstance(result, ReindexResult):
+            raise ManuscriptError("Reindex returned an invalid result.")
         return result
 
     def prepare_submission(

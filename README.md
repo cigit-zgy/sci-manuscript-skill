@@ -150,7 +150,7 @@ sci-manuscript init \
   --bib /absolute/path/to/references.bib
 ```
 
-Initialization creates and compiles `initial_submission` (internal round r0).
+Initialization creates and compiles `initial_submission` (internal round r00).
 Continue from the generated project root:
 
 ```bash
@@ -188,20 +188,27 @@ an explicit project when run elsewhere.
 | Command | Purpose |
 | --- | --- |
 | `doctor` | Inspect required and optional environment dependencies without installing anything |
-| `init` | Create `initial_submission` (r0), generate metadata, and compile the first manuscript PDF |
+| `init` | Create `initial_submission` (r00), generate metadata, and compile the first manuscript PDF |
 | `build` | Compile the selected version's clean manuscript |
-| `revision` | Create the next adjacent revision and initialize its response source |
+| `revision` | Create the next adjacent revision after confirmation |
+| `rollback` | Safely remove an unchanged accidental latest revision |
+| `reindex` | Repair and renumber a broken revision sequence |
 | `submission` | Build version-local submission materials and package |
 | `all` | Build clean, marked, response, and submission outputs for the selected version |
 | `setup-zotero` | Prepare the Better BibTeX Automatic Export guide and shared export target |
 | `check` | Report citation keys absent from the shared BibTeX database |
 | `sync-bib` | Atomically replace the shared BibTeX database from an explicit export as a manual fallback |
-| `status` | Report lifecycle ancestry and generated artifacts |
+| `status` | Show the revision chain and generated artifacts |
 | `upgrade-project` | Safely upgrade recognized generated infrastructure to the current project format |
 
 Run `python run.py <command> --help` for command-specific options. `build`,
-`submission`, and `all` accept `--round rN` for an existing version.
-`revision` accepts reviewer comments as Markdown through `--reviews`. The
+`submission`, and `all` accept `--round rNN` for an existing version.
+`revision` accepts reviewer comments as Markdown through `--reviews`. `revision`,
+`rollback`, and `reindex` are interactive by default and proceed only on an
+explicit `y`/`yes` answer; `--yes` skips the prompt for non-interactive use.
+`revision --yes` creates only the next adjacent version; `rollback` refuses when
+user sources were modified; `reindex` transactionally renumbers a broken
+sequence, rewrites revision metadata, and invalidates regenerable PDFs. The
 `--allow-placeholders` option is diagnostic only; a package containing pending
 responses is not submission-ready.
 
@@ -307,7 +314,7 @@ journal:
 revision:
   name: initial_submission
   parent: null
-  round: r0
+  round: r00
 
 submission:
   cover_letter: true
@@ -378,7 +385,7 @@ manuscript/
 │       ├── nature/
 │       ├── acs/
 │       └── chinese/
-├── initial_submission/          # r0, parent null
+├── initial_submission/          # r00, parent null
 │   ├── manuscript.yaml
 │   ├── manuscript.tex
 │   ├── preamble.tex
@@ -387,11 +394,11 @@ manuscript/
 │   ├── tables/
 │   ├── submission/              # editable sources populated on demand
 │   └── output/
-├── revision_1/                  # r1, parent r0
+├── revision_01/                 # r01, parent r00
 │   └── response/
 │       ├── reviewer_comments.md
 │       └── response_letter.tex
-├── revision_2/                  # r2, parent r1
+├── revision_02/                 # r02, parent r01
 └── tmp/
 ```
 
@@ -474,8 +481,8 @@ The ancestry is explicit and gap-free:
 
 ```mermaid
 flowchart LR
-    R0[initial_submission r0] --> R1[revision_1 r1]
-    R1 --> R2[revision_2 r2]
+    R0[initial_submission r00] --> R1[revision_01 r01]
+    R1 --> R2[revision_02 r02]
 ```
 
 Create the next version with:
@@ -484,7 +491,7 @@ Create the next version with:
 python run.py revision --reviews /absolute/path/to/reviewer-comments.md
 ```
 
-The command rejects r0-to-r2 jumps and copies manuscript state only from the
+The command rejects r00-to-r02 jumps and copies manuscript state only from the
 immediate parent; it never copies or regenerates the shared references tree.
 Starting a revision does not authorize or perform a manuscript edit, and the
 parent source hash remains unchanged. Reviewer comments alone never authorize
@@ -605,7 +612,7 @@ python -m build
 
 Release validation additionally installs the wheel and sdist into fresh isolated
 environments outside the repository, audits packaged templates and licenses,
-exercises a fresh r0 -> r1 -> r2 lifecycle, moves a project between Unicode and
+exercises a fresh r00 -> r01 -> r02 lifecycle, moves a project between Unicode and
 space-containing paths, and verifies source hashes and temporary-file cleanup.
 With the local LaTeX toolchain installed, the release gate also performs real
 publisher compilation, PDF text extraction, page rendering, line-number checks,

@@ -12,7 +12,7 @@
     "should_trigger": true
   },
   {
-    "query": "revision_1 的回复已经填写完了，请生成 clean、marked、response PDF 和这一轮的 submission package。",
+    "query": "revision_01 的回复已经填写完了，请生成 clean、marked、response PDF 和这一轮的 submission package。",
     "should_trigger": true
   },
   {
@@ -32,7 +32,7 @@
     "should_trigger": true
   },
   {
-    "query": "第一轮修回已提交，现在创建第二轮修回；必须从 revision_1 继承，不能从初稿跳过去。",
+    "query": "第一轮修回已提交，现在创建第二轮修回；必须从 revision_01 继承，不能从初稿跳过去。",
     "should_trigger": true
   },
   {

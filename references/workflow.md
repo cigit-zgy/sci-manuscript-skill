@@ -6,9 +6,9 @@ placeholders, synchronizing BibTeX, or preparing a submission package.
 ## Version model
 
 ```text
-initial_submission/   r0, parent null
-revision_1/           r1, parent r0
-revision_2/           r2, parent r1
+initial_submission/   r00, parent null
+revision_01/          r01, parent r00
+revision_02/          r02, parent r01
 ```
 
 The project root contains the only `references/` tree: author library,

@@ -125,3 +125,36 @@ class BibliographySyncResult:
 
     project: Path
     artifacts: tuple[Artifact, ...]
+
+
+@dataclass(frozen=True)
+class RollbackResult:
+    """User-source comparison between the latest revision and its parent."""
+
+    project: Path
+    version: str
+    parent: str
+    changed_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReindexResult:
+    """Planned or executed renumbering of a round sequence."""
+
+    project: Path
+    applied: bool
+    renames: tuple[tuple[str, str], ...]
+    parent_updates: tuple[tuple[str, str, str], ...]
+    invalidated: tuple[str, ...]
+    status: str = "planned"
+
+
+@dataclass(frozen=True)
+class ChainDiagnosticsResult:
+    """Read-only round-sequence inspection for status rendering."""
+
+    project: Path
+    versions: tuple[tuple[str, str], ...]
+    current: str | None
+    broken: bool
+    missing: tuple[str, ...]
