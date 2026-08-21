@@ -26,10 +26,16 @@ def _metadata(publisher: str = "elsevier") -> metadata.ManuscriptMetadata:
         language="en",
         journal_name="Example Journal",
         publisher=publisher,
+        journal_template=metadata.PUBLISHER_TEMPLATES[publisher],
         round_number=0,
         parent_round=None,
         submission=metadata.SubmissionSettings(True, True, True),
-        author_names=("First Author", "Corresponding Author"),
+        first_authors=("First Author", "Co-first Author"),
+        corresponding_authors=(
+            "Corresponding Author",
+            "Co-corresponding Author",
+        ),
+        authors=(),
     )
 
 
@@ -38,7 +44,7 @@ def _config(project: Path, publisher: str = "elsevier") -> workspace.ProjectConf
 
 
 class MetadataTest(unittest.TestCase):
-    """Verify round configuration and version-local author-library behavior."""
+    """Verify round configuration and shared author-library behavior."""
 
     def test_round_trip_and_shared_author_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -46,27 +52,35 @@ class MetadataTest(unittest.TestCase):
             config = workspace.initialize_project(_config(project))
             initial = project / "initial_submission"
             loaded = metadata.load_manuscript(initial / "manuscript.yaml")
-            selection = metadata.generate_author_metadata(initial)
-            generated = (initial / "references" / "author_metadata.tex").read_text(
+            selection = metadata.generate_author_metadata(project, initial)
+            generated = (project / "references" / "author_metadata.tex").read_text(
                 encoding="utf-8"
             )
             self.assertEqual(loaded, config.metadata)
             self.assertEqual(
-                selection.corresponding_author.name,
-                "Corresponding Author",
+                tuple(author.name for author in selection.first_authors),
+                ("First Author", "Co-first Author"),
+            )
+            self.assertEqual(
+                tuple(author.name for author in selection.corresponding_authors),
+                ("Corresponding Author", "Co-corresponding Author"),
             )
             self.assertIn("corresponding.author@example.org", generated)
-            self.assertNotIn("email:", (initial / "manuscript.yaml").read_text())
+            self.assertIn("cocorresponding.author@example.org", generated)
+            yaml_text = (initial / "manuscript.yaml").read_text(encoding="utf-8")
+            self.assertIn("name: initial_submission", yaml_text)
+            self.assertIn("template: elsarticle", yaml_text)
+            self.assertNotIn("email:", yaml_text)
 
     def test_unknown_selected_author_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
             config = workspace.initialize_project(_config(project))
-            invalid = replace(config.metadata, author_names=("Missing Author",))
+            invalid = replace(config.metadata, authors=("Missing Author",))
             initial = project / "initial_submission"
             metadata.save_manuscript(initial / "manuscript.yaml", invalid)
             with self.assertRaises(metadata.MetadataError):
-                metadata.generate_author_metadata(initial)
+                metadata.generate_author_metadata(project, initial)
 
     def test_chinese_project_uses_chinese_author_names(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -76,12 +90,12 @@ class MetadataTest(unittest.TestCase):
                 workspace.ProjectConfig(project, chinese)
             )
             initial = config.round_dir(0)
-            generated = (initial / "references" / "author_metadata.tex").read_text(
+            generated = (project / "references" / "publisher_metadata.tex").read_text(
                 encoding="utf-8"
             )
             preamble = (initial / "preamble.tex").read_text(encoding="utf-8")
-            self.assertIn("\\author{%\n第一作者", generated)
-            self.assertIn("\\CorrespondingAuthorNameZh", generated)
+            self.assertIn("\\author{第一作者", generated)
+            self.assertIn("共同通讯作者", generated)
             self.assertIn("\\renewcommand{\\abstractname}{摘要}", preamble)
 
 
@@ -92,7 +106,7 @@ class InitializationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
             workspace.initialize_project(_config(project))
-            for name in ("run.py", "initial_submission", "tmp"):
+            for name in ("run.py", "references", "initial_submission", "tmp"):
                 self.assertTrue((project / name).exists(), name)
             expected = (
                 "manuscript.yaml",
@@ -102,7 +116,6 @@ class InitializationTest(unittest.TestCase):
                 "figures",
                 "tables",
                 "output",
-                "references",
             )
             initial = project / "initial_submission"
             for name in expected:
@@ -113,6 +126,17 @@ class InitializationTest(unittest.TestCase):
             self.assertFalse((project / "output").exists())
             self.assertFalse((project / "manuscripts").exists())
             self.assertFalse((project / "submission").exists())
+            self.assertFalse((initial / "references").exists())
+            shared = project / "references"
+            for name in (
+                "authors.yaml",
+                "references.bib",
+                "revision_style.tex",
+                "journal_template",
+                "author_metadata.tex",
+                "publisher_metadata.tex",
+            ):
+                self.assertTrue((shared / name).exists(), name)
             entrypoint = (project / "run.py").read_text(encoding="utf-8")
             self.assertNotIn(workspace.ENTRYPOINT_MARKER, entrypoint)
 
@@ -132,6 +156,11 @@ class InitializationTest(unittest.TestCase):
                 self.assertTrue((initial / "sections" / filename).exists())
                 manuscript = (initial / "manuscript.tex").read_text(encoding="utf-8")
                 self.assertIn(Path(filename).stem, manuscript)
+                class_name = metadata.PUBLISHER_TEMPLATES[publisher]
+                self.assertIn(
+                    f"../references/journal_template/{publisher}/{class_name}",
+                    manuscript,
+                )
 
     def test_refuses_reinitialization(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -163,10 +192,10 @@ class RevisionChainTest(unittest.TestCase):
             self.assertIn("R1 revised text.", r2_intro)
             self.assertNotIn("\\review", r2_intro)
             self.assertEqual(r2.metadata.parent_round, 1)
-            self.assertTrue(
-                (r1.round_dir(1) / "references" / "references.bib").exists()
-            )
-            self.assertTrue((r2.round_dir(2) / "references" / "authors.yaml").exists())
+            self.assertTrue((project / "references" / "references.bib").exists())
+            self.assertTrue((project / "references" / "authors.yaml").exists())
+            self.assertFalse((r1.round_dir(1) / "references").exists())
+            self.assertFalse((r2.round_dir(2) / "references").exists())
             self.assertFalse((project / "revision_0").exists())
             self.assertFalse(any((project / "tmp").iterdir()))
 
@@ -244,6 +273,15 @@ General assessment.
             )
             self.assertEqual(response.pending_response_ids(source), ("1-1",))
 
+    def test_english_response_starts_with_reviewer_salutation(self) -> None:
+        template = (ROOT / "assets" / "response" / "response_en.tex").read_text(
+            encoding="utf-8"
+        )
+        body = template.split("\\begin{document}", 1)[1].lstrip()
+        self.assertTrue(body.startswith("Dear Reviewer,"))
+        self.assertNotIn("Response to Reviewers", template)
+        self.assertNotIn("Revision round", template)
+
 
 class InterfaceTest(unittest.TestCase):
     """Verify public subcommands and user-style/runtime separation."""
@@ -289,7 +327,7 @@ class InterfaceTest(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
 
     def test_revision_style_contains_only_user_settings(self) -> None:
-        style = (ROOT / "references" / "revision_style.tex").read_text(encoding="utf-8")
+        style = (ROOT / "assets" / "revision_style.tex").read_text(encoding="utf-8")
         self.assertNotIn("ReviewLocationFile", style)
         self.assertNotIn("DIFadd", style)
         self.assertIn("ReviewLocationFile", diff.REVISION_RUNTIME)

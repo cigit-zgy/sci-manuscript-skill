@@ -1,215 +1,108 @@
 ---
 name: sci-manuscript-skill
-description: Initialize and operate a traceable LaTeX scientific-manuscript lifecycle from initial submission through adjacent revisions, reviewer responses, marked manuscripts, and version-local submission packages. Use for manuscript workflow engineering, not scientific-content generation or reviewer judgment.
+description: >
+  Automate an existing LaTeX manuscript workflow: initialize a structured
+  project, inspect its build environment, compile the current manuscript, create
+  adjacent revisions, prepare reviewer-response infrastructure and marked
+  manuscripts, synchronize explicit BibTeX exports, and build version-local
+  submission packages. Use for manuscript lifecycle engineering requests in
+  English or Chinese, even when the user does not name this skill. Do not use for
+  scientific writing, literature interpretation, claim assessment, experiment
+  analysis, or deciding how to answer reviewers scientifically.
 ---
 
-# SCI manuscript lifecycle
+# SCI manuscript workflow
 
-Act as the workflow operator. A user may invoke this skill by asking to execute
-this `SKILL.md`; they do not need to know the internal Python modules or command
-sequence. Follow the mandatory order below:
+Operate the manuscript lifecycle through the deterministic Python entrypoint.
+Keep scientific content and reviewer judgment with the user.
 
-```text
-inspect environment -> ask for approval if blocked -> collect project data
--> initialize -> compile -> validate -> hand off editable files
-```
+## Route the request
 
-Do not invent research content, alter scientific claims without instruction,
-or decide whether reviewer comments are correct.
-
-## Step 1. Environment inspection
-
-Inspect the selected environment before asking project questions. Start with
-read-only discovery such as `python3 --version` and `command -v` for the tools
-below, then run:
-
-```bash
-python3 scripts/run.py doctor
-```
-
-### Required dependencies
-
-| Category | Dependency | Purpose |
+| Task | Required context | Action |
 | --- | --- | --- |
-| Python | Python >= 3.11 | Workflow execution |
-| Python package | PyYAML | YAML parsing |
-| LaTeX | Tectonic or supported TeX Live toolchain | PDF compilation |
-| Diff | latexdiff | Adjacent revision comparison |
-| PDF tools | Poppler (`pdftotext`, `pdftoppm`) | Text and visual PDF validation |
-| Bibliography | Tectonic-integrated BibTeX, BibTeX, or Biber | Reference processing |
+| New manuscript | Read [environment.md](references/environment.md) when dependency state is unknown; read the initialization section of [workflow.md](references/workflow.md) | Run `doctor`, collect user data, then run `init` and verify the first PDF |
+| Build current manuscript | No reference is normally needed | Run the project-root `python run.py build`; do not initialize or create a revision |
+| Start a revision | Read the version and response sections of [workflow.md](references/workflow.md) | Determine the current highest round and run `revision` once |
+| Prepare submission | Read the submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for an initial version or `all` for a completed revision |
+| Synchronize bibliography | Read the bibliography section of [workflow.md](references/workflow.md) | Run `sync-bib` only with an explicit export path or configured local export |
+| Diagnose environment | Read [environment.md](references/environment.md) | Run `doctor`; report blockers without changing the environment |
 
-### Optional dependencies
+Do not read `.cls`, `.bst`, `.dtx`, or other bundled assets as routine reasoning
+context. The runtime copies and compiles files under `assets/` directly. Inspect a
+publisher asset only when adapting or diagnosing that exact template.
 
-| Dependency | Purpose |
-| --- | --- |
-| Zotero Better BibTeX | Explicit `.bib` export and synchronization |
-| Ruff | Development formatting and lint |
-| Mypy | Development static checking |
+## Preserve these invariants
 
-Treat `Result: READY` as permission to continue the workflow, not as permission
-to modify the machine. If the result is `BLOCKED`:
+- The lifecycle is adjacent and gap-free:
+  `initial_submission (r0) -> revision_1 (r1) -> revision_2 (r2) -> ...`.
+  Never create `r0 -> r2` or compare non-adjacent versions.
+- Use `scripts/run.py` only for source-repository commands. After initialization,
+  use the copied project-root `run.py`; do not expose internal module entrypoints.
+- Do not invent manuscript prose, results, citations, author identities, reviewer
+  responses, or scientific claims. Workflow automation does not authorize content
+  changes.
+- Before installing, upgrading, activating, or otherwise changing a dependency,
+  show the missing requirement and obtain approval for the exact environment.
+- Treat authors, bibliography, manuscript sections, figures, tables, and reviewer
+  responses as user-owned. Explicitly identify every placeholder that remains.
+- Preserve editable cover-letter, response, highlights, and graphical-abstract
+  sources after creation; repeated builds must not overwrite user edits.
+- Keep author data, bibliography, revision style, generated metadata, and
+  publisher resources only under project-root `references/`. Never create or
+  copy a `references/` directory inside a version.
+- Successful commands remove their `tmp/run_*` directory. Failed commands may
+  retain a project-relative diagnostic directory and must report it.
 
-1. show the user the missing required dependencies and the selected Python or
-   Conda environment;
-2. ask once whether they want installation instructions or installation in
-   that specific environment;
-3. do not install, upgrade, activate, or modify anything before confirmation;
-4. after confirmation, read [environment.md](references/environment.md), use
-   the platform-appropriate method, and rerun `doctor`;
-5. stop cleanly if the user declines or the required checks remain blocked.
+## Entrypoints
 
-Do not treat missing optional dependencies as a blocker. Better BibTeX is a
-manual integration and must never be contacted automatically.
-
-## Step 2. Project information
-
-Collect the following before initialization:
-
-| Required information | Accepted value |
-| --- | --- |
-| Project path | New or empty directory chosen by the user |
-| Manuscript title | User-provided title; never invent one |
-| Target journal | User-provided journal name |
-| Publisher template | `elsevier`, `nature`, `acs`, or `chinese` |
-| Language | `en` or `zh` |
-| Article type | Defaults to `Research Paper` only with user acceptance |
-
-For authors, ask whether an existing `authors.yaml` is available and request
-its path and author order. If none exists, explain that the generic
-`references/authors.yaml` example will be copied and must be replaced before
-submission. Never silently treat example identities as real authors.
-
-For bibliography, ask whether an existing `references.bib` is available. If
-none exists, obtain confirmation to copy the explicit placeholder and remind
-the user to replace it. Zotero synchronization remains optional and explicit.
-
-Template notes:
-
-- `nature` selects the bundled Springer Nature `sn-jnl` resource; it is not a
-  dedicated official class for every Nature Portfolio journal.
-- `chinese` selects a general Chinese-journal workflow whose current class
-  resource is the maintainer-provided `kxtbcas.cls`.
-
-## Step 3. Initialize manuscript project
-
-Use the one public source entrypoint with all collected inputs:
+From the skill repository:
 
 ```bash
-python3 scripts/run.py init \
-  --project /absolute/path/to/project \
-  --title "Manuscript title" \
-  --journal "Target Journal" \
-  --publisher elsevier \
-  --language en \
-  --authors /absolute/path/to/authors.yaml \
-  --author "First Author" \
-  --author "Corresponding Author" \
-  --bib /absolute/path/to/references.bib
+python scripts/run.py doctor
+python scripts/run.py init --help
 ```
 
-Omit `--authors` or `--bib` only after the placeholder choice was confirmed.
-For Chinese projects use `--publisher chinese --language zh`. Never initialize
-a non-empty directory or overwrite an existing lifecycle.
-
-Initialization performs this deterministic sequence:
-
-```text
-select publisher resource -> create project structure -> write manuscript.yaml
--> copy author and bibliography snapshots -> generate author_metadata.tex
--> compile initial PDF -> clean temporary build files
-```
-
-## Step 4. Validate and hand off
-
-Initialization must produce
-`initial_submission/output/manuscript.pdf`. Confirm:
-
-- the expected project structure exists and the root has no manuscript files;
-- the PDF opens, contains extractable text and continuous line numbers;
-- selected authors, affiliation, and corresponding-author email match the
-  supplied YAML;
-- `tmp/` is empty after success;
-- no compiler, latexdiff, location-extraction, or test files are exposed as
-  user artifacts.
-
-Report every placeholder that still requires replacement. Do not call the
-project ready for submission while example authors, bibliography, manuscript
-prose, or reviewer-response placeholders remain.
-
-## Files requiring user replacement
-
-The following bundled content is initialization material, not research content:
-
-1. `templates/manuscript/references.bib` becomes
-   `initial_submission/references/references.bib`; replace the example BibTeX.
-2. `references/authors.yaml` becomes
-   `initial_submission/references/authors.yaml`; replace names, emails,
-   affiliations, roles, and corresponding-author data unless a real file was
-   supplied.
-3. Publisher-mapped files in `initial_submission/sections/` are structural
-   placeholders. Replace the abstract and every manuscript section.
-4. `initial_submission/figures/` is intentionally empty. Add only real figure
-   assets and remove temporary test artwork.
-
-Do not edit generated `references/author_metadata.tex` directly.
-
-## Project contract
-
-```text
-project/
-├── run.py
-├── initial_submission/        # r0, parent null
-│   ├── manuscript.yaml
-│   ├── manuscript.tex
-│   ├── preamble.tex
-│   ├── sections/
-│   ├── figures/
-│   ├── tables/
-│   ├── references/
-│   ├── submission/            # created on demand
-│   └── output/
-├── revision_1/                # r1, parent r0
-├── revision_2/                # r2, parent r1
-└── tmp/
-```
-
-Every revision is copied only from its immediate parent and owns its
-manuscript, reference snapshot, response material, submission package, and
-outputs. The project root must not contain those version-local files.
-
-## Continue an initialized project
-
-Use only the copied project-root entrypoint:
+From an initialized project:
 
 ```bash
 python run.py doctor
 python run.py build
-python run.py revision --reviews /absolute/path/to/comments.md
+python run.py revision --reviews /absolute/path/to/reviewer-comments.md
 python run.py submission
 python run.py all
 python run.py sync-bib --bib-export /absolute/path/to/export.bib
 python run.py status
 ```
 
-`revision` creates only the next adjacent version. Use
-`\review{1-1}{text}` for reviewer-linked changes and `\selfadd{text}` for
-author-initiated additions. Replace every generated
-`\ResponsePending{1-1}` before a normal `all`; the diagnostic
-`--allow-placeholders` flag is not a submission-ready mode.
+Select an existing version with `--round rN` where supported. `revision` creates
+only the next version. `--allow-placeholders` is diagnostic and never makes a
+submission ready.
 
-`sync-bib` copies an explicit Better BibTeX export into every existing
-version. It never connects to Zotero. Read
-[workflow.md](references/workflow.md) before revision or submission work and
-the selected resource README before adapting an exact journal class.
+## New-project inputs
 
-## Safety and output rules
+Before `init`, obtain a new or empty project path, user-supplied title and journal,
+publisher key (`elsevier`, `nature`, `acs`, or `chinese`), language (`en` or `zh`),
+article type, author order, and optional existing author YAML and BibTeX paths.
+Copy bundled examples only after the user accepts that they are placeholders.
 
-Manuscript, clean-manuscript, and marked-manuscript PDFs use continuous line
-numbers. Cover letters, response letters, highlights, and graphical abstracts
-do not. Successful commands remove `tmp/run_*`; failed commands retain a
-project-relative diagnostic directory. Default CLI output reports only final
-project-relative artifacts.
+Initialization must leave the user with
+`initial_submission/output/manuscript.pdf` and identify these editable locations:
 
-Submission and response sources are created once so user edits survive later
-builds. Never publish compiler intermediates, extracted review-location files,
-or test fixtures as manuscript artifacts.
+- `initial_submission/manuscript.yaml`;
+- root `references/authors.yaml`, `references/references.bib`, and
+  `references/revision_style.tex`;
+- `initial_submission/sections/`, `figures/`, and `tables/`.
+
+Each version YAML groups selected names under `authors.first_authors`,
+`authors.corresponding_authors`, and `authors.authors`; multiple names are
+allowed in every group. Do not edit generated root
+`references/author_metadata.tex` or `references/publisher_metadata.tex`
+directly.
+
+## Validate before handoff
+
+Confirm the selected version, direct parent, expected final PDFs, extractable PDF
+text, manuscript line numbers, correspondence without manuscript line numbering,
+and an empty `tmp/` after success. Report only final project-relative artifacts;
+do not publish compiler intermediates, flattened diff sources, extracted location
+registries, caches, or test fixtures.

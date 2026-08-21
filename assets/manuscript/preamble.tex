@@ -1,11 +1,12 @@
-% Core layout and engine compatibility.
-\usepackage[a4paper,margin=25mm]{geometry}
+% Engine compatibility. Page geometry is controlled by the publisher class.
 \usepackage{iftex}
 \usepackage{xcolor}
 
 % Mathematics.
 \usepackage{amsmath}
-\usepackage{amssymb}
+\makeatletter
+\@ifpackageloaded{unicode-math}{}{\usepackage{amssymb}}
+\makeatother
 \usepackage{mathtools}
 
 % Chemistry and SI units.

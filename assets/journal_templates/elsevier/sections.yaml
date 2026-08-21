@@ -1,6 +1,6 @@
 bibliography:
-  package: \usepackage[numbers,sort&compress]{natbib}
-  style: unsrtnat
+  package: "% Bibliography support is supplied by elsarticle."
+  style: elsarticle-num
 
 sections:
   - file: 00_abstract.tex

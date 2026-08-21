@@ -117,6 +117,12 @@ def _copy_resources(config: ProjectConfig, round_dir: Path, target: Path) -> Non
     bibliography = config.references / "references.bib"
     if bibliography.exists():
         shutil.copy2(bibliography, target / "references.bib")
+    publisher = config.references / "journal_template" / config.metadata.publisher
+    if not publisher.is_dir():
+        raise WorkflowError(f"Shared publisher template is missing: {publisher}")
+    for resource in publisher.iterdir():
+        if resource.is_file():
+            shutil.copy2(resource, target / resource.name)
 
 
 def _is_escaped(text: str, index: int) -> bool:
@@ -342,6 +348,9 @@ def build_marked_manuscript(
     ):
         old_text = old_text.replace(bibliography_path, "references")
         new_text = new_text.replace(bibliography_path, "references")
+    publisher_path = f"../references/journal_template/{config.metadata.publisher}/"
+    old_text = old_text.replace(publisher_path, "")
+    new_text = new_text.replace(publisher_path, "")
     old_source = source_dir / "old.tex"
     new_source = source_dir / "new.tex"
     old_source.write_text(old_text, encoding="utf-8")

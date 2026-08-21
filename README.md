@@ -25,11 +25,11 @@ and submission decisions.
 | Agent workflow | `SKILL.md` defines environment inspection, information collection, initialization, validation, and handoff |
 | Manuscript lifecycle | Maintains initial submission and any number of adjacent revisions |
 | Publisher resources | Bundles Elsevier, Springer Nature, ACS, and a general Chinese-journal category |
-| Dynamic metadata | Generates LaTeX author commands from a version-local YAML author library |
+| Dynamic metadata | Generates publisher-specific LaTeX author commands from one manuscript-level YAML author library |
 | Revision comparison | Produces clean and marked manuscripts from adjacent versions with `latexdiff` |
 | Response letter | Creates structured reviewer-response sources and validates unfinished placeholders |
 | Submission packaging | Builds cover letter, highlights, graphical abstract, manuscript, response, and checklist artifacts on demand |
-| Bibliography snapshots | Keeps every revision self-contained and supports explicit Better BibTeX export synchronization |
+| Shared bibliography | Keeps one manuscript-level BibTeX database and supports explicit Better BibTeX export synchronization |
 | Isolated builds | Routes compiler intermediates through `tmp/` and removes successful temporary runs |
 | PDF verification | Uses Poppler text extraction and rendering tools for output QA |
 
@@ -162,7 +162,7 @@ all later operations.
 | `revision` | Create the next adjacent revision and initialize its response source |
 | `submission` | Build version-local submission materials and package |
 | `all` | Build clean, marked, response, and submission outputs for the selected version |
-| `sync-bib` | Copy an explicit Better BibTeX export into every existing version |
+| `sync-bib` | Atomically replace the manuscript-level BibTeX database from an explicit export |
 | `status` | Report lifecycle ancestry and generated artifacts |
 
 Run `python run.py <command> --help` for command-specific options. `build`,
@@ -176,9 +176,11 @@ responses is not submission-ready.
 ### `manuscript.yaml`
 
 Each version owns one `manuscript.yaml` containing title, article type,
-language, journal, publisher category, revision identifier, immediate parent,
-submission switches, and the selected author names in publication order. It
-does not duplicate emails or affiliations.
+language, journal, selected publisher template, semantic revision identity,
+immediate parent, submission switches, and author role groups. It does not
+duplicate emails or affiliations. Revision creation copies this YAML from the
+direct parent and changes only `revision.name`, `revision.parent`, and
+`revision.round`.
 
 ```yaml
 manuscript:
@@ -189,10 +191,12 @@ manuscript:
 journal:
   name: Target Journal
   publisher: elsevier
+  template: elsarticle
 
 revision:
-  id: r0
+  name: initial_submission
   parent: null
+  round: r0
 
 submission:
   cover_letter: true
@@ -200,26 +204,32 @@ submission:
   graphical_abstract: true
 
 authors:
-  - First Author
-  - Corresponding Author
+  first_authors:
+    - First Author
+    - Co-first Author
+  corresponding_authors:
+    - Corresponding Author
+    - Co-corresponding Author
+  authors:
+    - Other Author
 ```
 
 ### `references/authors.yaml`
 
-This version-local author library stores complete English and Chinese names,
-email addresses, author roles, affiliation references, and affiliation
-addresses. At least one author must have the `corresponding_author` role. The
-names selected in `manuscript.yaml` must exactly match keys in this file.
-Python expands both files into `references/author_metadata.tex`, which is the
-single generated source used by the manuscript and correspondence templates.
-Do not edit the generated TeX file.
+This manuscript-level author library stores complete English and Chinese
+names, email addresses, default roles, affiliation references, and affiliation
+addresses. The names selected in each version's `manuscript.yaml` must exactly
+match keys in this file. Multiple first and corresponding authors are
+supported. Python expands the selected version and shared library into
+`references/author_metadata.tex` and `references/publisher_metadata.tex`.
+Manuscript and correspondence templates use these generated shared sources;
+do not edit them directly.
 
 ### `references/references.bib`
 
-Replace the bundled example with the paper's real BibTeX database. Every
-revision keeps a snapshot so a later bibliography update cannot silently alter
-an earlier submitted version. To apply an explicit Better BibTeX export to all
-existing versions, run:
+Replace the bundled example with the paper's real BibTeX database. It is shared
+by every version and exists only at the project root. To atomically replace it
+from an explicit Better BibTeX export, run:
 
 ```bash
 python run.py sync-bib --bib-export /absolute/path/to/export.bib
@@ -237,6 +247,17 @@ create scientific figures or infer missing content.
 ```text
 project/
 ├── run.py
+├── references/                   # manuscript-level shared resources
+│   ├── authors.yaml
+│   ├── author_metadata.tex       # generated
+│   ├── publisher_metadata.tex    # generated
+│   ├── references.bib
+│   ├── revision_style.tex
+│   └── journal_template/
+│       ├── elsevier/
+│       ├── nature/
+│       ├── acs/
+│       └── chinese/
 ├── initial_submission/          # r0, parent null
 │   ├── manuscript.yaml
 │   ├── manuscript.tex
@@ -244,11 +265,6 @@ project/
 │   ├── sections/
 │   ├── figures/
 │   ├── tables/
-│   ├── references/
-│   │   ├── authors.yaml
-│   │   ├── author_metadata.tex  # generated
-│   │   ├── references.bib
-│   │   └── revision_style.tex
 │   ├── submission/              # created on demand
 │   └── output/
 ├── revision_1/                  # r1, parent r0
@@ -259,11 +275,13 @@ project/
 `initial_submission` is the complete first-submission state. Each
 `revision_N` is copied only from `revision_(N-1)` (or from
 `initial_submission` for revision 1) and adds its own response source,
-submission material, outputs, and reference snapshot. `tmp/` contains isolated
+submission material, and outputs. Revision directories never contain a
+`references/` directory. `tmp/` contains isolated
 compiler and diff work and is empty after successful commands. Manuscript
 sources, outputs, and submission files never live directly at the project
-root. The generated project is self-contained in manuscript data and version
-history, while workflow execution still uses the installed skill code.
+root. Shared author data, bibliography, revision style, and all publisher
+classes exist exactly once under root `references/`. Workflow execution still
+uses the installed skill code.
 
 ## 8. Publisher templates
 
@@ -277,7 +295,7 @@ history, while workflow execution still uses the installed skill code.
 The `nature` key does not claim a dedicated official class for every Nature
 Portfolio journal. The `chinese` category is not a universal official Chinese
 journal template. Publisher resources and default section mappings live in
-`references/journal_templates/<publisher>/`; each resource README records its
+`assets/journal_templates/<publisher>/`; each resource README records its
 source, version, date, license, and any local compatibility adaptation.
 
 Bundled resources are tested with author, figure, citation, and bibliography
@@ -305,7 +323,8 @@ Create the next version with:
 python run.py revision --reviews /absolute/path/to/reviewer-comments.md
 ```
 
-The command rejects r0-to-r2 jumps and copies only the immediate parent.
+The command rejects r0-to-r2 jumps and copies manuscript state only from the
+immediate parent; it never copies or regenerates the shared references tree.
 Reviewer-linked additions use `\review{1-1}{Revised text.}`; author-initiated
 additions use `\selfadd{Additional text.}`. The marked manuscript compares the
 current version against its direct parent, so added and deleted text remain
@@ -321,22 +340,29 @@ submission files do not.
 
 ## 10. Development
 
-The repository separates deterministic workflow code from reusable assets:
+The repository separates agent routing, deterministic execution, on-demand
+guidance, static output resources, and the two validation layers:
 
-- `scripts/` contains the CLI, workspace, metadata, compiler, diff, and response
-  implementation;
-- `templates/` contains generic manuscript, response, and submission sources;
-- `references/` contains author examples, workflow guidance, revision style,
-  and publisher resources;
-- `tests/` contains lifecycle invariants and actual publisher-compilation
-  tests.
+| Directory | Purpose |
+| --- | --- |
+| `SKILL.md` | Agent routing, authorization boundaries, and workflow invariants |
+| `scripts/` | Deterministic CLI, workspace, metadata, compiler, diff, and response runtime |
+| `references/` | Agent-readable environment and lifecycle guidance loaded only when needed |
+| `assets/` | Author examples, revision style, manuscript sources, correspondence templates, and publisher resources copied or compiled by the runtime |
+| `evals/` | Agent triggering, routing, authorization, and scope-boundary evaluations |
+| `tests/` | Software correctness, lifecycle invariants, and actual publisher compilation |
+
+`SKILL.md` is intentionally a compact router. A normal `build` does not require
+the environment reference, and publisher `.cls`, `.bst`, and `.dtx` files are
+assets rather than routine agent context. `evals/` defines behavioral tasks;
+`tests/` remains the executable software verification suite.
 
 Run the release checks from the repository root:
 
 ```bash
-python -m unittest discover -s tests -v
-ruff format --check scripts tests
-ruff check scripts tests
+pytest
+ruff format --check .
+ruff check .
 mypy scripts tests
 ```
 

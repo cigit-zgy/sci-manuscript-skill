@@ -1,5 +1,5 @@
 bibliography:
-  package: \usepackage[numbers,sort&compress]{natbib}
+  package: "% Bibliography support is supplied by kxtbcas."
   style: unsrtnat
 
 sections:

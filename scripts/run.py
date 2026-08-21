@@ -172,6 +172,7 @@ except RuntimeError as exc:  # pragma: no cover - installation boundary
 
 try:
     from metadata import (
+        PUBLISHER_TEMPLATES,
         ManuscriptMetadata,
         MetadataError,
         SubmissionSettings,
@@ -206,12 +207,37 @@ def _new_config(args: argparse.Namespace, project: Path) -> ProjectConfig:
     author_library = (
         load_author_library(Path(args.authors).expanduser().resolve())
         if args.authors
-        else load_author_library(
-            _internal_scripts().parent / "references" / "authors.yaml"
-        )
+        else load_author_library(_internal_scripts().parent / "assets" / "authors.yaml")
     )
     selected_authors = (
         tuple(args.author) if args.author else tuple(author_library.authors)
+    )
+    missing = [name for name in selected_authors if name not in author_library.authors]
+    if missing:
+        raise MetadataError(
+            "Selected authors are missing from authors.yaml: " + ", ".join(missing)
+        )
+    first_authors = (
+        tuple(
+            name
+            for name in selected_authors
+            if author_library.authors[name].role == "first_author"
+        )
+        or selected_authors[:1]
+    )
+    corresponding_authors = tuple(
+        name
+        for name in selected_authors
+        if author_library.authors[name].role == "corresponding_author"
+    )
+    if not corresponding_authors:
+        raise MetadataError(
+            "Selected authors must include at least one corresponding_author."
+        )
+    ordinary_authors = tuple(
+        name
+        for name in selected_authors
+        if name not in {*first_authors, *corresponding_authors}
     )
     metadata = ManuscriptMetadata(
         title=args.title,
@@ -219,10 +245,13 @@ def _new_config(args: argparse.Namespace, project: Path) -> ProjectConfig:
         language=args.language,
         journal_name=args.journal,
         publisher=args.publisher,
+        journal_template=PUBLISHER_TEMPLATES[args.publisher],
         round_number=0,
         parent_round=None,
         submission=SubmissionSettings(True, True, True),
-        author_names=selected_authors,
+        first_authors=first_authors,
+        corresponding_authors=corresponding_authors,
+        authors=ordinary_authors,
     )
     return ProjectConfig(project, metadata, args.engine or "auto")
 
@@ -253,7 +282,7 @@ def _build_lifecycle(
 ) -> tuple[Path, MarkedResult | None, Path | None]:
     if round_number != config.current_round:
         raise WorkflowError("Build config must match the selected version.")
-    generate_author_metadata(config.round_dir(round_number))
+    generate_author_metadata(config.project, config.round_dir(round_number))
     clean = build_clean_manuscript(config, round_number, run_dir, engine)
     if round_number == 0:
         return clean, None, None
@@ -442,7 +471,7 @@ def execute(args: argparse.Namespace) -> int:
             bibliography_source,
         )
         with temporary_run(project, args.keep_temp) as run_dir:
-            generate_author_metadata(config.round_dir(0))
+            generate_author_metadata(config.project, config.round_dir(0))
             manuscript = build_clean_manuscript(config, 0, run_dir, args.engine)
         _report_generated(
             "Project initialized",
@@ -451,13 +480,9 @@ def execute(args: argparse.Namespace) -> int:
             [("Initial manuscript", manuscript)],
         )
         if args.authors is None:
-            print(
-                "\nACTION REQUIRED: replace initial_submission/references/authors.yaml."
-            )
+            print("\nACTION REQUIRED: replace references/authors.yaml.")
         if args.bib is None:
-            print(
-                "ACTION REQUIRED: replace initial_submission/references/references.bib."
-            )
+            print("ACTION REQUIRED: replace references/references.bib.")
         return 0
     if args.command == "status":
         if not is_initialized(project):
@@ -471,7 +496,7 @@ def execute(args: argparse.Namespace) -> int:
         targets = sync_bibliography(project, explicit)
         _report_generated(
             "Bibliography synchronized",
-            f"{len(targets)} version(s)",
+            f"{len(targets)} shared file(s)",
             project,
             [("Bibliography", target) for target in targets],
         )
@@ -502,7 +527,7 @@ def execute(args: argparse.Namespace) -> int:
     version = round_directory_name(round_number)
     if args.command == "build":
         with temporary_run(project, args.keep_temp) as run_dir:
-            generate_author_metadata(config.round_dir(round_number))
+            generate_author_metadata(config.project, config.round_dir(round_number))
             clean = build_clean_manuscript(config, round_number, run_dir, args.engine)
         _report_generated(
             "Build completed",

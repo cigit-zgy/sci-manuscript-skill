@@ -1,6 +1,6 @@
 bibliography:
-  package: \usepackage[numbers,sort&compress]{natbib}
-  style: unsrtnat
+  package: "% Bibliography support is supplied by achemso."
+  style: achemso
 
 sections:
   - file: 00_abstract.tex

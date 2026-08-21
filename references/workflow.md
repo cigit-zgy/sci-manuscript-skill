@@ -11,12 +11,39 @@ revision_1/           r1, parent r0
 revision_2/           r2, parent r1
 ```
 
-Each version contains its own manuscript sources, author library, generated
-metadata, bibliography, revision style, assets, submission workspace, and
-outputs. `python run.py revision` is the only normal revision creator. It
-copies the current highest version, removes inherited provenance wrappers from
-manuscript prose, resets outputs, and creates a response workspace. Gaps,
-duplicates, `revision_0`, and non-adjacent parents are rejected.
+The project root contains the only `references/` tree: author library,
+generated metadata, bibliography, revision style, and all publisher resources.
+No version may contain `references/`. `python run.py revision` is the only
+normal revision creator. It copies manuscript state from the current highest
+version, removes inherited provenance wrappers from manuscript prose, resets
+outputs, and creates a response workspace. It never copies or regenerates
+shared references. Gaps, duplicates, `revision_0`, and non-adjacent parents are
+rejected.
+
+## Initialization
+
+Run `doctor` before initialization when the environment has not already been
+verified. Collect a new or empty project path, title, journal, publisher,
+language, article type, author order, and any existing author YAML or BibTeX
+file. Do not infer missing scientific or identity data.
+
+```bash
+python scripts/run.py init \
+  --project /absolute/path/to/project \
+  --title "User-supplied title" \
+  --journal "Target Journal" \
+  --publisher elsevier \
+  --language en \
+  --authors /absolute/path/to/authors.yaml \
+  --author "First Author" \
+  --author "Corresponding Author" \
+  --bib /absolute/path/to/references.bib
+```
+
+When the user accepts bundled placeholders, omit `--authors` or `--bib` and
+identify the copied files that must be replaced. Initialization creates and
+builds only `initial_submission`; it must not create a revision or a submission
+package.
 
 ## Initial submission
 
@@ -28,6 +55,9 @@ python run.py submission
 The clean PDF is `initial_submission/output/manuscript.pdf`. Submission sources
 are created on demand under `initial_submission/submission/`; their package is
 published under `submission/package/` without exposing compiler intermediates.
+
+`build` recompiles only the selected clean manuscript. It must not create the
+next revision, submission sources, or scientific content.
 
 ## Revision response
 
@@ -62,10 +92,22 @@ Response locations are calculated from continuous line labels in the marked
 PDF. Registries, flattened TeX, extracted text, and compiler files remain
 temporary.
 
+## Submission and artifact contract
+
+Use `submission` for an initial submission or when only version-local submission
+materials are needed. Use `all` for a completed revision because it builds the
+clean manuscript, adjacent marked comparison, response letter, and submission
+package together. The marked comparison is always direct-parent to current.
+
+Manuscript, clean-manuscript, and marked-manuscript PDFs have continuous line
+numbers. Cover letters, response letters, highlights, and graphical abstracts
+do not use manuscript line numbering. Editable submission and response sources
+are created once and survive later builds.
+
 ## Bibliography synchronization
 
-Every version owns a `references/references.bib` snapshot. Explicit Better
-BibTeX synchronization updates all existing snapshots atomically per file:
+Every version reads the single root `references/references.bib`. Explicit
+Better BibTeX synchronization atomically replaces that shared file:
 
 ```bash
 python run.py sync-bib --bib-export /absolute/path/to/export.bib

@@ -20,7 +20,13 @@ except ModuleNotFoundError as exc:  # pragma: no cover - environment boundary
     ) from exc
 
 
-PUBLISHERS = ("elsevier", "nature", "acs", "chinese")
+PUBLISHER_TEMPLATES = {
+    "elsevier": "elsarticle",
+    "nature": "sn-jnl",
+    "acs": "achemso",
+    "chinese": "kxtbcas",
+}
+PUBLISHERS = tuple(PUBLISHER_TEMPLATES)
 
 
 @dataclass(frozen=True)
@@ -69,10 +75,19 @@ class ManuscriptMetadata:
     language: str
     journal_name: str
     publisher: str
+    journal_template: str
     round_number: int
     parent_round: int | None
     submission: SubmissionSettings
-    author_names: tuple[str, ...]
+    first_authors: tuple[str, ...]
+    corresponding_authors: tuple[str, ...]
+    authors: tuple[str, ...]
+
+    @property
+    def author_names(self) -> tuple[str, ...]:
+        """Return publication order without duplicating role overlaps."""
+        ordered = (*self.first_authors, *self.authors, *self.corresponding_authors)
+        return tuple(dict.fromkeys(ordered))
 
 
 @dataclass(frozen=True)
@@ -81,7 +96,8 @@ class AuthorSelection:
 
     authors: tuple[AuthorRecord, ...]
     affiliations: tuple[AffiliationRecord, ...]
-    corresponding_author: AuthorRecord
+    first_authors: tuple[AuthorRecord, ...]
+    corresponding_authors: tuple[AuthorRecord, ...]
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -125,13 +141,33 @@ def _round_number(value: Any, location: str) -> int | None:
     return int(suffix)
 
 
-def _author_names(value: Any) -> tuple[str, ...]:
-    if not isinstance(value, list) or not value:
-        raise MetadataError("authors must be a non-empty list of author names.")
-    names = tuple(_text(item, f"authors[{index}]") for index, item in enumerate(value))
+def _author_group(value: Any, location: str, required: bool) -> tuple[str, ...]:
+    if not isinstance(value, list) or (required and not value):
+        requirement = "a non-empty list" if required else "a list"
+        raise MetadataError(f"{location} must be {requirement} of author names.")
+    names = tuple(
+        _text(item, f"{location}[{index}]") for index, item in enumerate(value)
+    )
     if len(set(names)) != len(names):
-        raise MetadataError("authors must not contain duplicate names.")
+        raise MetadataError(f"{location} must not contain duplicate names.")
     return names
+
+
+def _revision_directory(value: Any, location: str) -> int | None:
+    if value is None:
+        return None
+    name = _text(value, location)
+    if name == "initial_submission":
+        return 0
+    prefix = "revision_"
+    if not name.startswith(prefix) or not name[len(prefix) :].isdigit():
+        raise MetadataError(
+            f"{location} must be null, initial_submission, or revision_N."
+        )
+    number = int(name[len(prefix) :])
+    if number < 1:
+        raise MetadataError(f"{location} must not use revision_0.")
+    return number
 
 
 def load_manuscript(path: Path) -> ManuscriptMetadata:
@@ -147,10 +183,13 @@ def load_manuscript(path: Path) -> ManuscriptMetadata:
     journal = _mapping(data.get("journal"), "journal")
     revision = _mapping(data.get("revision"), "revision")
     submission = _mapping(data.get("submission"), "submission")
-    current = _round_number(revision.get("id"), "revision.id")
+    current = _round_number(revision.get("round"), "revision.round")
     if current is None:
-        raise MetadataError("revision.id cannot be null.")
-    parent = _round_number(revision.get("parent"), "revision.parent")
+        raise MetadataError("revision.round cannot be null.")
+    declared_name = _revision_directory(revision.get("name"), "revision.name")
+    if declared_name != current:
+        raise MetadataError(f"revision.name does not match revision.round: r{current}.")
+    parent = _revision_directory(revision.get("parent"), "revision.parent")
     if current == 0 and parent is not None:
         raise MetadataError("R0 must have revision.parent: null.")
     if current > 0 and parent != current - 1:
@@ -162,12 +201,20 @@ def load_manuscript(path: Path) -> ManuscriptMetadata:
     if publisher not in PUBLISHERS:
         available = ", ".join(PUBLISHERS)
         raise MetadataError(f"journal.publisher must be one of: {available}.")
+    journal_template = _text(journal.get("template"), "journal.template")
+    expected_template = PUBLISHER_TEMPLATES[publisher]
+    if journal_template != expected_template:
+        raise MetadataError(
+            f"journal.template must be {expected_template!r} for {publisher}."
+        )
+    author_groups = _mapping(data.get("authors"), "authors")
     return ManuscriptMetadata(
         title=_text(manuscript.get("title"), "manuscript.title"),
         article_type=_text(manuscript.get("article_type"), "manuscript.article_type"),
         language=language,
         journal_name=_text(journal.get("name"), "journal.name"),
         publisher=publisher,
+        journal_template=journal_template,
         round_number=current,
         parent_round=parent,
         submission=SubmissionSettings(
@@ -180,7 +227,21 @@ def load_manuscript(path: Path) -> ManuscriptMetadata:
                 "submission.graphical_abstract",
             ),
         ),
-        author_names=_author_names(data.get("authors")),
+        first_authors=_author_group(
+            author_groups.get("first_authors"),
+            "authors.first_authors",
+            required=True,
+        ),
+        corresponding_authors=_author_group(
+            author_groups.get("corresponding_authors"),
+            "authors.corresponding_authors",
+            required=True,
+        ),
+        authors=_author_group(
+            author_groups.get("authors"),
+            "authors.authors",
+            required=False,
+        ),
     )
 
 
@@ -203,6 +264,7 @@ def save_manuscript(path: Path, metadata: ManuscriptMetadata) -> None:
                 "journal": {
                     "name": metadata.journal_name,
                     "publisher": metadata.publisher,
+                    "template": metadata.journal_template,
                 }
             },
         ),
@@ -210,12 +272,21 @@ def save_manuscript(path: Path, metadata: ManuscriptMetadata) -> None:
             "Revision",
             {
                 "revision": {
-                    "id": f"r{metadata.round_number}",
+                    "name": (
+                        "initial_submission"
+                        if metadata.round_number == 0
+                        else f"revision_{metadata.round_number}"
+                    ),
                     "parent": (
                         None
                         if metadata.parent_round is None
-                        else f"r{metadata.parent_round}"
+                        else (
+                            "initial_submission"
+                            if metadata.parent_round == 0
+                            else f"revision_{metadata.parent_round}"
+                        )
                     ),
+                    "round": f"r{metadata.round_number}",
                 }
             },
         ),
@@ -229,7 +300,16 @@ def save_manuscript(path: Path, metadata: ManuscriptMetadata) -> None:
                 }
             },
         ),
-        ("Authors", {"authors": list(metadata.author_names)}),
+        (
+            "Authors",
+            {
+                "authors": {
+                    "first_authors": list(metadata.first_authors),
+                    "corresponding_authors": list(metadata.corresponding_authors),
+                    "authors": list(metadata.authors),
+                }
+            },
+        ),
     )
     pieces: list[str] = []
     for title, section in sections:
@@ -296,9 +376,10 @@ def load_author_library(path: Path) -> AuthorLibrary:
         name = _text(raw_name, "authors key")
         record = _mapping(item, f"authors.{name}")
         role = _text(record.get("role"), f"authors.{name}.role")
-        if role not in {"author", "corresponding_author"}:
+        if role not in {"author", "first_author", "corresponding_author"}:
             raise MetadataError(
-                f"authors.{name}.role must be author or corresponding_author."
+                f"authors.{name}.role must be author, first_author, or "
+                "corresponding_author."
             )
         raw_keys = record.get("affiliations")
         if not isinstance(raw_keys, list) or not raw_keys:
@@ -337,18 +418,15 @@ def resolve_authors(
             + ", ".join(missing)
         )
     authors = tuple(library.authors[name] for name in metadata.author_names)
-    corresponding = [
-        author for author in authors if author.role == "corresponding_author"
-    ]
-    if len(corresponding) != 1:
-        raise MetadataError(
-            "Selected authors must include exactly one corresponding_author."
-        )
+    first = tuple(library.authors[name] for name in metadata.first_authors)
+    corresponding = tuple(
+        library.authors[name] for name in metadata.corresponding_authors
+    )
     used_keys = {key for author in authors for key in author.affiliations}
     affiliations = tuple(
         record for record in library.affiliations if record.key in used_keys
     )
-    return AuthorSelection(authors, affiliations, corresponding[0])
+    return AuthorSelection(authors, affiliations, first, corresponding)
 
 
 def _latex_escape(value: str) -> str:
@@ -364,9 +442,13 @@ def _latex_escape(value: str) -> str:
     return "".join(replacements.get(character, character) for character in value)
 
 
-def _author_label(author: AuthorRecord, language: str) -> str:
+def _author_label(
+    author: AuthorRecord,
+    language: str,
+    corresponding_names: set[str],
+) -> str:
     markers = list(author.affiliations)
-    if author.role == "corresponding_author":
+    if author.name in corresponding_names:
         markers.append("*")
     name = author.name_zh if language == "zh" else author.name
     return f"{_latex_escape(name)}$^{{{','.join(markers)}}}$"
@@ -376,27 +458,25 @@ def render_author_metadata(
     metadata: ManuscriptMetadata,
     selection: AuthorSelection,
 ) -> str:
-    """Render reusable LaTeX manuscript and correspondence metadata."""
+    """Render shared correspondence macros without publisher commands."""
     names_en = ", ".join(_latex_escape(item.name) for item in selection.authors)
     names_zh = "、".join(_latex_escape(item.name_zh) for item in selection.authors)
-    corresponding = selection.corresponding_author
+    first_names = ", ".join(
+        _latex_escape(item.name) for item in selection.first_authors
+    )
+    corresponding_names = ", ".join(
+        _latex_escape(item.name) for item in selection.corresponding_authors
+    )
+    corresponding_names_zh = "、".join(
+        _latex_escape(item.name_zh) for item in selection.corresponding_authors
+    )
+    corresponding_emails = "; ".join(
+        _latex_escape(item.email) for item in selection.corresponding_authors
+    )
     affiliation_lines = [
         f"$^{{{item.key}}}${_latex_escape(item.name_en)}, {_latex_escape(item.address)}"
         for item in selection.affiliations
     ]
-    separator = "\N{FULLWIDTH COMMA}\n" if metadata.language == "zh" else ",\n"
-    author_lines = separator.join(
-        _author_label(item, metadata.language) for item in selection.authors
-    )
-    affiliation_block = "\\\\\n\\small ".join(affiliation_lines)
-    corresponding_name = (
-        r"\CorrespondingAuthorNameZh"
-        if metadata.language == "zh"
-        else r"\CorrespondingAuthorName"
-    )
-    corresponding_label = (
-        "通讯作者" if metadata.language == "zh" else "Corresponding author"
-    )
     return "\n".join(
         [
             "% Generated from manuscript.yaml and authors.yaml. Do not edit.",
@@ -405,35 +485,126 @@ def render_author_metadata(
             f"\\newcommand{{\\ArticleType}}{{{_latex_escape(metadata.article_type)}}}",
             f"\\newcommand{{\\SelectedAuthorNames}}{{{names_en}}}",
             f"\\newcommand{{\\SelectedAuthorNamesZh}}{{{names_zh}}}",
-            "\\newcommand{\\CorrespondingAuthorName}"
-            f"{{{_latex_escape(corresponding.name)}}}",
-            "\\newcommand{\\CorrespondingAuthorNameZh}"
-            f"{{{_latex_escape(corresponding.name_zh)}}}",
-            "\\newcommand{\\CorrespondingAuthorEmail}"
-            f"{{{_latex_escape(corresponding.email)}}}",
-            "\\author{%",
-            author_lines + r"\\[0.6em]",
-            r"\parbox{0.92\textwidth}{\centering\small",
-            f"{affiliation_block}\\\\[0.4em]",
-            f"$^*${corresponding_label}: "
-            f"{corresponding_name}\\ (\\CorrespondingAuthorEmail)}}",
+            f"\\newcommand{{\\FirstAuthorNames}}{{{first_names}}}",
+            f"\\newcommand{{\\CorrespondingAuthorName}}{{{corresponding_names}}}",
+            f"\\newcommand{{\\CorrespondingAuthorNameZh}}{{{corresponding_names_zh}}}",
+            f"\\newcommand{{\\CorrespondingAuthorEmail}}{{{corresponding_emails}}}",
+            "\\newcommand{\\AuthorAffiliations}{%",
+            r"\\\n".join(affiliation_lines),
             "}",
             "",
         ]
     )
 
 
-def generate_author_metadata(round_dir: Path) -> AuthorSelection:
-    """Generate version-local LaTeX metadata from version-local YAML inputs."""
+def _nature_name(author: AuthorRecord) -> str:
+    parts = author.name.split()
+    if len(parts) == 1:
+        return f"\\sur{{{_latex_escape(parts[0])}}}"
+    given = _latex_escape(" ".join(parts[:-1]))
+    family = _latex_escape(parts[-1])
+    return f"\\fnm{{{given}}} \\sur{{{family}}}"
+
+
+def render_publisher_metadata(
+    metadata: ManuscriptMetadata,
+    selection: AuthorSelection,
+) -> str:
+    """Render declarations required by the selected publisher class."""
+    corresponding = {item.name for item in selection.corresponding_authors}
+    affiliations = {item.key: item for item in selection.affiliations}
+    lines = ["% Generated publisher metadata. Do not edit."]
+    title = _latex_escape(metadata.title)
+    if metadata.publisher == "elsevier":
+        lines.append(f"\\title{{{title}}}")
+        for author in selection.authors:
+            labels = ",".join(author.affiliations)
+            marker = "\\corref{cor1}" if author.name in corresponding else ""
+            lines.append(f"\\author[{labels}]{{{_latex_escape(author.name)}{marker}}}")
+        emails = "; ".join(
+            _latex_escape(author.email) for author in selection.corresponding_authors
+        )
+        lines.append(f"\\cortext[cor1]{{Corresponding author emails: {emails}.}}")
+        for item in selection.affiliations:
+            lines.append(
+                f"\\address[{item.key}]{{{_latex_escape(item.name_en)}, "
+                f"{_latex_escape(item.address)}}}"
+            )
+    elif metadata.publisher == "nature":
+        lines.append(f"\\title[{title}]{{{title}}}")
+        for author in selection.authors:
+            labels = ",".join(author.affiliations)
+            star = "*" if author.name in corresponding else ""
+            lines.append(f"\\author{star}[{labels}]{{{_nature_name(author)}}}")
+            if author.name in corresponding:
+                lines.append(f"\\email{{{_latex_escape(author.email)}}}")
+        for item in selection.affiliations:
+            lines.append(
+                f"\\affil[{item.key}]{{\\orgname{{{_latex_escape(item.name_en)}}}, "
+                f"\\orgaddress{{\\street{{{_latex_escape(item.address)}}}}}}}"
+            )
+    elif metadata.publisher == "acs":
+        lines.append(f"\\title{{{title}}}")
+        for author in selection.authors:
+            lines.append(f"\\author{{{_latex_escape(author.name)}}}")
+            if author.name in corresponding:
+                lines.append(f"\\email{{{_latex_escape(author.email)}}}")
+            for index, key in enumerate(author.affiliations):
+                item = affiliations[key]
+                command = "affiliation" if index == 0 else "alsoaffiliation"
+                lines.append(
+                    f"\\{command}[{_latex_escape(item.name_en)}]"
+                    f"{{{_latex_escape(item.name_en)}, {_latex_escape(item.address)}}}"
+                )
+    else:
+        labels_en = ", ".join(
+            _author_label(item, "en", corresponding) for item in selection.authors
+        )
+        labels_zh = "、".join(
+            _author_label(item, "zh", corresponding) for item in selection.authors
+        )
+        affiliation_text = r"\\".join(
+            f"$^{{{item.key}}}${_latex_escape(item.name_en)}, "
+            f"{_latex_escape(item.address)}"
+            for item in selection.affiliations
+        )
+        corr_en = "; ".join(
+            f"{_latex_escape(item.name)}, {_latex_escape(item.email)}"
+            for item in selection.corresponding_authors
+        )
+        corr_zh = "; ".join(
+            f"{_latex_escape(item.name_zh)}, {_latex_escape(item.email)}"
+            for item in selection.corresponding_authors
+        )
+        lines.extend(
+            [
+                f"\\title{{{title}}}",
+                f"\\entitle{{{title}}}",
+                f"\\author{{{labels_zh}}}",
+                f"\\enauthor{{{labels_en}}}",
+                f"\\affiliation{{{affiliation_text}}}",
+                f"\\enaffiliation{{{affiliation_text}}}",
+                f"\\corrauthorcn{{{corr_zh}}}",
+                f"\\corrauthoren{{{corr_en}}}",
+            ]
+        )
+    return "\n".join((*lines, ""))
+
+
+def generate_author_metadata(project: Path, round_dir: Path) -> AuthorSelection:
+    """Generate shared metadata from one version YAML and root references."""
     metadata = load_manuscript(round_dir / "manuscript.yaml")
-    references = round_dir / "references"
+    references = project / "references"
     library = load_author_library(references / "authors.yaml")
     selection = resolve_authors(metadata, library)
-    target = references / "author_metadata.tex"
-    temporary = target.with_suffix(".tex.new")
-    temporary.write_text(
-        render_author_metadata(metadata, selection),
-        encoding="utf-8",
-    )
-    os.replace(temporary, target)
+    outputs = {
+        references / "author_metadata.tex": render_author_metadata(metadata, selection),
+        references / "publisher_metadata.tex": render_publisher_metadata(
+            metadata, selection
+        ),
+    }
+    for target, text in outputs.items():
+        temporary = target.with_suffix(".tex.new")
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, target)
     return selection

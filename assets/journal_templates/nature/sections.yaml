@@ -1,6 +1,6 @@
 bibliography:
-  package: \usepackage[numbers,sort&compress]{natbib}
-  style: unsrtnat
+  package: "% Bibliography support is supplied by sn-jnl."
+  style: sn-nature
 
 sections:
   - file: 00_abstract.tex

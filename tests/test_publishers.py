@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES = ROOT / "references" / "journal_templates"
+PUBLISHER_ASSETS = ROOT / "assets" / "journal_templates"
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
     "AScY42YAAAAASUVORK5CYII="
@@ -51,7 +51,7 @@ class PublisherTemplateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             work = Path(temp)
             for name in resources:
-                shutil.copy2(TEMPLATES / publisher / name, work / name)
+                shutil.copy2(PUBLISHER_ASSETS / publisher / name, work / name)
             (work / "main.tex").write_text(source, encoding="utf-8")
             (work / "references.bib").write_text(BIBLIOGRAPHY, encoding="utf-8")
             (work / "figure.png").write_bytes(PNG_1X1)

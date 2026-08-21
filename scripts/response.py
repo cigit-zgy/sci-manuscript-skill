@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from compile import compile_tex
-from workspace import TEMPLATES, ProjectConfig, WorkflowError, round_name
+from workspace import ASSETS, ProjectConfig, WorkflowError, round_name
 
 REVIEWER_HEADING = re.compile(r"^\s*#\s*Reviewer\s*#?\s*(\d+)\s*$", re.IGNORECASE)
 COMMENT_START = re.compile(r"^\s*(\d+)\\?\.\s*(.*)$")
@@ -173,13 +173,13 @@ def init_response(
     target = response_dir / "response_letter.tex"
     if target.exists():
         raise WorkflowError(f"Response source already exists: {target}")
-    template = TEMPLATES / "response" / f"response_{response_language}.tex"
+    template = ASSETS / "response" / f"response_{response_language}.tex"
     text = template.read_text(encoding="utf-8")
     text = text.replace("%%ROUND%%", round_name(round_number).upper())
     text = text.replace("%%BODY%%", _body_tex(blocks, response_language))
     text = text.replace(
         "%%AUTHOR_METADATA_PATH%%",
-        "../references/author_metadata.tex",
+        "../../references/author_metadata.tex",
     )
     target.write_text(text, encoding="utf-8")
     local_reviews = response_dir / "reviewer_comments.md"
@@ -220,7 +220,7 @@ def build_response(
 
     rendered = LOCATION_USE.sub(replace_location, text)
     rendered = rendered.replace(
-        r"\input{../references/author_metadata.tex}",
+        r"\input{../../references/author_metadata.tex}",
         r"\input{author_metadata.tex}",
     )
     source_dir = run_dir / "response_source"

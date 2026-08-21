@@ -22,8 +22,7 @@ from metadata import (
 )
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES = SKILL_ROOT / "templates"
-REFERENCES = SKILL_ROOT / "references"
+ASSETS = SKILL_ROOT / "assets"
 ROUND_PATTERN = re.compile(r"^r(0|[1-9]\d*)$")
 REVISION_DIRECTORY_PATTERN = re.compile(r"^revision_([1-9]\d*)$")
 ENTRYPOINT_MARKER = "%%SCI_MANUSCRIPT_SKILL_ROOT%%"
@@ -73,8 +72,8 @@ class ProjectConfig:
 
     @property
     def references(self) -> Path:
-        """Return the selected version's self-contained references directory."""
-        return self.round_dir(self.current_round) / "references"
+        """Return the manuscript-level shared references directory."""
+        return self.project / "references"
 
     def round_dir(self, round_number: int) -> Path:
         """Return one user-facing manuscript version directory."""
@@ -134,6 +133,17 @@ def _round_number_from_directory(name: str) -> int | None:
 def _round_numbers(project: Path) -> tuple[int, ...]:
     if not (project / "initial_submission" / "manuscript.yaml").is_file():
         raise WorkflowError(f"Project is not initialized: {project}")
+    shared = project / "references"
+    required_shared = (
+        shared / "authors.yaml",
+        shared / "references.bib",
+        shared / "revision_style.tex",
+        shared / "journal_template",
+    )
+    missing_shared = [path for path in required_shared if not path.exists()]
+    if missing_shared:
+        missing = ", ".join(path.name for path in missing_shared)
+        raise WorkflowError(f"Shared references are incomplete: {missing}.")
     forbidden = project / "revision_0"
     if forbidden.exists():
         raise WorkflowError(f"Forbidden lifecycle directory exists: {forbidden}")
@@ -169,6 +179,10 @@ def load_project(
         raise WorkflowError(f"Round {round_name(selected)} does not exist yet.")
     for number in numbers:
         version = root / round_directory_name(number)
+        if (version / "references").exists():
+            raise WorkflowError(
+                f"Version directories must not contain references/: {version}"
+            )
         path = version / "manuscript.yaml"
         metadata = load_manuscript(path)
         if metadata.round_number != number:
@@ -224,9 +238,14 @@ def _install_project_entrypoint(project: Path) -> None:
 
 
 def _publisher_layout(
-    publisher: str,
+    config: ProjectConfig,
 ) -> tuple[list[dict[str, str]], str, str]:
-    path = REFERENCES / "journal_templates" / publisher / "sections.yaml"
+    path = (
+        config.references
+        / "journal_template"
+        / config.metadata.publisher
+        / "sections.yaml"
+    )
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
@@ -261,16 +280,19 @@ def _publisher_layout(
 
 
 def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
-    plan, bibliography_package, bibliography_style = _publisher_layout(
-        config.metadata.publisher
-    )
+    plan, bibliography_package, bibliography_style = _publisher_layout(config)
+    abstract = plan[0]
     section_inputs = "\n".join(
-        f"\\input{{sections/{Path(item['file']).stem}}}" for item in plan
+        f"\\input{{sections/{Path(item['file']).stem}}}" for item in plan[1:]
     )
     render_template(
-        TEMPLATES / "manuscript" / "main.tex",
+        config.references
+        / "journal_template"
+        / config.metadata.publisher
+        / "workflow.tex",
         version / "manuscript.tex",
         {
+            "ABSTRACT_INPUT": (f"\\input{{sections/{Path(abstract['file']).stem}}}"),
             "SECTION_INPUTS": section_inputs,
             "BIBLIOGRAPHY_STYLE": bibliography_style,
             "BIBLIOGRAPHY_PATH": "references/references",
@@ -282,14 +304,14 @@ def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
         else ""
     )
     render_template(
-        TEMPLATES / "manuscript" / "preamble.tex",
+        ASSETS / "manuscript" / "preamble.tex",
         version / "preamble.tex",
         {
             "CJK_PACKAGE": cjk,
             "BIBLIOGRAPHY_PACKAGE": bibliography_package,
         },
     )
-    default_sections = TEMPLATES / "manuscript" / "sections" / "default"
+    default_sections = ASSETS / "manuscript" / "sections" / "default"
     for item in plan:
         render_template(
             default_sections / item["source"],
@@ -303,7 +325,7 @@ def initialize_project(
     authors_source: Path | None = None,
     bibliography_source: Path | None = None,
 ) -> ProjectConfig:
-    """Create a root entrypoint and a self-contained initial submission."""
+    """Create a root entrypoint, shared references, and initial submission."""
     root = config.project
     if root.exists() and any(root.iterdir()):
         raise WorkflowError(f"Refusing to initialize non-empty project: {root}")
@@ -312,29 +334,33 @@ def initialize_project(
     root.mkdir(parents=True, exist_ok=True)
     initial = config.round_dir(0)
     for directory in (
+        config.references,
         initial / "sections",
         initial / "figures",
         initial / "tables",
         initial / "output",
-        initial / "references",
         root / "tmp",
     ):
         directory.mkdir(parents=True, exist_ok=True)
-    _create_manuscript_sources(config, initial)
-    author_library = authors_source or REFERENCES / "authors.yaml"
+    shutil.copytree(
+        ASSETS / "journal_templates",
+        config.references / "journal_template",
+    )
+    author_library = authors_source or ASSETS / "authors.yaml"
     if not author_library.is_file():
         raise WorkflowError(f"Author library is missing: {author_library}")
-    shutil.copy2(author_library, initial / "references" / "authors.yaml")
+    shutil.copy2(author_library, config.references / "authors.yaml")
     shutil.copy2(
-        REFERENCES / "revision_style.tex",
-        initial / "references" / "revision_style.tex",
+        ASSETS / "revision_style.tex",
+        config.references / "revision_style.tex",
     )
-    bibliography = bibliography_source or TEMPLATES / "manuscript" / "references.bib"
+    bibliography = bibliography_source or ASSETS / "manuscript" / "references.bib"
     if not bibliography.is_file():
         raise WorkflowError(f"Bibliography source is missing: {bibliography}")
-    shutil.copy2(bibliography, initial / "references" / "references.bib")
+    shutil.copy2(bibliography, config.references / "references.bib")
+    _create_manuscript_sources(config, initial)
     save_manuscript(initial / "manuscript.yaml", config.metadata)
-    generate_author_metadata(initial)
+    generate_author_metadata(root, initial)
     _install_project_entrypoint(root)
     return config
 
@@ -428,7 +454,7 @@ def start_revision(
         if not source_file.exists():
             raise WorkflowError(f"Previous version source is missing: {source_file}")
         shutil.copy2(source_file, staged / filename)
-    for directory_name in ("sections", "figures", "tables", "references"):
+    for directory_name in ("sections", "figures", "tables"):
         source_dir = source / directory_name
         if source_dir.exists():
             shutil.copytree(source_dir, staged / directory_name)
@@ -449,7 +475,6 @@ def start_revision(
     child_metadata = with_revision(config.metadata, target_round)
     save_manuscript(staged / "manuscript.yaml", child_metadata)
     shutil.move(str(staged), str(target))
-    generate_author_metadata(target)
     return ProjectConfig(config.project, child_metadata, config.engine)
 
 
@@ -459,34 +484,31 @@ def ensure_submission_workspace(config: ProjectConfig, round_number: int) -> Pat
         raise WorkflowError("Submission config must match the selected version.")
     target = config.round_dir(round_number) / "submission"
     values = template_values(config)
-    values["AUTHOR_METADATA_PATH"] = "../references/author_metadata.tex"
+    values["AUTHOR_METADATA_PATH"] = "../../references/author_metadata.tex"
     target.mkdir(parents=True, exist_ok=True)
     settings = config.metadata.submission
     if settings.cover_letter and not (target / "cover_letter.tex").exists():
         render_template(
-            TEMPLATES / "submission" / f"cover_letter_{config.language}.tex",
+            ASSETS / "submission" / f"cover_letter_{config.language}.tex",
             target / "cover_letter.tex",
             values,
         )
     if settings.highlights and not (target / "highlights.tex").exists():
         render_template(
-            TEMPLATES / "submission" / "highlights.tex",
+            ASSETS / "submission" / "highlights.tex",
             target / "highlights.tex",
             values,
         )
     checklist = target / "checklist.md"
     if not checklist.exists():
-        shutil.copy2(TEMPLATES / "submission" / "checklist.md", checklist)
+        shutil.copy2(ASSETS / "submission" / "checklist.md", checklist)
     if settings.graphical_abstract:
         graphical = target / "graphical_abstract"
         graphical.mkdir(exist_ok=True)
         graphical_source = graphical / "graphical_abstract.tex"
         if not graphical_source.exists():
             shutil.copy2(
-                TEMPLATES
-                / "submission"
-                / "graphical_abstract"
-                / "graphical_abstract.tex",
+                ASSETS / "submission" / "graphical_abstract" / "graphical_abstract.tex",
                 graphical_source,
             )
     (target / "package").mkdir(exist_ok=True)
@@ -502,7 +524,7 @@ def _find_bib_export(project: Path, explicit: Path | None) -> Path:
         candidates.append(Path(environment).expanduser().resolve())
     candidates.extend(
         [
-            project / "initial_submission" / "references" / "zotero-export.bib",
+            project / "references" / "zotero-export.bib",
             project / "zotero-export.bib",
         ]
     )
@@ -516,7 +538,7 @@ def _find_bib_export(project: Path, explicit: Path | None) -> Path:
 
 
 def sync_bibliography(project: Path, explicit: Path | None = None) -> tuple[Path, ...]:
-    """Atomically synchronize BibTeX into every existing manuscript version."""
+    """Atomically replace the manuscript-level shared BibTeX file."""
     if not is_initialized(project):
         raise WorkflowError(f"Project is not initialized: {project}")
     source = _find_bib_export(project, explicit)
@@ -525,16 +547,11 @@ def sync_bibliography(project: Path, explicit: Path | None = None) -> tuple[Path
         raise WorkflowError(
             f"Bibliography export does not contain BibTeX entries: {source}"
         )
-    targets: list[Path] = []
-    for number in _round_numbers(project):
-        target = (
-            project / round_directory_name(number) / "references" / "references.bib"
-        )
-        temporary = target.with_suffix(".bib.new")
-        temporary.write_text(text, encoding="utf-8")
-        os.replace(temporary, target)
-        targets.append(target)
-    return tuple(targets)
+    target = project / "references" / "references.bib"
+    temporary = target.with_suffix(".bib.new")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(temporary, target)
+    return (target,)
 
 
 @contextlib.contextmanager
