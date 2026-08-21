@@ -2,29 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import re
 import shutil
-import sys
 from collections.abc import Sequence
+from dataclasses import replace
+from importlib.resources import as_file
 from pathlib import Path
 
-_SKILL_ROOT = Path(__file__).resolve().parents[2]
-_SCRIPTS = _SKILL_ROOT / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-
-import workspace as runtime_workspace  # noqa: E402
-from compile import build_clean_manuscript, compile_tex  # noqa: E402
-from diff import MarkedResult, build_marked_manuscript  # noqa: E402
-from metadata import (  # noqa: E402
+from ._runtime import workspace as runtime_workspace
+from ._runtime.compile import build_clean_manuscript, compile_tex
+from ._runtime.diff import MarkedResult, build_marked_manuscript
+from ._runtime.metadata import (
+    CURRENT_PROJECT_FORMAT,
     PUBLISHER_TEMPLATES,
     ManuscriptMetadata,
     MetadataError,
     SubmissionSettings,
     generate_author_metadata,
     load_author_library,
+    render_manuscript,
 )
-from response import build_response, init_response, parse_reviews  # noqa: E402
-from workspace import (  # noqa: E402
+from ._runtime.resources import read_resource_text, resource
+from ._runtime.response import build_response, init_response, parse_reviews
+from ._runtime.workspace import (
     ProjectConfig,
     WorkflowError,
     check_citations,
@@ -35,11 +37,12 @@ from workspace import (  # noqa: E402
     normalize_project,
     parse_round,
     round_directory_name,
+    scientific_source_hashes,
     sync_bibliography,
     temporary_run,
 )
-
-from .results import (  # noqa: E402
+from ._version import package_version
+from .results import (
     Artifact,
     BibliographySyncResult,
     BuildResult,
@@ -48,8 +51,17 @@ from .results import (  # noqa: E402
     RevisionResult,
     StatusResult,
     SubmissionResult,
+    UpgradeResult,
     ZoteroSetupResult,
 )
+
+_LEGACY_WRAPPER_HASHES = frozenset(
+    {
+        "0e020327862cc8e83ada671db7ab025fa5641d76295fb5a863533fc1558dd73c",
+        "7cc192d29ddb5e319e53ba6549dffc9f28a4e54a34324f309d0e153c3f2da763",
+    }
+)
+_LEGACY_ROOT_LINE = re.compile(r'_SKILL_ROOT_HINT = Path\("[^"]*"\)')
 
 
 def _require_project(project: Path) -> None:
@@ -85,12 +97,11 @@ def _new_config(
         raise MetadataError(f"Unsupported publisher: {publisher}")
     if language not in {"en", "zh"}:
         raise MetadataError("Language must be en or zh.")
-    author_source = (
-        Path(authors).expanduser().resolve()
-        if authors is not None
-        else _SKILL_ROOT / "assets" / "authors.yaml"
-    )
-    author_library = load_author_library(author_source)
+    if authors is None:
+        with as_file(resource("authors.yaml")) as author_source:
+            author_library = load_author_library(author_source)
+    else:
+        author_library = load_author_library(Path(authors).expanduser().resolve())
     selected = (
         tuple(selected_authors)
         if selected_authors is not None
@@ -136,6 +147,8 @@ def _new_config(
         first_authors=first_authors,
         corresponding_authors=corresponding_authors,
         authors=ordinary_authors,
+        format_version=CURRENT_PROJECT_FORMAT,
+        created_with=package_version(),
     )
     return ProjectConfig(project, manuscript, engine)
 
@@ -441,6 +454,7 @@ def status(project: str | Path) -> StatusResult:
         authors=latest.metadata.author_names,
         publisher=latest.metadata.publisher,
         journal=latest.journal,
+        project_format_version=latest.metadata.format_version,
         artifacts=tuple(artifacts),
     )
 
@@ -471,4 +485,131 @@ def sync_bib(
     return BibliographySyncResult(
         project=root,
         artifacts=tuple(Artifact("Bibliography", target) for target in targets),
+    )
+
+
+def _legacy_wrapper_hash(text: str) -> str:
+    normalized = _LEGACY_ROOT_LINE.sub(
+        '_SKILL_ROOT_HINT = Path("<GENERATED_SKILL_ROOT>")',
+        text,
+    )
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def _atomic_infrastructure_replace(
+    changes: tuple[tuple[Path, str, int], ...],
+    stage: Path,
+    project: Path,
+    expected_source_hashes: dict[str, str],
+) -> None:
+    staged: list[tuple[Path, Path, Path]] = []
+    for index, (target, text, mode) in enumerate(changes):
+        replacement = stage / "new" / f"{index}_{target.name}"
+        backup = stage / "original" / f"{index}_{target.name}"
+        replacement.parent.mkdir(parents=True, exist_ok=True)
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        replacement.write_text(text, encoding="utf-8")
+        replacement.chmod(mode)
+        shutil.copy2(target, backup)
+        staged.append((target, replacement, backup))
+    replaced: list[tuple[Path, Path]] = []
+    try:
+        for target, replacement, backup in staged:
+            os.replace(replacement, target)
+            replaced.append((target, backup))
+        if scientific_source_hashes(project) != expected_source_hashes:
+            raise WorkflowError(
+                "Scientific manuscript source changed during upgrade; migration failed."
+            )
+    except Exception:
+        for target, backup in reversed(replaced):
+            rollback = stage / "rollback" / target.name
+            rollback.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup, rollback)
+            os.replace(rollback, target)
+        raise
+
+
+def upgrade_project(project: str | Path) -> UpgradeResult:
+    """Safely migrate recognized generated infrastructure to format version 1."""
+    root = normalize_project(project)
+    _require_project(root)
+    latest = load_project(root)
+    configs = tuple(
+        load_project(root, number) for number in range(latest.current_round + 1)
+    )
+    formats = {config.metadata.format_version for config in configs}
+    if len(formats) != 1:
+        raise WorkflowError(
+            "Project versions declare inconsistent format versions; refusing migration."
+        )
+    from_format = formats.pop()
+    if from_format > CURRENT_PROJECT_FORMAT:
+        raise WorkflowError(
+            f"Project format {from_format} is newer than supported format "
+            f"{CURRENT_PROJECT_FORMAT}; refusing to downgrade."
+        )
+
+    wrapper = root / "run.py"
+    if not wrapper.is_file():
+        raise WorkflowError(f"Project entry point is missing: {wrapper}")
+    current_wrapper = read_resource_text("project_run.py")
+    wrapper_text = wrapper.read_text(encoding="utf-8")
+    wrapper_current = wrapper_text == current_wrapper
+    if (
+        not wrapper_current
+        and _legacy_wrapper_hash(wrapper_text) not in _LEGACY_WRAPPER_HASHES
+    ):
+        raise WorkflowError(
+            "Existing run.py is not a recognized generated wrapper; refusing to "
+            "overwrite."
+        )
+
+    if from_format == CURRENT_PROJECT_FORMAT and wrapper_current:
+        return UpgradeResult(
+            project=root,
+            status="already_current",
+            from_format=from_format,
+            to_format=CURRENT_PROJECT_FORMAT,
+            artifacts=(),
+        )
+
+    before = scientific_source_hashes(root)
+    version = package_version()
+    changes: list[tuple[Path, str, int]] = []
+    if not wrapper_current:
+        changes.append((wrapper, current_wrapper, 0o755))
+    for config in configs:
+        target = config.round_dir(config.current_round) / "manuscript.yaml"
+        if config.metadata.format_version == CURRENT_PROJECT_FORMAT:
+            continue
+        metadata = replace(
+            config.metadata,
+            format_version=CURRENT_PROJECT_FORMAT,
+            created_with=version,
+        )
+        rendered = render_manuscript(metadata)
+        marker = "# =====================================\n# Manuscript"
+        workflow_header, separator, _ = rendered.partition(marker)
+        if not separator:
+            raise WorkflowError("Cannot render the workflow format metadata.")
+        original = target.read_text(encoding="utf-8")
+        updated = workflow_header + original.lstrip("\n")
+        changes.append((target, updated, target.stat().st_mode & 0o777))
+
+    with temporary_run(root, keep=False) as run_dir:
+        _atomic_infrastructure_replace(
+            tuple(changes),
+            run_dir / "upgrade",
+            root,
+            before,
+        )
+    return UpgradeResult(
+        project=root,
+        status="upgraded",
+        from_format=from_format,
+        to_format=CURRENT_PROJECT_FORMAT,
+        artifacts=tuple(
+            Artifact("Upgraded infrastructure", item[0]) for item in changes
+        ),
     )

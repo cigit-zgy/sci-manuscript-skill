@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from workspace import ProjectConfig, WorkflowError
+from .workspace import ProjectConfig, WorkflowError
 
 
 @dataclass(frozen=True)

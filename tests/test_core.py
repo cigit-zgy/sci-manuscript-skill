@@ -13,17 +13,12 @@ from pathlib import Path
 
 import yaml
 
+from sci_manuscript import Artifact
+from sci_manuscript import cli as lifecycle_run
+from sci_manuscript._runtime import diff, metadata, response, workspace
+
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import diff  # noqa: E402
-import metadata  # noqa: E402
-import response  # noqa: E402
-import workspace  # noqa: E402
-
-from sci_manuscript import Artifact  # noqa: E402
-from sci_manuscript import cli as lifecycle_run  # noqa: E402
+RESOURCES = ROOT / "src" / "sci_manuscript" / "resources"
 
 
 def _metadata(publisher: str = "elsevier") -> metadata.ManuscriptMetadata:
@@ -180,7 +175,8 @@ class InitializationTest(unittest.TestCase):
             ):
                 self.assertTrue((shared / name).exists(), name)
             entrypoint = (project / "run.py").read_text(encoding="utf-8")
-            self.assertNotIn(workspace.ENTRYPOINT_MARKER, entrypoint)
+            self.assertNotIn("SCI_MANUSCRIPT_SKILL_ROOT", entrypoint)
+            self.assertNotIn(str(ROOT), entrypoint)
 
     def test_publisher_section_mappings_are_applied(self) -> None:
         expected = {
@@ -316,7 +312,7 @@ General assessment.
             self.assertEqual(response.pending_response_ids(source), ("1-1",))
 
     def test_english_response_starts_with_reviewer_salutation(self) -> None:
-        template = (ROOT / "assets" / "response" / "response_en.tex").read_text(
+        template = (RESOURCES / "response" / "response_en.tex").read_text(
             encoding="utf-8"
         )
         body = template.split("\\begin{document}", 1)[1].lstrip()
@@ -341,6 +337,7 @@ class InterfaceTest(unittest.TestCase):
             "sync-bib",
             "check",
             "status",
+            "upgrade-project",
         ):
             arguments = [command]
             if command == "init":
@@ -356,22 +353,21 @@ class InterfaceTest(unittest.TestCase):
                 )
             self.assertEqual(parser.parse_args(arguments).command, command)
 
-    def test_doctor_reports_missing_pyyaml_without_import_failure(self) -> None:
+    def test_generated_wrapper_reports_missing_package_without_traceback(self) -> None:
+        wrapper = RESOURCES / "project_run.py"
         result = subprocess.run(
-            [sys.executable, "-S", str(ROOT / "scripts" / "run.py"), "doctor"],
+            [sys.executable, "-I", "-S", str(wrapper), "doctor"],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
         )
         self.assertEqual(result.returncode, 2)
-        self.assertIn("MISSING PyYAML", result.stdout)
-        self.assertIn("Result: BLOCKED", result.stdout)
-        self.assertIn("No installation was attempted", result.stdout)
+        self.assertIn("is not installed", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
     def test_revision_style_contains_only_user_settings(self) -> None:
-        style = (ROOT / "assets" / "revision_style.tex").read_text(encoding="utf-8")
+        style = (RESOURCES / "revision_style.tex").read_text(encoding="utf-8")
         self.assertNotIn("ReviewLocationFile", style)
         self.assertNotIn("DIFadd", style)
         self.assertNotIn("\\uwave", style)

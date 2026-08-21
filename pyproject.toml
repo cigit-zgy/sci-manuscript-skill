@@ -1,20 +1,49 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "sci-manuscript-skill"
-version = "3.1.0"
+version = "4.0.0"
 description = "LaTeX scientific manuscript lifecycle management skill."
+readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
+license-files = [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "src/sci_manuscript/resources/journal_templates/acs/LICENSE.md",
+]
 dependencies = ["PyYAML>=6.0,<7"]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2,<2",
+    "mypy>=1.11,<2",
+    "pytest>=8,<10",
+    "ruff>=0.9,<1",
+    "types-PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+sci-manuscript = "sci_manuscript.cli:main"
+
+[project.urls]
+Repository = "https://github.com/cigit-zgy/sci-manuscript-skill"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sci_manuscript = ["py.typed"]
+"sci_manuscript.resources" = ["**/*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = [".DS_Store", "__pycache__/*", "*.py[cod]"]
 
 [tool.ruff]
 line-length = 88
@@ -32,4 +61,4 @@ warn_return_any = true
 warn_unused_ignores = true
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "scripts"]
+pythonpath = ["src"]

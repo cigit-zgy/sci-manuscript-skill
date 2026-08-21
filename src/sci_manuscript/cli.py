@@ -164,6 +164,11 @@ def build_parser(default_project: Path | None = None) -> argparse.ArgumentParser
     check.add_argument("--round", help="Optional rN or revision_N selector.")
     status = commands.add_parser("status", help="Show lifecycle state and outputs.")
     _add_project_argument(status, project)
+    upgrade = commands.add_parser(
+        "upgrade-project",
+        help="Safely migrate recognized generated project infrastructure.",
+    )
+    _add_project_argument(upgrade, project)
     return parser
 
 
@@ -214,10 +219,24 @@ def execute(args: argparse.Namespace) -> int:
         print(f"Authors: {', '.join(status.authors)}")
         print(f"Publisher: {status.publisher}")
         print(f"Journal: {status.journal}")
+        print(f"Project format: {status.project_format_version}")
         print("Generated:")
         if status.artifacts:
             for artifact in status.artifacts:
                 print(f"  {_relative(status.project, artifact.path)}")
+        else:
+            print("  none")
+        return 0
+    if command == "upgrade-project":
+        upgraded = manuscript.upgrade_project()
+        print(f"Project upgrade: {upgraded.status.replace('_', ' ')}")
+        print(f"Format: {upgraded.from_format} -> {upgraded.to_format}")
+        print("Generated:")
+        if upgraded.artifacts:
+            for artifact in upgraded.artifacts:
+                print(
+                    f"  {artifact.label}: {_relative(upgraded.project, artifact.path)}"
+                )
         else:
             print("  none")
         return 0

@@ -96,6 +96,18 @@ class StatusResult:
     authors: tuple[str, ...]
     publisher: str
     journal: str
+    project_format_version: int
+    artifacts: tuple[Artifact, ...]
+
+
+@dataclass(frozen=True)
+class UpgradeResult:
+    """Safe project-infrastructure migration result."""
+
+    project: Path
+    status: str
+    from_format: int
+    to_format: int
     artifacts: tuple[Artifact, ...]
 
 

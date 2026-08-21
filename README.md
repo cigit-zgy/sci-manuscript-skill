@@ -23,11 +23,14 @@ and submission decisions.
 | Feature | Description |
 | --- | --- |
 | Agent workflow | `SKILL.md` defines environment inspection, information collection, initialization, validation, and handoff |
+| Installable runtime | Ships the lifecycle implementation, templates, and publisher resources in one wheel/sdist |
+| Portable projects | Generated projects depend on the installed package, not on a source checkout or initialization path |
 | Manuscript lifecycle | Maintains initial submission and any number of adjacent revisions |
 | Publisher resources | Bundles Elsevier, Springer Nature, ACS, and a general Chinese-journal category |
 | Dynamic metadata | Generates publisher-specific LaTeX author commands from one manuscript-level YAML author library |
 | Revision comparison | Produces clean and marked manuscripts from adjacent versions with `latexdiff` |
-| Response letter | Creates structured reviewer-response sources and validates unfinished placeholders |
+| Response letter | Supports Editor, Associate Editor, and multiple Reviewer blocks while validating unfinished placeholders |
+| Safe migration | Upgrades recognized generated wrappers and project metadata without changing manuscript content |
 | Submission packaging | Builds cover letter, highlights, graphical abstract, manuscript, response, and checklist artifacts on demand |
 | Zotero workflow | Recommends Better BibTeX Automatic Export to the one shared bibliography without controlling Zotero |
 | Citation validation | Reports manuscript citation keys missing from the shared BibTeX database without modifying sources |
@@ -62,8 +65,15 @@ Ruff and Mypy are development-only tools. Zotero Better BibTeX is an optional
 desktop integration. The recommended workflow uses its Automatic Export, but
 the skill never opens Zotero, changes its settings, or accesses its database.
 
-Clone the repository, create or activate a Python environment, and install the
-single Python runtime dependency:
+The project is not currently published on PyPI. Install a built wheel for
+normal use:
+
+```bash
+python -m pip install /path/to/sci_manuscript_skill-4.0.0-py3-none-any.whl
+```
+
+For source development, clone the repository and install the package together
+with its development-only quality tools:
 
 ```bash
 git clone https://github.com/cigit-zgy/sci-manuscript-skill.git
@@ -71,7 +81,7 @@ cd sci-manuscript-skill
 
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
 On macOS with Homebrew, the supported compact toolchain is:
@@ -85,7 +95,9 @@ available. Chinese projects require XeLaTeX-compatible compilation and usable
 Chinese fonts. Always inspect the selected environment after installation:
 
 ```bash
-python scripts/run.py doctor
+sci-manuscript doctor
+# equivalent
+python -m sci_manuscript doctor
 ```
 
 `doctor` is read-only. A `READY` result means all required workflow categories
@@ -126,7 +138,7 @@ they must be replaced.
 The equivalent direct initialization command is:
 
 ```bash
-python scripts/run.py init \
+sci-manuscript init \
   --project /absolute/path/to/my-paper \
   --title "Manuscript title" \
   --journal "Target Journal" \
@@ -149,15 +161,29 @@ python run.py submission
 python run.py status
 ```
 
-The copied project `run.py` delegates to the installed skill implementation
-recorded during initialization. Keep that installation available. If the skill
-repository is moved, set `SCI_MANUSCRIPT_SKILL_ROOT` to its new absolute path
-before running project commands.
+The generated project `run.py` imports the installed `sci_manuscript` package.
+It records neither the source checkout nor the original project location. The
+source repository can therefore be moved, renamed, or deleted, and the complete
+manuscript directory can be moved to a path containing spaces or Unicode while
+the workflow continues to operate. This is source-checkout independence, not a
+fully standalone bundle: the selected Python environment must still contain the
+package and the required LaTeX, `latexdiff`, Poppler, and bibliography tools.
 
 ## 6. Command line
 
-Every generated project contains one copied `run.py`. Use that entrypoint for
-all later operations.
+Every generated project contains a thin `run.py` wrapper. The three supported
+forms below enter the same CLI, Public API, workflow, and packaged runtime:
+
+```bash
+cd /path/to/manuscript
+python run.py build
+
+sci-manuscript build --project /path/to/manuscript
+python -m sci_manuscript build --project /path/to/manuscript
+```
+
+The first form selects the directory containing `run.py`; the other two require
+an explicit project when run elsewhere.
 
 | Command | Purpose |
 | --- | --- |
@@ -171,6 +197,7 @@ all later operations.
 | `check` | Report citation keys absent from the shared BibTeX database |
 | `sync-bib` | Atomically replace the shared BibTeX database from an explicit export as a manual fallback |
 | `status` | Report lifecycle ancestry and generated artifacts |
+| `upgrade-project` | Safely upgrade recognized generated infrastructure to the current project format |
 
 Run `python run.py <command> --help` for command-specific options. `build`,
 `submission`, and `all` accept `--round rN` for an existing version.
@@ -187,11 +214,16 @@ clean, marked, response, cover-letter, highlights, graphical-abstract, checklist
 and package paths when enabled. Paths are project-relative; compiler staging and
 temporary files are never presented as deliverables.
 
+`upgrade-project` is a no-op for a current project, upgrades only recognized
+legacy wrappers and workflow metadata, refuses customized wrappers and future
+format versions, and never changes manuscript prose, sections, figures, tables,
+bibliography, author data, response text, or editable submission sources.
+
 ## 7. Python API
 
 The installable `sci_manuscript` package is the stable programmatic interface.
 CLI commands and Python calls use the same lifecycle implementation; modules in
-`scripts/` remain internal runtime details.
+`sci_manuscript._runtime` remain private implementation details.
 
 ```python
 from sci_manuscript import ManuscriptProject, initialize_manuscript
@@ -211,7 +243,10 @@ project = ManuscriptProject(initialized.project)
 status = project.status()
 build = project.build()
 revision = project.start_revision(reviews="/absolute/path/to/reviews.md")
-submission = project.build_all()
+# The author completes the generated response source before packaging.
+submission = project.prepare_submission()
+same_submission_workflow = project.build_all()  # convenience alias
+upgrade = project.upgrade_project()
 ```
 
 All operations return frozen dataclass results containing `Path` objects for
@@ -230,6 +265,15 @@ metadata-rendering, and temporary-file internals.
 | `run.py check` | `project.check()` |
 | `run.py setup-zotero` | `project.setup_zotero()` |
 | `run.py sync-bib` | `project.sync_bib(...)` |
+| `run.py upgrade-project` | `project.upgrade_project()` |
+
+`build_all()` is the convenience alias for `prepare_submission()`; both follow
+one implementation and return the same artifact model. Public calls return
+typed, frozen result dataclasses and raise `ManuscriptError` for workflow
+failures. `__version__` comes from installed distribution metadata. The package
+also includes `py.typed` for type-checking consumers. Low-level flattening,
+`latexdiff`, metadata rendering, compiler staging, and response-parser helpers
+are deliberately not public API.
 
 ## 8. User configuration
 
@@ -237,12 +281,16 @@ metadata-rendering, and temporary-file internals.
 
 Each version owns one `manuscript.yaml` containing title, article type,
 language, journal, selected publisher template, semantic revision identity,
-immediate parent, submission switches, and author role groups. It does not
-duplicate emails or affiliations. Revision creation copies this YAML from the
-direct parent and changes only `revision.name`, `revision.parent`, and
-`revision.round`.
+immediate parent, project-format compatibility, submission switches, and author
+role groups. It does not duplicate emails or affiliations. Revision creation
+copies this YAML from the direct parent, preserves the format version, and
+changes only the adjacent revision identity.
 
 ```yaml
+workflow:
+  format_version: 1
+  created_with: 4.0.0
+
 manuscript:
   title: Manuscript title
   article_type: Research Paper
@@ -273,6 +321,12 @@ authors:
   authors:
     - Other Author
 ```
+
+`workflow.format_version` identifies the on-disk project contract independently
+from the installed package version. `created_with` records the package version
+that initialized or last migrated this format metadata. A newer unsupported
+format is never silently downgraded; use `upgrade-project` for a recognized
+older generated project.
 
 ### `references/authors.yaml`
 
@@ -331,6 +385,9 @@ manuscript/
 │   ├── submission/              # editable sources populated on demand
 │   └── output/
 ├── revision_1/                  # r1, parent r0
+│   └── response/
+│       ├── reviewer_comments.md
+│       └── response_letter.tex
 ├── revision_2/                  # r2, parent r1
 └── tmp/
 ```
@@ -345,8 +402,14 @@ generated package are excluded. Revision directories never contain a
 compiler and diff work and is empty after successful commands. Manuscript
 sources, outputs, and submission files never live directly at the project
 root. Shared author data, bibliography, revision style, and all publisher
-classes exist exactly once under root `references/`. Workflow execution still
-uses the installed skill code.
+classes exist exactly once under root `references/`. Workflow execution uses
+the installed Python package.
+
+Two similarly named concepts have distinct scopes. Package resources under
+`src/sci_manuscript/resources/` are software-distribution inputs bundled in the
+wheel. Project `references/` contains the one manuscript-level copy shared by
+all rounds. No revision owns a private bibliography, author library, revision
+style, or publisher class.
 
 ## 10. Zotero and bibliography workflow
 
@@ -385,8 +448,10 @@ implicitly. `sync-bib` remains an explicit manual fallback.
 The `nature` key does not claim a dedicated official class for every Nature
 Portfolio journal. The `chinese` category is not a universal official Chinese
 journal template. Publisher resources and default section mappings live in
-`assets/journal_templates/<publisher>/`; each resource README records its
-source, version, date, license, and any local compatibility adaptation.
+`src/sci_manuscript/resources/journal_templates/<publisher>/`; initialization
+copies the selected files into project `references/`. Each resource README
+records its source, version, date, license, and any local compatibility
+adaptation.
 
 Bundled resources are tested with author, figure, citation, and bibliography
 content, but journals update instructions independently. Check the current
@@ -420,6 +485,48 @@ additions use `\selfadd{Additional text.}`. The marked manuscript compares the
 current version against its direct parent, so added and deleted text remain
 traceable. User-adjustable colors and markup appearance are isolated in
 `references/revision_style.tex`.
+
+### Response input and stable IDs
+
+Reviewer input is Markdown with explicit correspondence headings and
+consecutive numbered comments within each block:
+
+```markdown
+# Editor
+
+1. Please clarify the scope and retain A_B at 10%.
+
+   This is a second paragraph of the same editor comment.
+
+# Associate Editor
+
+1. Please address x & y.
+
+# Reviewer #1
+
+General assessment without a numbered response item.
+
+1. First numbered comment.
+2. Second numbered comment.
+
+# Reviewer #2
+
+1. Another reviewer comment.
+```
+
+Numbered items receive stable IDs `E-1`, `AE-1`, `1-1`, `1-2`, and `2-1`.
+Existing numeric reviewer IDs remain unchanged, and block order never silently
+renumbers a reviewer. Blank-line-separated comment paragraphs are retained.
+Reviewer text is external data and is safely escaped for LaTeX, including
+`&`, `%`, `$`, `#`, `_`, braces, backslashes, `~`, and `^`. The generated
+`\ResponsePending{...}` remains editable LaTeX owned by the author and is not
+double-escaped or scientifically completed by the workflow.
+
+Manuscript provenance may use `\review{E-1}{...}`,
+`\review{AE-1}{...}`, or an existing numeric reviewer ID. A missing linked
+change is reported as `Location unavailable`; the workflow never invents a line
+number. Pending responses from any supported block stop `submission` and `all`
+unless `--allow-placeholders` is explicitly used for diagnostics.
 
 ```mermaid
 flowchart LR
@@ -455,17 +562,18 @@ guidance, static output resources, and the two validation layers:
 | Directory | Purpose |
 | --- | --- |
 | `SKILL.md` | Agent routing, authorization boundaries, and workflow invariants |
-| `src/sci_manuscript/` | Stable Python API, structured results, shared lifecycle orchestration, and thin CLI adapter |
-| `scripts/` | Internal deterministic workspace, metadata, compiler, diff, and response runtime plus the project bootstrap |
+| `src/sci_manuscript/` | Public API, thin CLI, private deterministic runtime, typing marker, and authoritative package resources |
+| `scripts/` | Thin source-checkout compatibility and development entrypoints only; no duplicate runtime implementation |
 | `references/` | Agent-readable environment and lifecycle guidance loaded only when needed |
-| `assets/` | Author examples, revision style, manuscript sources, correspondence templates, and publisher resources copied or compiled by the runtime |
+| `docs/` | Public documentation images and supporting material |
 | `evals/` | Agent triggering, routing, authorization, and scope-boundary evaluations |
-| `tests/` | Software correctness, lifecycle invariants, and actual publisher compilation |
+| `tests/` | Software correctness, package integrity, lifecycle invariants, portability, and publisher validation |
 
 `SKILL.md` is intentionally a compact router. A normal `build` does not require
 the environment reference, and publisher `.cls`, `.bst`, and `.dtx` files are
-assets rather than routine agent context. `evals/` defines behavioral tasks;
-`tests/` remains the executable software verification suite.
+package resources rather than routine agent context. `evals/` defines behavioral
+specifications; it is not presented as an independent LLM evaluation harness.
+`tests/` is the executable software verification suite.
 
 Run the release checks from the repository root:
 
@@ -474,16 +582,31 @@ pytest
 ruff format --check .
 ruff check .
 mypy src scripts tests
+python -m build
 ```
 
-Release validation additionally exercises a fresh r0 -> r1 -> r2 lifecycle,
-submission packages, PDF text extraction, rendered pages, temporary-file
-cleanup, and the skill frontmatter validator. Development tools are optional
-for manuscript users but required before publishing changes.
+Release validation additionally installs the wheel and sdist into fresh isolated
+environments outside the repository, audits packaged templates and licenses,
+exercises a fresh r0 -> r1 -> r2 lifecycle, moves a project between Unicode and
+space-containing paths, and verifies source hashes and temporary-file cleanup.
+With the local LaTeX toolchain installed, the release gate also performs real
+publisher compilation, PDF text extraction, page rendering, line-number checks,
+and marked-manuscript overflow inspection. Development tools are optional for
+manuscript users but required before publishing changes.
 
-`.github/workflows/test.yml` runs Pytest, Ruff format/check, and Mypy on pushes
-and pull requests. Publisher class compilation remains part of the local
-release gate when Tectonic is available.
+`.github/workflows/test.yml` runs Pytest, Ruff format/check, Mypy, package build,
+and installed-wheel import/resource smoke checks on pushes and pull requests.
+It does not claim the complete local PDF release gate when a full TeX toolchain
+is unavailable in CI.
+
+### Stable architecture boundaries
+
+Version 4.0 establishes backward-compatibility expectations for the Public
+API, three CLI entry forms, project directory model, adjacent revision ancestry,
+root-only shared references, response ID scheme, package-resource model, project
+format version, and no-content-edit contract. Future development should prefer
+bug fixes, publisher upstream-resource updates, and compatibility maintenance
+over directory, API, or workflow redesign.
 
 ## 14. License
 

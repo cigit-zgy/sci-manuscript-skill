@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import hashlib
 import os
 import re
 import shutil
@@ -13,19 +14,22 @@ from pathlib import Path
 from typing import Iterator
 
 import yaml
-from metadata import (
+
+from .metadata import (
     ManuscriptMetadata,
     generate_author_metadata,
     load_manuscript,
     save_manuscript,
     with_revision,
 )
+from .resources import (
+    copy_resource_file,
+    copy_resource_tree,
+    read_resource_text,
+)
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
-ASSETS = SKILL_ROOT / "assets"
 ROUND_PATTERN = re.compile(r"^r(0|[1-9]\d*)$")
 REVISION_DIRECTORY_PATTERN = re.compile(r"^revision_([1-9]\d*)$")
-ENTRYPOINT_MARKER = "%%SCI_MANUSCRIPT_SKILL_ROOT%%"
 CITATION_PATTERN = re.compile(
     r"\\(?:cite|citep|citet|citealp|citeauthor|citeyear|nocite|parencite|"
     r"textcite|autocite|footcite|smartcite|supercite)"
@@ -215,6 +219,23 @@ def load_project(
     return ProjectConfig(root, metadata)
 
 
+def scientific_source_hashes(project: Path) -> dict[str, str]:
+    """Hash user-controlled manuscript TeX sources across every version."""
+    hashes: dict[str, str] = {}
+    for number in _round_numbers(project):
+        version = project / round_directory_name(number)
+        sources = [version / "manuscript.tex", version / "preamble.tex"]
+        for directory in ("sections", "figures", "tables"):
+            root = version / directory
+            if root.exists():
+                sources.extend(sorted(root.rglob("*.tex")))
+        for source in sources:
+            if source.is_file():
+                relative = source.relative_to(project).as_posix()
+                hashes[relative] = hashlib.sha256(source.read_bytes()).hexdigest()
+    return hashes
+
+
 def _latex_escape(value: str) -> str:
     replacements = {
         "&": r"\&",
@@ -240,9 +261,24 @@ def template_values(config: ProjectConfig) -> dict[str, str]:
 
 def render_template(source: Path, target: Path, values: dict[str, str]) -> None:
     """Render one tokenized UTF-8 template without overwriting user content."""
+    _render_template_text(source.read_text(encoding="utf-8"), target, values)
+
+
+def _render_resource_template(
+    parts: tuple[str, ...],
+    target: Path,
+    values: dict[str, str],
+) -> None:
+    _render_template_text(read_resource_text(*parts), target, values)
+
+
+def _render_template_text(
+    text: str,
+    target: Path,
+    values: dict[str, str],
+) -> None:
     if target.exists():
         raise WorkflowError(f"Refusing to overwrite user file: {target}")
-    text = source.read_text(encoding="utf-8")
     for key, value in values.items():
         text = text.replace(f"%%{key}%%", value)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -250,11 +286,8 @@ def render_template(source: Path, target: Path, values: dict[str, str]) -> None:
 
 
 def _install_project_entrypoint(project: Path) -> None:
-    source = SKILL_ROOT / "scripts" / "run.py"
-    text = source.read_text(encoding="utf-8")
-    text = text.replace(ENTRYPOINT_MARKER, str(SKILL_ROOT))
     target = project / "run.py"
-    target.write_text(text, encoding="utf-8")
+    copy_resource_file(("project_run.py",), target)
     target.chmod(0o755)
 
 
@@ -316,18 +349,17 @@ def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
         if config.language == "zh"
         else ""
     )
-    render_template(
-        ASSETS / "manuscript" / "preamble.tex",
+    _render_resource_template(
+        ("manuscript", "preamble.tex"),
         version / "preamble.tex",
         {
             "CJK_PACKAGE": cjk,
             "BIBLIOGRAPHY_PACKAGE": bibliography_package,
         },
     )
-    default_sections = ASSETS / "manuscript" / "sections" / "default"
     for item in plan:
-        render_template(
-            default_sections / item["source"],
+        _render_resource_template(
+            ("manuscript", "sections", "default", item["source"]),
             version / "sections" / item["file"],
             {"SECTION_TITLE": item["title"]},
         )
@@ -356,22 +388,31 @@ def initialize_project(
         root / "tmp",
     ):
         directory.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(
-        ASSETS / "journal_templates",
+    copy_resource_tree(
+        ("journal_templates",),
         config.references / "journal_templates",
     )
-    author_library = authors_source or ASSETS / "authors.yaml"
-    if not author_library.is_file():
-        raise WorkflowError(f"Author library is missing: {author_library}")
-    shutil.copy2(author_library, config.references / "authors.yaml")
-    shutil.copy2(
-        ASSETS / "revision_style.tex",
+    if authors_source is None:
+        copy_resource_file(("authors.yaml",), config.references / "authors.yaml")
+    else:
+        if not authors_source.is_file():
+            raise WorkflowError(f"Author library is missing: {authors_source}")
+        shutil.copy2(authors_source, config.references / "authors.yaml")
+    copy_resource_file(
+        ("revision_style.tex",),
         config.references / "revision_style.tex",
     )
-    bibliography = bibliography_source or ASSETS / "manuscript" / "references.bib"
-    if not bibliography.is_file():
-        raise WorkflowError(f"Bibliography source is missing: {bibliography}")
-    shutil.copy2(bibliography, config.references / "references.bib")
+    if bibliography_source is None:
+        copy_resource_file(
+            ("manuscript", "references.bib"),
+            config.references / "references.bib",
+        )
+    else:
+        if not bibliography_source.is_file():
+            raise WorkflowError(
+                f"Bibliography source is missing: {bibliography_source}"
+            )
+        shutil.copy2(bibliography_source, config.references / "references.bib")
     setup_zotero(root)
     _create_manuscript_sources(config, initial)
     save_manuscript(initial / "manuscript.yaml", config.metadata)
@@ -524,27 +565,27 @@ def ensure_submission_workspace(config: ProjectConfig, round_number: int) -> Pat
     target.mkdir(parents=True, exist_ok=True)
     settings = config.metadata.submission
     if settings.cover_letter and not (target / "cover_letter.tex").exists():
-        render_template(
-            ASSETS / "submission" / f"cover_letter_{config.language}.tex",
+        _render_resource_template(
+            ("submission", f"cover_letter_{config.language}.tex"),
             target / "cover_letter.tex",
             values,
         )
     if settings.highlights and not (target / "highlights.tex").exists():
-        render_template(
-            ASSETS / "submission" / "highlights.tex",
+        _render_resource_template(
+            ("submission", "highlights.tex"),
             target / "highlights.tex",
             values,
         )
     checklist = target / "checklist.md"
     if not checklist.exists():
-        shutil.copy2(ASSETS / "submission" / "checklist.md", checklist)
+        copy_resource_file(("submission", "checklist.md"), checklist)
     if settings.graphical_abstract:
         graphical = target / "graphical_abstract"
         graphical.mkdir(exist_ok=True)
         graphical_source = graphical / "graphical_abstract.tex"
         if not graphical_source.exists():
-            shutil.copy2(
-                ASSETS / "submission" / "graphical_abstract" / "graphical_abstract.tex",
+            copy_resource_file(
+                ("submission", "graphical_abstract", "graphical_abstract.tex"),
                 graphical_source,
             )
     (target / "package").mkdir(exist_ok=True)
@@ -604,10 +645,10 @@ def setup_zotero(project: Path) -> tuple[Path, Path]:
     if guide.exists() and not guide.is_file():
         raise WorkflowError(f"Zotero setup target is not a file: {guide}")
     if not guide.exists():
-        render_template(
-            ASSETS / "manuscript" / "zotero_setup.md",
+        _render_resource_template(
+            ("manuscript", "zotero_setup.md"),
             guide,
-            {"EXPORT_PATH": str(bibliography.resolve())},
+            {"EXPORT_PATH": "references/references.bib"},
         )
     return bibliography, guide
 

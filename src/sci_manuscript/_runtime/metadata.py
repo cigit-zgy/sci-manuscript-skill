@@ -27,6 +27,7 @@ PUBLISHER_TEMPLATES = {
     "chinese": "kxtbcas",
 }
 PUBLISHERS = tuple(PUBLISHER_TEMPLATES)
+CURRENT_PROJECT_FORMAT = 1
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,8 @@ class ManuscriptMetadata:
     first_authors: tuple[str, ...]
     corresponding_authors: tuple[str, ...]
     authors: tuple[str, ...]
+    format_version: int = CURRENT_PROJECT_FORMAT
+    created_with: str = "0+unknown"
 
     @property
     def author_names(self) -> tuple[str, ...]:
@@ -181,12 +184,38 @@ def _revision_directory(value: Any, location: str) -> int | None:
 def load_manuscript(path: Path) -> ManuscriptMetadata:
     """Load and validate one version's ``manuscript.yaml``."""
     data = _read_yaml(path)
-    expected = {"manuscript", "journal", "revision", "submission", "authors"}
+    expected = {
+        "workflow",
+        "manuscript",
+        "journal",
+        "revision",
+        "submission",
+        "authors",
+    }
     unexpected = set(data) - expected
     if unexpected:
         raise MetadataError(
             f"Unsupported manuscript.yaml keys: {', '.join(sorted(unexpected))}."
         )
+    raw_workflow = data.get("workflow")
+    if raw_workflow is None:
+        format_version = 0
+        created_with = ""
+    else:
+        workflow = _mapping(raw_workflow, "workflow")
+        raw_format = workflow.get("format_version")
+        if isinstance(raw_format, bool) or not isinstance(raw_format, int):
+            raise MetadataError("workflow.format_version must be an integer.")
+        if raw_format < 1:
+            raise MetadataError("workflow.format_version must be at least 1.")
+        if raw_format > CURRENT_PROJECT_FORMAT:
+            raise MetadataError(
+                "Project format "
+                f"{raw_format} is newer than supported format "
+                f"{CURRENT_PROJECT_FORMAT}; refusing to downgrade."
+            )
+        format_version = raw_format
+        created_with = _text(workflow.get("created_with"), "workflow.created_with")
     manuscript = _mapping(data.get("manuscript"), "manuscript")
     journal = _mapping(data.get("journal"), "journal")
     revision = _mapping(data.get("revision"), "revision")
@@ -250,12 +279,23 @@ def load_manuscript(path: Path) -> ManuscriptMetadata:
             "authors.authors",
             required=False,
         ),
+        format_version=format_version,
+        created_with=created_with,
     )
 
 
-def save_manuscript(path: Path, metadata: ManuscriptMetadata) -> None:
-    """Write an annotated, deterministic manuscript configuration."""
+def render_manuscript(metadata: ManuscriptMetadata) -> str:
+    """Render one annotated deterministic manuscript configuration."""
     sections = (
+        (
+            "Workflow format",
+            {
+                "workflow": {
+                    "format_version": metadata.format_version,
+                    "created_with": metadata.created_with,
+                }
+            },
+        ),
         (
             "Manuscript",
             {
@@ -335,9 +375,14 @@ def save_manuscript(path: Path, metadata: ManuscriptMetadata) -> None:
                 "",
             ]
         )
+    return "\n".join(pieces)
+
+
+def save_manuscript(path: Path, metadata: ManuscriptMetadata) -> None:
+    """Atomically write an annotated deterministic manuscript configuration."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".yaml.new")
-    temporary.write_text("\n".join(pieces), encoding="utf-8")
+    temporary.write_text(render_manuscript(metadata), encoding="utf-8")
     os.replace(temporary, path)
 
 

@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-import workspace
 
 import sci_manuscript
 from sci_manuscript import (
@@ -23,6 +22,7 @@ from sci_manuscript import (
     cli,
     initialize_manuscript,
 )
+from sci_manuscript._runtime import workspace
 
 
 def test_public_exports_exclude_runtime_internals() -> None:

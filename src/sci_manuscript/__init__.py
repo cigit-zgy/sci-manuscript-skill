@@ -1,5 +1,6 @@
 """Public Python interface for sci-manuscript-skill."""
 
+from ._version import package_version
 from .api import ManuscriptError, ManuscriptProject, initialize_manuscript
 from .results import (
     Artifact,
@@ -12,8 +13,11 @@ from .results import (
     RevisionResult,
     StatusResult,
     SubmissionResult,
+    UpgradeResult,
     ZoteroSetupResult,
 )
+
+__version__ = package_version()
 
 __all__ = [
     "Artifact",
@@ -28,6 +32,8 @@ __all__ = [
     "RevisionResult",
     "StatusResult",
     "SubmissionResult",
+    "UpgradeResult",
     "ZoteroSetupResult",
+    "__version__",
     "initialize_manuscript",
 ]

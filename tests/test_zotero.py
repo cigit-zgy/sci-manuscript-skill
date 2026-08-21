@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "scripts"))
+from test_core import _config
 
-import workspace  # noqa: E402
-from test_core import _config  # noqa: E402
-
-from sci_manuscript import cli as lifecycle_run  # noqa: E402
+from sci_manuscript import cli as lifecycle_run
+from sci_manuscript._runtime import workspace
 
 
 def test_init_creates_shared_bibliography_and_zotero_guide() -> None:
@@ -30,7 +25,7 @@ def test_init_creates_shared_bibliography_and_zotero_guide() -> None:
         text = guide.read_text(encoding="utf-8")
         assert "Better BibTeX" in text
         assert "Keep updated" in text
-        assert str(bibliography.resolve()) in text
+        assert "references/references.bib" in text
         assert "does not open Zotero" in text
 
 

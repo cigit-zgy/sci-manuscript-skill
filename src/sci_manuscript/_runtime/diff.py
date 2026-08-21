@@ -8,12 +8,12 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from compile import compile_tex, run_command
-from workspace import ProjectConfig, WorkflowError, strip_provenance_wrappers
+from .compile import compile_tex, run_command
+from .review_ids import is_review_id
+from .workspace import ProjectConfig, WorkflowError, strip_provenance_wrappers
 
 INPUT_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
 LABEL_PATTERN = re.compile(r"\\newlabel\{review:(\d+):(start|end)\}\{\{(\d+)\}")
-REVIEW_ID = re.compile(r"^\d+-\d+$")
 LATEXDIFF_SAFE_OPTIONS = (
     "--encoding=utf8",
     "--packages=none",
@@ -319,9 +319,9 @@ def _calculate_locations(build_dir: Path) -> dict[str, str]:
             raise WorkflowError(f"Line labels are missing for reviewer block {block}.")
         location = _format_location(start, end)
         for review_id in (item.strip() for item in ids.split(",")):
-            if not REVIEW_ID.fullmatch(review_id):
+            if not is_review_id(review_id):
                 raise WorkflowError(
-                    f"Invalid reviewer ID {review_id!r}; expected form 1-1."
+                    f"Invalid review ID {review_id!r}; expected 1-1, E-1, or AE-1."
                 )
             if location not in by_comment[review_id]:
                 by_comment[review_id].append(location)

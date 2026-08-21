@@ -19,6 +19,7 @@ from .results import (
     RevisionResult,
     StatusResult,
     SubmissionResult,
+    UpgradeResult,
     ZoteroSetupResult,
 )
 
@@ -33,7 +34,7 @@ def _run(operation: str, *args: object, **kwargs: object) -> object:
 
         action = getattr(_workflow, operation)
         return action(*args, **kwargs)
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:
         if isinstance(exc, ManuscriptError):
             raise
         raise ManuscriptError(str(exc)) from exc
@@ -263,6 +264,13 @@ class ManuscriptProject:
         result = _run("setup_zotero", self.path)
         if not isinstance(result, ZoteroSetupResult):
             raise ManuscriptError("Zotero setup returned an invalid result.")
+        return result
+
+    def upgrade_project(self) -> UpgradeResult:
+        """Migrate only recognized generated infrastructure without editing content."""
+        result = _run("upgrade_project", self.path)
+        if not isinstance(result, UpgradeResult):
+            raise ManuscriptError("Project upgrade returned an invalid result.")
         return result
 
     def sync_bib(self, export: str | Path | None = None) -> BibliographySyncResult:

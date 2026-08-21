@@ -13,7 +13,7 @@ revision_2/           r2, parent r1
 
 The project root contains the only `references/` tree: author library,
 generated metadata, bibliography, revision style, and all publisher resources.
-No version may contain `references/`. `python run.py revision` is the only
+No version may contain `references/`. The public `revision` command is the only
 normal revision creator. It copies manuscript state from the current highest
 version, removes inherited provenance wrappers from manuscript prose, resets
 outputs, inherits editable submission sources and non-round-specific response
@@ -30,7 +30,7 @@ language, article type, author order, and any existing author YAML or BibTeX
 file. Do not infer missing scientific or identity data.
 
 ```bash
-python scripts/run.py init \
+sci-manuscript init \
   --project /absolute/path/to/project \
   --title "User-supplied title" \
   --journal "Target Journal" \
@@ -73,17 +73,29 @@ draft, infer, or apply manuscript wording. Use the markup commands below only
 for an exact patch or concrete edit operation supplied or explicitly confirmed
 by the user.
 
-Reviewer comments use Markdown headings and consecutive numbered comments:
+External comments use Markdown headings and consecutive numbered comments:
 
 ```text
+# Editor
+
+1. Editor comment.
+
+# Associate Editor
+
+1. Associate-editor comment.
+
 # Reviewer #1
 
 General assessment.
 
-1. First specific comment.
+1. First paragraph.
+   Second paragraph.
 ```
 
-Use `\review{1-1}{revised text}` for reviewer-linked manuscript changes and
+Stable IDs are `E-N`, `AE-N`, and the backward-compatible reviewer form `N-N`.
+Indented or blank-line-separated paragraphs remain distinct, and external
+comment text is escaped for LaTeX. User-authored response LaTeX is not escaped
+again. Use `\review{1-1}{revised text}` for reviewer-linked manuscript changes and
 `\selfadd{additional text}` for author-initiated additions. Replace every
 generated `\ResponsePending{1-1}` with the real response.
 

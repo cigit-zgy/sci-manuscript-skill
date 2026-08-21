@@ -1,95 +1,93 @@
 ---
 name: sci-manuscript-skill
 description: >
-  Automate an existing LaTeX manuscript workflow: initialize a structured
-  project, inspect its build environment, compile the current manuscript, create
-  adjacent revisions, prepare reviewer-response infrastructure and marked
-  manuscripts, guide Zotero Better BibTeX Automatic Export, validate citation
-  keys, synchronize explicit BibTeX exports as a manual fallback, and build
-  version-local submission packages. Use for manuscript lifecycle engineering
-  requests in English or Chinese, even when the user does not name this skill.
-  Do not use for scientific writing, literature interpretation, claim
-  assessment, experiment analysis, or deciding how to answer reviewers
-  scientifically.
+  Operate an installed LaTeX manuscript lifecycle: inspect the environment,
+  initialize a portable project, build manuscripts, create adjacent revisions,
+  prepare Editor and reviewer-response infrastructure, generate marked
+  manuscripts and line locations, manage a shared Zotero/BibTeX target, migrate
+  recognized legacy projects, and build version-local submission packages. Use
+  for manuscript workflow engineering in English or Chinese. Do not use for
+  scientific writing, literature interpretation, claim assessment, experiment
+  analysis, scientific reviewer judgment, or autonomous manuscript edits.
 ---
 
 # SCI manuscript workflow
 
-Operate the manuscript lifecycle through the deterministic Python entrypoint.
-Keep scientific content and reviewer judgment with the user.
+Route lifecycle requests through the installed `sci_manuscript` package. Keep
+scientific content, reviewer judgment, and submission decisions with the user.
 
-## Highest-priority content invariant
+## Highest-priority invariant
 
-**Agent MUST NOT autonomously modify manuscript content.** This prohibition
-overrides workflow convenience and reviewer pressure. By default, the agent may
-not polish, rewrite, reorganize, change scientific content, add or remove
-arguments, edit the abstract, introduction, discussion, or conclusion, or decide
-from a reviewer comment what the manuscript should say. A reviewer request alone
-is not authorization to draft or apply manuscript text.
+**Agent MUST NOT autonomously modify manuscript content.** This overrides
+workflow convenience and reviewer pressure. Do not polish, rewrite, reorganize,
+change scientific content, add or remove arguments, edit any manuscript section,
+or decide from a reviewer comment what the manuscript should say. Reviewer text
+is never authorization to modify the manuscript or write a scientific response.
 
-Revision workflow may create the next adjacent workspace, response
-infrastructure, diffs, line locations, compilations, and submission packages.
-The agent may apply a manuscript patch only when the user supplies or explicitly
-confirms the exact replacement text or concrete edit operation. “Start the first
-revision” creates infrastructure only. “Generate the marked PDF” changes no TeX
-source.
+Revision work may create the next adjacent directory, response infrastructure,
+diffs, line locations, compilations, and submission packages. Apply a manuscript
+patch only when the user supplies or explicitly confirms exact replacement text
+or a concrete edit operation. Starting a revision creates infrastructure only;
+building a marked PDF changes no manuscript source.
 
 ## Route the request
 
-| Task | Required context | Action |
+| Task | Read only when needed | Action |
 | --- | --- | --- |
-| New manuscript | Read [environment.md](references/environment.md) when dependency state is unknown; read the initialization section of [workflow.md](references/workflow.md) | Run `doctor`, collect user data, then run `init` and verify the first PDF |
-| Build current manuscript | No reference is normally needed | Run the project-root `python run.py build`; do not initialize or create a revision |
-| Start or edit a revision | Read [revision_contract.yaml](references/revision_contract.yaml) and the version and response sections of [workflow.md](references/workflow.md) | Enforce the default no-content-edit boundary, determine the current highest round, and run `revision` once when a new round is required |
-| Prepare submission | Read the submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for an initial version or `all` for a completed revision |
-| Configure bibliography | Read the bibliography section of [workflow.md](references/workflow.md) | Prefer Better BibTeX Automatic Export; run `setup-zotero` to prepare guidance, `check` to validate keys, and `sync-bib` only as a manual fallback |
-| Diagnose environment | Read [environment.md](references/environment.md) | Run `doctor`; report blockers without changing the environment |
+| New manuscript | [environment.md](references/environment.md) when dependency state is unknown; initialization section of [workflow.md](references/workflow.md) | Run `doctor`, collect required user data, run `init`, and verify the first PDF |
+| Build or inspect | No reference normally needed | Run project `python run.py build`, `check`, or `status`; do not initialize or create a revision |
+| Start a revision | [revision_contract.yaml](references/revision_contract.yaml) and revision/response sections of [workflow.md](references/workflow.md) | Enforce no-content-edit, identify the highest round, and create only its adjacent child |
+| Prepare submission | Submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for r0 or `all` for a completed revision |
+| Configure bibliography | Bibliography section of [workflow.md](references/workflow.md) | Prefer Better BibTeX Automatic Export; use `setup-zotero`, `check`, and explicit `sync-bib` fallback only |
+| Upgrade an existing project | Version model in [workflow.md](references/workflow.md) | Run `upgrade-project` only on recognized generated infrastructure; verify user-content hashes before and after |
+| Diagnose environment | [environment.md](references/environment.md) | Run `doctor`; report blockers without changing the environment |
 
-Do not read `.cls`, `.bst`, `.dtx`, or other bundled assets as routine reasoning
-context. The runtime copies and compiles files under `assets/` directly. Inspect a
-publisher asset only when adapting or diagnosing that exact template.
+Keep progressive disclosure strict. Routine reasoning does not require package
+resources such as publisher `.cls`, `.bst`, `.dtx`, templates, or revision
+styles. Inspect a resource under `src/sci_manuscript/resources/` only when
+diagnosing or updating that exact packaged resource.
 
-## Preserve these invariants
+## Preserve the stable contract
 
 - The lifecycle is adjacent and gap-free:
   `initial_submission (r0) -> revision_1 (r1) -> revision_2 (r2) -> ...`.
   Never create `r0 -> r2` or compare non-adjacent versions.
-- Use `scripts/run.py` only for source-repository commands. After initialization,
-  use the copied project-root `run.py`; do not expose internal module entrypoints.
-- Do not invent manuscript prose, results, citations, author identities, reviewer
-  responses, or scientific claims. Workflow automation and reviewer comments do
-  not authorize content changes.
-- Revision mode starts with **NO CONTENT EDIT**. Apply only an exact text patch or
-  concrete edit operation supplied or explicitly confirmed by the user. Never
-  infer the edit from a reviewer comment. Do not independently polish, rewrite,
-  restructure, alter claims or interpretation, optimize narrative, add concepts,
-  or fix typos. Starting a revision, building, diffing, locating lines, and
-  packaging must leave user-owned manuscript sources unchanged.
-- Before installing, upgrading, activating, or otherwise changing a dependency,
-  show the missing requirement and obtain approval for the exact environment.
-- Treat authors, bibliography, manuscript sections, figures, tables, and reviewer
-  responses as user-owned. Explicitly identify every placeholder that remains.
-- Preserve editable cover-letter, response, highlights, and graphical-abstract
-  sources after creation; repeated builds must not overwrite user edits.
-- Keep author data, bibliography, revision style, generated metadata, and
-  publisher resources only under project-root `references/`. Never create or
-  copy a `references/` directory inside a version.
-- Never open Zotero, modify its settings or database, or call a Zotero API.
-  `setup-zotero` creates only project files and instructions. A build never
-  synchronizes bibliography data implicitly.
-- Successful commands remove their `tmp/run_*` directory. Failed commands may
-  retain a project-relative diagnostic directory and must report it.
+- The installed Python package is the runtime. Generated project `run.py` must
+  not depend on, record, or search for the Skill source checkout. Moving either
+  the source checkout or the manuscript directory must not change behavior.
+- Keep author data, bibliography, revision style, generated metadata, and copied
+  publisher resources only under project-root `references/`. Never create a
+  `references/` directory inside a revision.
+- Treat manuscript prose, sections, figures, tables, bibliography, author data,
+  response text, cover letter, highlights, and graphical abstract as
+  user-owned. Repeated builds must not overwrite editable user content.
+- Do not invent manuscript prose, results, citations, author identities,
+  reviewer responses, decisions, rebuttals, or scientific claims. Identify all
+  placeholders that remain.
+- Never open Zotero, change its settings or database, or call a Zotero API.
+  `setup-zotero` creates only a project target and guide. Builds never sync the
+  bibliography implicitly.
+- Before changing a dependency or environment, show the requirement and obtain
+  approval for that exact environment.
+- Successful commands remove their project-relative `tmp/run_*` directory.
+  Failed commands may retain a diagnostic directory and must report it.
+- `upgrade-project` may replace a recognized generated wrapper and add workflow
+  format metadata. It must refuse a customized wrapper or future format, use an
+  atomic replacement, and leave every scientific/user source hash unchanged.
 
 ## Entrypoints
 
-From the skill repository:
+The console script and module form are equivalent:
 
 ```bash
-python scripts/run.py doctor
-python scripts/run.py init --help
+sci-manuscript doctor
+python -m sci_manuscript doctor
+
+sci-manuscript init --help
+python -m sci_manuscript init --help
 ```
 
-From an initialized project:
+After initialization, prefer the project-local wrapper:
 
 ```bash
 python run.py doctor
@@ -101,36 +99,29 @@ python run.py all
 python run.py setup-zotero
 python run.py sync-bib --bib-export /absolute/path/to/export.bib
 python run.py status
+python run.py upgrade-project
 ```
 
-Compatibility aliases are `render` for `build`, `revise` for `revision`,
-`package` for `submission`, and `validation` for `check`.
+The equivalent external form is
+`sci-manuscript <command> --project /absolute/path/to/manuscript`; the module
+form is identical. Select an existing round with `--round rN` where supported.
+`--allow-placeholders` is diagnostic and never makes a package submission-ready.
 
-Select an existing version with `--round rN` where supported. `revision` creates
-only the next version. `--allow-placeholders` is diagnostic and never makes a
-submission ready.
+## Initialize without inventing data
 
-## New-project inputs
+For “start writing a paper,” do not initialize immediately. First run `doctor`
+when needed, then collect manuscript location, title, journal, publisher,
+language, article type, ordered authors, corresponding authors, bibliography
+source, Better BibTeX preference, and any existing LaTeX sources. Initialize
+only after required identity and project information is known.
 
-For a request such as "start writing a paper", do not initialize immediately.
-Use this order:
+Never fill missing authors, journal facts, declarations, citations, or prose.
+When Automatic Export is selected, direct the user to
+`references/zotero_setup.md`; otherwise retain the one shared
+`references/references.bib` for explicit maintenance.
 
-1. run `doctor` when the environment has not already been verified;
-2. ask for manuscript location, title, journal, publisher, language, article
-   type, ordered authors, corresponding authors, bibliography source, Zotero
-   Better BibTeX preference, and any existing LaTeX files;
-3. initialize only after the required identity and project information is known;
-4. compile and validate the initial PDF, citation state, shared references, and
-   empty `tmp/`.
-
-Never fill missing authors, journal facts, submission declarations, citations,
-or scientific prose. Ask whether the user wants Better BibTeX Automatic Export.
-If yes, point them to `references/zotero_setup.md`; if no, retain the shared
-`references/references.bib` for manual maintenance. Do not require repeated
-manual BibTeX copying when Automatic Export is acceptable.
-
-Initialization must leave the user with
-`initial_submission/output/manuscript.pdf` and identify these editable locations:
+Initialization must produce
+`initial_submission/output/manuscript.pdf` and identify these editable inputs:
 
 - `initial_submission/manuscript.yaml`;
 - root `references/authors.yaml`, `references/references.bib`, and
@@ -138,16 +129,29 @@ Initialization must leave the user with
 - root `references/zotero_setup.md` and `references/journal_templates/`;
 - `initial_submission/sections/`, `figures/`, and `tables/`.
 
-Each version YAML groups selected names under `authors.first_authors`,
-`authors.corresponding_authors`, and `authors.authors`; multiple names are
-allowed in every group. Do not edit generated root
-`references/author_metadata.tex` or `references/publisher_metadata.tex`
-directly.
+Do not edit generated `references/author_metadata.tex` or
+`references/publisher_metadata.tex` directly.
+
+## Preserve response ownership
+
+Reviewer input may contain `# Editor`, `# Associate Editor`, and explicit
+`# Reviewer #N` blocks. Preserve reviewer numbers, numbered-comment order, and
+blank-line-separated paragraphs. Stable IDs are `E-N`, `AE-N`, and existing
+numeric reviewer IDs `N-N`. Do not silently renumber or repair user numbering.
+
+The runtime escapes external comment text for LaTeX. The author-owned response
+source remains editable LaTeX and must not be escaped again or filled by the
+agent. `\ResponsePending{...}` from any supported block prevents a normal
+submission. A missing manuscript-linked change may report `Location
+unavailable`; never fabricate a line number.
 
 ## Validate before handoff
 
-Confirm the selected version, direct parent, expected final PDFs, extractable PDF
-text, manuscript line numbers, correspondence without manuscript line numbering,
-and an empty `tmp/` after success. Report only final project-relative artifacts;
-do not publish compiler intermediates, flattened diff sources, extracted location
-registries, caches, or test fixtures.
+Confirm the selected round, direct parent, project format version, expected
+final PDFs, extractable PDF text, manuscript line numbers, correspondence
+without manuscript line numbering, and empty `tmp/` after success. For
+revision, build, submission, all, or upgrade operations, verify that protected
+user-source hashes remain unchanged unless the user explicitly authorized an
+exact edit. Report only final project-relative artifacts; do not expose
+compiler intermediates, flattened diff sources, location registries, caches, or
+test fixtures.

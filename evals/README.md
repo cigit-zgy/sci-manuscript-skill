@@ -12,7 +12,7 @@ not replace the software tests in `tests/`.
   description triggering. It uses the query/`should_trigger` format accepted by
   skill-creator's trigger evaluator.
 - `initialization.yaml`, `revision.yaml`, `missing_information.yaml`,
-  `zotero.yaml`, and `publisher_template.yaml` are focused v3.1 behavior cases
+  `zotero.yaml`, and `publisher_template.yaml` are focused stable behavior cases
   for user-information gates, shared references, Zotero boundaries, and real
   publisher resource selection.
 
