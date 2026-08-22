@@ -1,6 +1,6 @@
 # Submission checklist
 
-- [ ] Manuscript and author metadata match this round's `manuscript.yaml`.
+- [ ] Manuscript and author metadata match this round's `meta.yaml`.
 - [ ] Manuscript PDF was inspected.
 - [ ] Cover letter placeholders were replaced.
 - [ ] Highlights meet the target journal's limits.

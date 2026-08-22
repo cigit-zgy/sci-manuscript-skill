@@ -31,11 +31,10 @@ command -v tectonic latexmk pdflatex xelatex
 command -v latexdiff pdftotext pdftoppm bibtex biber
 ```
 
-Then run from the skill source or an initialized project:
+Then run the installed command:
 
 ```bash
-python3 scripts/run.py doctor
-python run.py doctor
+sci-manuscript doctor
 ```
 
 `doctor` reports `READY` and exits 0 only when every required category is

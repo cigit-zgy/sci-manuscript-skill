@@ -1,10 +1,40 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "sci-manuscript-skill"
-version = "3.0.0"
-description = "LaTeX scientific manuscript lifecycle management skill."
+version = "4.0.0"
+description = "Reproducible LaTeX scientific manuscript lifecycle management."
+readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["PyYAML>=6.0,<7"]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
+    "mypy>=1.10",
+    "pytest>=8",
+    "ruff>=0.6",
+    "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+sci-manuscript = "sci_manuscript.cli:main"
+
+[project.urls]
+Repository = "https://github.com/cigit-zgy/sci-manuscript-skill"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sci_manuscript = ["py.typed", "resources/**/*"]
+
+[tool.setuptools.exclude-package-data]
+sci_manuscript = ["resources/**/__pycache__/*", "resources/**/*.pyc"]
 
 [tool.ruff]
 line-length = 88

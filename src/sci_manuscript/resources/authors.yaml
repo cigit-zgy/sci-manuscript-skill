@@ -1,0 +1,24 @@
+affiliations:
+  example_institute:
+    name_zh: 示例研究机构
+    name_en: Example Research Institute
+
+authors:
+  first_author:
+    name_zh: 第一作者
+    name_en: First Author
+    email: first.author@example.org
+    affiliations:
+      - example_institute
+  corresponding_author:
+    name_zh: 通讯作者
+    name_en: Corresponding Author
+    email: corresponding.author@example.org
+    affiliations:
+      - example_institute
+  other_author:
+    name_zh: 其他作者
+    name_en: Other Author
+    email: other.author@example.org
+    affiliations:
+      - example_institute

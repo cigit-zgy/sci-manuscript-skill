@@ -1,108 +1,81 @@
 ---
 name: sci-manuscript-skill
 description: >
-  Automate an existing LaTeX manuscript workflow: initialize a structured
-  project, inspect its build environment, compile the current manuscript, create
-  adjacent revisions, prepare reviewer-response infrastructure and marked
-  manuscripts, synchronize explicit BibTeX exports, and build version-local
-  submission packages. Use for manuscript lifecycle engineering requests in
-  English or Chinese, even when the user does not name this skill. Do not use for
-  scientific writing, literature interpretation, claim assessment, experiment
-  analysis, or deciding how to answer reviewers scientifically.
+  Manage an existing or new LaTeX manuscript workspace through initialization,
+  compilation, adjacent revisions, marked manuscripts, reviewer responses,
+  bibliography synchronization, rollback/reindex safety, and submission
+  packaging. Use for scientific manuscript lifecycle engineering in English or
+  Chinese. Do not use to invent, rewrite, or scientifically assess manuscript or
+  reviewer-response content.
 ---
 
 # SCI manuscript workflow
 
-Operate the manuscript lifecycle through the deterministic Python entrypoint.
-Keep scientific content and reviewer judgment with the user.
+Use the installed `sci-manuscript` CLI or public `sci_manuscript` API. Runtime
+code and publisher resources come from the installed package; a generated
+project never depends on a source checkout and never receives a copied `run.py`.
 
-## Route the request
+## Highest-priority invariant
 
-| Task | Required context | Action |
-| --- | --- | --- |
-| New manuscript | Read [environment.md](references/environment.md) when dependency state is unknown; read the initialization section of [workflow.md](references/workflow.md) | Run `doctor`, collect user data, then run `init` and verify the first PDF |
-| Build current manuscript | No reference is normally needed | Run the project-root `python run.py build`; do not initialize or create a revision |
-| Start a revision | Read the version and response sections of [workflow.md](references/workflow.md) | Determine the current highest round and run `revision` once |
-| Prepare submission | Read the submission and artifact sections of [workflow.md](references/workflow.md) | Run `submission` for an initial version or `all` for a completed revision |
-| Synchronize bibliography | Read the bibliography section of [workflow.md](references/workflow.md) | Run `sync-bib` only with an explicit export path or configured local export |
-| Diagnose environment | Read [environment.md](references/environment.md) | Run `doctor`; report blockers without changing the environment |
+**AGENT MUST NOT AUTONOMOUSLY MODIFY MANUSCRIPT CONTENT.** Starting a revision,
+building, diffing, locating lines, rolling back, reindexing, synchronizing a
+bibliography, or preparing submission files is not authorization to polish,
+rewrite, reorganize, add, delete, or scientifically interpret manuscript text.
+Reviewer comments are not edit authorization. Apply manuscript changes only
+when the user supplies or explicitly confirms the exact text or operation. Do
+not write reviewer-response prose on the user's behalf.
 
-Do not read `.cls`, `.bst`, `.dtx`, or other bundled assets as routine reasoning
-context. The runtime copies and compiles files under `assets/` directly. Inspect a
-publisher asset only when adapting or diagnosing that exact template.
+## Route requests
 
-## Preserve these invariants
+| Request | Action |
+| --- | --- |
+| Check environment | Run `sci-manuscript doctor`; read [environment.md](references/environment.md) only for a blocker |
+| Start a paper | Collect project, journal, publisher, language, article type, author roles, and optional bibliography; run `init` |
+| Build | Run `build`; do not change TeX or create a revision |
+| Start revision | Read the response/revision parts of [workflow.md](references/workflow.md); run `revision` only after explicit confirmation |
+| Prepare submission | Confirm all user responses are complete; run `submission` |
+| Roll back or reindex | Explain the archive/digest transaction, obtain confirmation, then run the exact command |
+| Synchronize bibliography | Use only a user-specified BibTeX export with `sync-bib` |
 
-- The lifecycle is adjacent and gap-free:
-  `initial_submission (r0) -> revision_1 (r1) -> revision_2 (r2) -> ...`.
-  Never create `r0 -> r2` or compare non-adjacent versions.
-- Use `scripts/run.py` only for source-repository commands. After initialization,
-  use the copied project-root `run.py`; do not expose internal module entrypoints.
-- Do not invent manuscript prose, results, citations, author identities, reviewer
-  responses, or scientific claims. Workflow automation does not authorize content
-  changes.
-- Before installing, upgrading, activating, or otherwise changing a dependency,
-  show the missing requirement and obtain approval for the exact environment.
-- Treat authors, bibliography, manuscript sections, figures, tables, and reviewer
-  responses as user-owned. Explicitly identify every placeholder that remains.
-- Preserve editable cover-letter, response, highlights, and graphical-abstract
-  sources after creation; repeated builds must not overwrite user edits.
-- Keep author data, bibliography, revision style, generated metadata, and
-  publisher resources only under project-root `references/`. Never create or
-  copy a `references/` directory inside a version.
-- Successful commands remove their `tmp/run_*` directory. Failed commands may
-  retain a project-relative diagnostic directory and must report it.
+Do not inspect `.cls`, `.bst`, or `.dtx` during routine reasoning. Inspect a
+publisher resource only to diagnose that exact publisher build.
+
+## Invariants
+
+- Workspace root is `PROJECT/manuscript/`; unrelated parent-project files are
+  preserved and an existing `manuscript/` is never overwritten.
+- Revision ancestry is adjacent and fixed-width:
+  `initial_submission (r00) -> revision_01 (r01) -> revision_02 (r02)`.
+- Only `manuscript/references/` contains `authors.yaml`, `references.bib`, and
+  `revision_style.tex`; revision directories never contain `references/`.
+- Built-in publisher resources are package data, not copied user files. Only a
+  custom publisher creates `references/journal_template/`.
+- `manuscript.tex` is a user-owned composition root. Builds read it but never
+  overwrite it.
+- `\review{ID}{text}` and `\user{text}` are the only manual provenance wrappers.
+  Deletions are detected by adjacent `latexdiff`.
+- Successful operations remove lazy `tmp/`; failed runs may retain diagnostics.
+- Editable responses and submission sources are created once and not replaced
+  by later builds.
 
 ## Entrypoints
 
-From the skill repository:
-
 ```bash
-python scripts/run.py doctor
-python scripts/run.py init --help
+sci-manuscript doctor
+sci-manuscript init --help
+sci-manuscript status --project /path/to/project
+sci-manuscript build --project /path/to/project
+sci-manuscript revision --project /path/to/project --reviews reviews.md --yes
+sci-manuscript rollback --project /path/to/project --yes
+sci-manuscript reindex --project /path/to/project --yes
+sci-manuscript submission --project /path/to/project
+sci-manuscript sync-bib --project /path/to/project --bib export.bib
 ```
 
-From an initialized project:
+## Handoff checks
 
-```bash
-python run.py doctor
-python run.py build
-python run.py revision --reviews /absolute/path/to/reviewer-comments.md
-python run.py submission
-python run.py all
-python run.py sync-bib --bib-export /absolute/path/to/export.bib
-python run.py status
-```
-
-Select an existing version with `--round rN` where supported. `revision` creates
-only the next version. `--allow-placeholders` is diagnostic and never makes a
-submission ready.
-
-## New-project inputs
-
-Before `init`, obtain a new or empty project path, user-supplied title and journal,
-publisher key (`elsevier`, `nature`, `acs`, or `chinese`), language (`en` or `zh`),
-article type, author order, and optional existing author YAML and BibTeX paths.
-Copy bundled examples only after the user accepts that they are placeholders.
-
-Initialization must leave the user with
-`initial_submission/output/manuscript.pdf` and identify these editable locations:
-
-- `initial_submission/manuscript.yaml`;
-- root `references/authors.yaml`, `references/references.bib`, and
-  `references/revision_style.tex`;
-- `initial_submission/sections/`, `figures/`, and `tables/`.
-
-Each version YAML groups selected names under `authors.first_authors`,
-`authors.corresponding_authors`, and `authors.authors`; multiple names are
-allowed in every group. Do not edit generated root
-`references/author_metadata.tex` or `references/publisher_metadata.tex`
-directly.
-
-## Validate before handoff
-
-Confirm the selected version, direct parent, expected final PDFs, extractable PDF
-text, manuscript line numbers, correspondence without manuscript line numbering,
-and an empty `tmp/` after success. Report only final project-relative artifacts;
-do not publish compiler intermediates, flattened diff sources, extracted location
-registries, caches, or test fixtures.
+Report the exact current round and parent, final project-relative artifacts,
+pending responses, source-integrity result, and whether `tmp/` was removed.
+Validate extractable PDF text and visually inspect marked/response pages. Never
+publish compiler intermediates, flattened TeX, location registries, caches, test
+PDFs, or private paths.

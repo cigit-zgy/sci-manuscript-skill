@@ -1,0 +1,28 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m compileall -q src tests
+      - run: pytest -q
+      - run: ruff format --check .
+      - run: ruff check .
+      - run: mypy src tests
+      - run: python -m build
+      - name: Wheel import and resource smoke test
+        run: |
+          python -m venv /tmp/sci-wheel
+          /tmp/sci-wheel/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/sci-wheel/bin/python -c "from sci_manuscript import ManuscriptProject; from importlib.resources import files; assert (files('sci_manuscript.resources') / 'revision_style.tex').is_file()"
+          /tmp/sci-wheel/bin/sci-manuscript --help

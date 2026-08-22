@@ -1,0 +1,66 @@
+"""Repository, package-resource, and documentation contract tests."""
+
+from __future__ import annotations
+
+import struct
+from importlib.resources import files
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _png_size(path: Path) -> tuple[int, int]:
+    data = path.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    return struct.unpack(">II", data[16:24])
+
+
+def test_readme_screenshots_are_real_equal_size_pngs() -> None:
+    marked = ROOT / "docs" / "images" / "marked_manuscript.png"
+    response = ROOT / "docs" / "images" / "response_letter.png"
+    assert marked.stat().st_size > 100_000
+    assert response.stat().st_size > 100_000
+    assert _png_size(marked) == _png_size(response) == (1275, 1754)
+
+
+def test_runtime_resources_are_package_data() -> None:
+    root = files("sci_manuscript.resources")
+    required = (
+        "authors.yaml",
+        "revision_style.tex",
+        "manuscript/preamble.tex",
+        "response/response_en.tex",
+        "submission/cover_letter_en.tex",
+        "submission/highlights.tex",
+        "journal_templates/elsevier/elsarticle.cls",
+        "journal_templates/elsevier/elsarticle-num.bst",
+        "journal_templates/nature/sn-jnl.cls",
+        "journal_templates/nature/sn-nature.bst",
+        "journal_templates/acs/achemso.cls",
+        "journal_templates/acs/achemso.dtx",
+        "journal_templates/chinese/kxtbcas.cls",
+    )
+    for relative in required:
+        assert (root / relative).is_file(), relative
+
+
+def test_no_legacy_public_architecture_strings() -> None:
+    paths = [
+        ROOT / "README.md",
+        ROOT / "SKILL.md",
+        *sorted((ROOT / "references").glob("*.md")),
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    assert "SCI_MANUSCRIPT_SKILL_ROOT" not in text
+    assert "scripts/run.py" not in text
+    assert "\\selfadd" not in text
+    assert "manuscript.yaml" not in text
+
+
+def test_manuscript_package_has_no_scripts_runtime_dependency() -> None:
+    source = ROOT / "src" / "sci_manuscript"
+    text = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(source.glob("*.py"))
+    )
+    assert "sys.path.insert" not in text
+    assert ' / "scripts"' not in text

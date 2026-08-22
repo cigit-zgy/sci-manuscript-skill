@@ -1,0 +1,23 @@
+% Document class
+\documentclass[pdflatex,sn-nature]{sn-jnl}
+
+% Journal configuration
+\input{publisher_metadata}
+
+% Shared configuration
+\input{preamble}
+
+% Revision markup (transparent in clean output)
+\providecommand{\review}[2]{#2}
+\providecommand{\user}[1]{#1}
+
+\begin{document}
+\maketitle
+
+% Manuscript content
+%%ABSTRACT_INPUT%%
+%%SECTION_INPUTS%%
+
+% Bibliography
+\bibliography{references}
+\end{document}

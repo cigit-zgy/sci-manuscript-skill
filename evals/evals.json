@@ -8,8 +8,8 @@
       "files": [],
       "expectations": [
         "The agent runs doctor before initialization when the environment is not already verified and asks before any dependency installation.",
-        "The generated project contains initial_submission and does not contain revision_1.",
-        "The supplied author YAML and BibTeX data are copied into the version-local references directory.",
+        "The generated project/manuscript contains initial_submission and does not contain revision_01.",
+        "The supplied author YAML and BibTeX data are copied into the single manuscript-level references directory.",
         "initial_submission/output/manuscript.pdf exists and the successful run leaves tmp empty.",
         "The agent identifies manuscript sections, figures, bibliography, and author data as user-owned content rather than generating scientific replacements."
       ]
@@ -17,11 +17,11 @@
     {
       "id": 2,
       "prompt": "我收到第一轮审稿意见，项目已经有 initial_submission。请开始第一轮修回。",
-      "expected_output": "The agent creates revision_1 from initial_submission, initializes response infrastructure, and leaves scientific reviewer responses for the user.",
+      "expected_output": "The agent creates revision_01 from initial_submission, initializes response infrastructure, and leaves scientific reviewer responses for the user.",
       "files": [],
       "expectations": [
-        "revision_1 exists with parent r0 and initial_submission remains unchanged.",
-        "No revision_2 or non-adjacent revision is created.",
+        "revision_01 exists with parent r00 and initial_submission remains unchanged.",
+        "No revision_02 or non-adjacent revision is created.",
         "A version-local response source and reviewer-comments scaffold exist.",
         "The agent does not invent scientific responses to reviewer comments."
       ]
@@ -29,11 +29,11 @@
     {
       "id": 3,
       "prompt": "我正在 revision 1 中修改论文，只重新渲染一下当前 PDF。",
-      "expected_output": "The agent runs build for revision_1 only and reports the clean manuscript PDF.",
+      "expected_output": "The agent runs build for revision_01 only and reports the clean manuscript PDF.",
       "files": [],
       "expectations": [
         "The current revision clean manuscript is rebuilt.",
-        "No revision_2 is created.",
+        "No revision_02 is created.",
         "No new submission workspace is created.",
         "No manuscript source or scientific content is modified by the agent."
       ]
@@ -41,11 +41,11 @@
     {
       "id": 4,
       "prompt": "revision 1 已经修改完成，回复也已填写。生成完整投稿材料。",
-      "expected_output": "The agent builds the clean manuscript, r0-to-r1 marked manuscript, response letter, and revision_1 submission package.",
+      "expected_output": "The agent builds the clean manuscript, r00-to-r01 marked manuscript, response letter, and revision_01 submission package.",
       "files": [],
       "expectations": [
-        "revision_1/output contains manuscript_clean.pdf, manuscript_marked.pdf, and response_letter.pdf.",
-        "The marked manuscript compares r0 directly with r1.",
+        "revision_01/output contains manuscript_clean.pdf, manuscript_marked.pdf, and response_letter.pdf.",
+        "The marked manuscript compares r00 directly with r01.",
         "Clean and marked manuscript PDFs have continuous line numbers while the response letter does not use manuscript line numbering.",
         "The version-local submission package contains the enabled final artifacts and no compiler intermediates.",
         "The successful run leaves tmp empty."
@@ -54,12 +54,12 @@
     {
       "id": 5,
       "prompt": "第一轮修回已经投稿，现在收到第二轮意见，请建立第二轮修回目录。",
-      "expected_output": "The agent creates revision_2 only from revision_1 and initializes its response infrastructure.",
+      "expected_output": "The agent creates revision_02 only from revision_01 and initializes its response infrastructure.",
       "files": [],
       "expectations": [
-        "revision_2 exists with parent r1.",
-        "The revision chain is initial_submission to revision_1 to revision_2 without gaps.",
-        "The agent does not compare initial_submission directly with revision_2.",
+        "revision_02 exists with parent r01.",
+        "The revision chain is initial_submission to revision_01 to revision_02 without gaps.",
+        "The agent does not compare initial_submission directly with revision_02.",
         "Earlier version directories remain unchanged."
       ]
     },

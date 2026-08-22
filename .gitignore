@@ -12,3 +12,13 @@ tmp/
 *.out
 *.synctex.gz
 *.toc
+*.pdf
+*.fls
+*.fdb_latexmk
+*.xdv
+*.bcf
+*.run.xml
+build/
+dist/
+*.egg-info/
+.venv/

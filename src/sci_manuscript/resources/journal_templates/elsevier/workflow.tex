@@ -1,0 +1,25 @@
+% Document class
+\documentclass[preprint,12pt]{elsarticle}
+
+% Journal configuration
+\input{publisher_metadata}
+
+% Shared configuration
+\input{preamble}
+
+% Revision markup (transparent in clean output)
+\providecommand{\review}[2]{#2}
+\providecommand{\user}[1]{#1}
+
+\begin{document}
+\begin{frontmatter}
+%%ABSTRACT_INPUT%%
+\end{frontmatter}
+
+% Manuscript content
+%%SECTION_INPUTS%%
+
+% Bibliography
+\bibliographystyle{elsarticle-num}
+\bibliography{references}
+\end{document}
