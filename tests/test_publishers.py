@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import subprocess
 import tempfile
@@ -60,7 +61,12 @@ class PublisherTemplateTest(unittest.TestCase):
             (work / "references.bib").write_text(BIBLIOGRAPHY, encoding="utf-8")
             (work / "figure.png").write_bytes(PNG_1X1)
             if publisher == "chinese":
-                font_root = Path.home() / "Library" / "Fonts"
+                configured = os.environ.get("SCI_MANUSCRIPT_CJK_FONT_DIR")
+                font_root = (
+                    Path(configured).expanduser()
+                    if configured
+                    else Path.home() / "Library" / "Fonts"
+                )
                 names = (
                     "FandolSong-Regular.otf",
                     "FandolSong-Bold.otf",
@@ -71,15 +77,16 @@ class PublisherTemplateTest(unittest.TestCase):
                     if font.is_file():
                         shutil.copy2(font, work / name)
                 if all((work / name).is_file() for name in names):
-                    configured = (
-                        "\\kxtbsetcjkfontfiles"
-                        "{FandolSong-Regular.otf}"
-                        "{FandolSong-Bold.otf}"
-                        "{FandolKai-Regular.otf}\n"
+                    font_configuration = (
+                        "\\AtEndPreamble{"
+                        "\\setCJKmainfont["
+                        f"Path={{{work.as_posix()}/}}"
+                        "]{FandolSong-Regular.otf}"
+                        "}\n"
                     )
                     source = source.replace(
                         "\\documentclass[review]{kxtbcas}\n",
-                        "\\documentclass[review]{kxtbcas}\n" + configured,
+                        "\\documentclass[review]{kxtbcas}\n" + font_configuration,
                         1,
                     )
                     (work / "main.tex").write_text(source, encoding="utf-8")

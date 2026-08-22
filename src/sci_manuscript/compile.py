@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -59,11 +60,16 @@ def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
         output = root / "output"
         output.mkdir()
         font_setup = ""
-        for font in (
-            Path.home() / "Library" / "Fonts" / "FandolSong-Regular.otf",
-            Path("/Library/Fonts/FandolSong-Regular.otf"),
-            Path("/usr/share/fonts/opentype/fandol/FandolSong-Regular.otf"),
-        ):
+        configured_font_dir = os.environ.get("SCI_MANUSCRIPT_CJK_FONT_DIR")
+        font_candidates = [
+            Path.home() / "Library" / "Fonts",
+            Path("/Library/Fonts"),
+            Path("/usr/share/fonts/opentype/fandol"),
+        ]
+        if configured_font_dir:
+            font_candidates.insert(0, Path(configured_font_dir).expanduser())
+        for directory in font_candidates:
+            font = directory / "FandolSong-Regular.otf"
             if font.is_file():
                 shutil.copy2(font, root / font.name)
                 font_setup = "\\setCJKmainfont[Path=./]{FandolSong-Regular.otf}\n"
