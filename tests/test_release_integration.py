@@ -11,6 +11,7 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, doctor, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
+from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, REVISION_RUNTIME
 from sci_manuscript.workspace import (
     ensure_submission_workspace,
     load_project,
@@ -218,6 +219,38 @@ def test_target_aware_chinese_doctor_runs_real_probe() -> None:
     assert result.ready
     assert cjk.available
     assert "preserved Chinese glyphs" in cjk.detail
+
+
+def test_tectonic_materializes_empty_review_registry(tmp_path: Path) -> None:
+    _require_toolchain()
+    source = tmp_path / "empty_registry.tex"
+    build = tmp_path / "build"
+    build.mkdir()
+    source.write_text(
+        "\\documentclass{article}\n"
+        f"{REVISION_RUNTIME}\n"
+        "\\begin{document}\n"
+        "No reviewer provenance in this document.\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        [
+            shutil.which("tectonic") or "tectonic",
+            "-X",
+            "compile",
+            f"--outdir={build}",
+            "--keep-intermediates",
+            str(source),
+        ],
+        cwd=tmp_path,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    registry = build / "empty_registry.reviewloc"
+    assert registry.read_text(encoding="utf-8").splitlines() == [REVIEW_REGISTRY_HEADER]
 
 
 def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
@@ -469,4 +502,71 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     diagnostics = "\n".join(path.read_text(errors="replace") for path in logs)
     assert "Overfull \\hbox" not in diagnostics
     assert "Overfull \\vbox" not in diagnostics
+    shutil.rmtree(manuscript / "tmp")
+
+
+def test_chinese_revision_submission_generates_registry_and_locations(
+    tmp_path: Path,
+) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "Chinese Revision Registry Project"
+    initialize_manuscript(
+        project_dir,
+        title="中文修订位置测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        authors_path=_author_library(tmp_path / "registry_authors.yaml"),
+        engine="tectonic",
+    )
+    reviews = tmp_path / "registry_reviews.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n"
+        "## 1-1 | manuscript_revised\n\n"
+        "Please revise the manuscript text.\n",
+        encoding="utf-8",
+    )
+    manuscript = project_dir / "manuscript"
+    project = ManuscriptProject(manuscript)
+    project.start_revision(reviews=reviews, confirmed=True)
+    revision = manuscript / "revision_01"
+    body = revision / "sections" / "01_manuscript.tex"
+    _replace_once(
+        body,
+        "Replace this placeholder with the manuscript body.",
+        "\\review{1-1}{中文修订内容}\n\n示例文献~\\cite{replace_me}。",
+    )
+    _complete_responses(revision / "response" / "response_letter.tex", ("1-1",))
+    _complete_cover(manuscript, 1)
+
+    result = project.build_all(engine="tectonic", keep_temp=True)
+
+    _assert_artifacts(result, revision)
+    output = revision / "output"
+    assert {path.name for path in output.glob("*.pdf")} == {
+        "manuscript_clean.pdf",
+        "manuscript_marked.pdf",
+        "response_letter.pdf",
+    }
+    marked_text = "".join(_pdf_text(output / "manuscript_marked.pdf").split())
+    response_text = "".join(_pdf_text(output / "response_letter.pdf").split())
+    assert "中文修订内容" in marked_text
+    assert "第" in response_text and "行" in response_text
+    assert "Locationunavailable" not in response_text
+    assert "位置不可用" not in response_text
+
+    retained_runs = list((manuscript / "tmp").glob("run_*"))
+    assert len(retained_runs) == 1
+    registry = retained_runs[0] / "marked_build" / "manuscript_marked.reviewloc"
+    assert registry.read_text(encoding="utf-8").splitlines() == [
+        REVIEW_REGISTRY_HEADER,
+        "1-1|1",
+    ]
+    aux = retained_runs[0] / "marked_build" / "manuscript_marked.aux"
+    aux_text = aux.read_text(encoding="utf-8")
+    assert "review:1:start" in aux_text
+    assert "review:1:end" in aux_text
     shutil.rmtree(manuscript / "tmp")

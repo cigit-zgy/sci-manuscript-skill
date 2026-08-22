@@ -411,10 +411,10 @@ def test_submission_requires_signer_for_multiple_corresponding_authors(
 
 
 def test_multi_id_review_location_registry(tmp_path: Path) -> None:
-    from sci_manuscript.diff import _calculate_locations
+    from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, _calculate_locations
 
     (tmp_path / "manuscript_marked.reviewloc").write_text(
-        "1-1,2-3|1\nE-1|2\n", encoding="utf-8"
+        f"{REVIEW_REGISTRY_HEADER}\n1-1,2-3|1\nE-1|2\n", encoding="utf-8"
     )
     (tmp_path / "manuscript_marked.aux").write_text(
         "\\newlabel{review:1:start}{{7}{1}}\n"
@@ -428,6 +428,16 @@ def test_multi_id_review_location_registry(tmp_path: Path) -> None:
         "2-3": "Lines 7--8",
         "E-1": "Line 12",
     }
+
+
+def test_empty_versioned_review_location_registry_is_valid(tmp_path: Path) -> None:
+    from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, _calculate_locations
+
+    (tmp_path / "manuscript_marked.reviewloc").write_text(
+        f"{REVIEW_REGISTRY_HEADER}\n", encoding="utf-8"
+    )
+    (tmp_path / "manuscript_marked.aux").write_text("", encoding="utf-8")
+    assert _calculate_locations(tmp_path) == {}
 
 
 @pytest.mark.integration
