@@ -192,16 +192,17 @@ so the user workspace stays small. A custom publisher alone creates
 `references/journal_template/`. `tmp/` is created only during work and removed
 after success.
 
-### Migrating a v3 workspace
+### Migrating a legacy workspace
 
-Version 4 changes the on-disk contract (`meta.yaml`, fixed-width revision names,
-role-free author IDs, and an outer `manuscript/` directory). Existing v3 projects
-are not mutated automatically. Preserve the original as a read-only source,
-initialize a v4 workspace beside it, convert the author library and each round's
-metadata, then copy user-owned manuscript/section/figure/table/response content
-without copying generated output, old `run.py`, or publisher templates. Place a
-dated snapshot under `00_archive/` before switching. This explicit migration is
-preferred to an unsafe heuristic conversion of scientific work.
+The current on-disk contract uses `meta.yaml`, fixed-width revision names,
+role-free author IDs, and an outer `manuscript/` directory. Legacy development
+workspaces are not mutated automatically. Preserve the original as a read-only
+source, initialize a current workspace beside it, convert the author library and
+each round's metadata, then copy user-owned manuscript/section/figure/table/
+response content without copying generated output, old `run.py`, or publisher
+templates. Place a dated snapshot under `00_archive/` before switching. This
+explicit migration is preferred to an unsafe heuristic conversion of scientific
+work.
 
 ## Configuration
 
@@ -210,8 +211,8 @@ preferred to an unsafe heuristic conversion of scientific work.
 ```yaml
 affiliations:
   institute:
-    name_en: Anonymous Research Institute
-    address: Example City
+    name_en: Anonymous Research Institute, Example City, Country
+    name_zh: 示例研究机构
 authors:
   author_one:
     name_zh: 匿名作者
@@ -219,6 +220,10 @@ authors:
     email: author@example.invalid
     affiliations: [institute]
 ```
+
+An affiliation's `name_en` is the complete submission string and may include
+both the institution and address. `name_zh` stores the Chinese institution name;
+new author libraries should not split the address into a separate field.
 
 Each round's `meta.yaml` selects roles independently. Overlap is valid, so one
 author can be both first and corresponding author:

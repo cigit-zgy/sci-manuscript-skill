@@ -1,10 +1,11 @@
 affiliations:
   1:
-    name_en: Chongqing Institute of Green and Intelligent Technology, Chinese Academy of Sciences
-    address: Chongqing 400714, China
+    name_en: Chongqing Institute of Green and Intelligent Technology, Chinese Academy of Sciences, Chongqing 400714, China
+    name_zh: 重庆绿色智能技术研究院
+
   2:
-    name_en: Three Gorges Laboratory
-    address: Chongqing 400714, China
+    name_en: Three Gorges Laboratory, Chongqing 400714, China
+    name_zh: 三峡实验室
 
 authors:
   zhao_guangyao:
@@ -14,6 +15,7 @@ authors:
     affiliations:
       - 1
       - 2
+
   yin_fengjun:
     name_en: Fengjun Yin
     name_zh: 殷逢俊
@@ -21,6 +23,7 @@ authors:
     affiliations:
       - 1
       - 2
+
   wu_di:
     name_en: Di Wu
     name_zh: 吴镝
@@ -28,12 +31,15 @@ authors:
     affiliations:
       - 1
       - 2
+
   song_cheng:
     name_en: Cheng Song
     name_zh: 宋诚
+    email: songcheng@cigit.ac.cn
     affiliations:
       - 1
       - 2
+
   liu_hong:
     name_en: Hong Liu
     name_zh: 刘鸿

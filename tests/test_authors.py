@@ -158,8 +158,18 @@ def test_bundled_public_library_is_the_final_fallback(
         "song_cheng",
         "liu_hong",
     )
-    assert library.authors["song_cheng"].email == ""
-    assert library.affiliations["1"].name_zh == ""
+    assert library.authors["song_cheng"].email == "songcheng@cigit.ac.cn"
+    affiliation_1 = library.affiliations["1"]
+    affiliation_2 = library.affiliations["2"]
+    assert affiliation_1.name_zh == "重庆绿色智能技术研究院"
+    assert affiliation_2.name_zh == "三峡实验室"
+    assert affiliation_1.address == ""
+    assert affiliation_2.address == ""
+    assert affiliation_1.name_en == (
+        "Chongqing Institute of Green and Intelligent Technology, "
+        "Chinese Academy of Sciences, Chongqing 400714, China"
+    )
+    assert affiliation_2.name_en == ("Three Gorges Laboratory, Chongqing 400714, China")
     assert main(["authors", "list"]) == 0
     assert "song_cheng: Cheng Song / 宋诚" in capsys.readouterr().out
 
