@@ -53,18 +53,29 @@ def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
     pdftotext = shutil.which("pdftotext")
     if pdftotext is None:
         return CjkProbeResult(False, "pdftotext is required for CJK glyph validation.")
-    source_text = (
-        "\\documentclass{article}\n"
-        "\\usepackage{xeCJK}\n"
-        "\\begin{document}\n"
-        "中文环境测试\n"
-        "\\end{document}\n"
-    )
     with tempfile.TemporaryDirectory(prefix="sci-manuscript-cjk-") as temporary:
         root = Path(temporary)
         source = root / "cjk_probe.tex"
         output = root / "output"
         output.mkdir()
+        font_setup = ""
+        for font in (
+            Path.home() / "Library" / "Fonts" / "FandolSong-Regular.otf",
+            Path("/Library/Fonts/FandolSong-Regular.otf"),
+            Path("/usr/share/fonts/opentype/fandol/FandolSong-Regular.otf"),
+        ):
+            if font.is_file():
+                shutil.copy2(font, root / font.name)
+                font_setup = "\\setCJKmainfont[Path=./]{FandolSong-Regular.otf}\n"
+                break
+        source_text = (
+            "\\documentclass{article}\n"
+            "\\usepackage{xeCJK}\n"
+            f"{font_setup}"
+            "\\begin{document}\n"
+            "中文环境测试\n"
+            "\\end{document}\n"
+        )
         source.write_text(source_text, encoding="utf-8")
         if selected == "tectonic":
             command = [

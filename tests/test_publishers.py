@@ -59,6 +59,30 @@ class PublisherTemplateTest(unittest.TestCase):
             (work / "main.tex").write_text(source, encoding="utf-8")
             (work / "references.bib").write_text(BIBLIOGRAPHY, encoding="utf-8")
             (work / "figure.png").write_bytes(PNG_1X1)
+            if publisher == "chinese":
+                font_root = Path.home() / "Library" / "Fonts"
+                names = (
+                    "FandolSong-Regular.otf",
+                    "FandolSong-Bold.otf",
+                    "FandolKai-Regular.otf",
+                )
+                for name in names:
+                    font = font_root / name
+                    if font.is_file():
+                        shutil.copy2(font, work / name)
+                if all((work / name).is_file() for name in names):
+                    configured = (
+                        "\\kxtbsetcjkfontfiles"
+                        "{FandolSong-Regular.otf}"
+                        "{FandolSong-Bold.otf}"
+                        "{FandolKai-Regular.otf}\n"
+                    )
+                    source = source.replace(
+                        "\\documentclass[review]{kxtbcas}\n",
+                        "\\documentclass[review]{kxtbcas}\n" + configured,
+                        1,
+                    )
+                    (work / "main.tex").write_text(source, encoding="utf-8")
             build = work / "build"
             build.mkdir()
             result = subprocess.run(
