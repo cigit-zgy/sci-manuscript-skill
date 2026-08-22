@@ -36,7 +36,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install real LaTeX and PDF toolchain
-        run: brew install tectonic latexdiff poppler
+        run: |
+          brew install tectonic latexdiff poppler
+          brew install --cask font-fandol
       - run: python -m pip install -e ".[dev]"
       - name: Run unit and real integration release gates
         run: pytest -q
