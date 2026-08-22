@@ -55,8 +55,10 @@ publisher resource only to diagnose that exact publisher build.
 - `\review{ID}{text}` and `\user{text}` are the only manual provenance wrappers.
   Deletions are detected by adjacent `latexdiff`.
 - Successful operations remove lazy `tmp/`; failed runs may retain diagnostics.
-- Editable responses and submission sources are created once and not replaced
-  by later builds.
+- Editable `response/responses.tex` and `submission/cover_letter_body.tex`
+  sources are created once and not replaced by later builds. Complete
+  correspondence documents are assembled from installed templates only in
+  `tmp/`.
 - Author-library priority is explicit `--authors`, configured user library,
   then the bundled role-free public library. Initialization always requires
   explicit manuscript roles and never auto-selects bundled authors.

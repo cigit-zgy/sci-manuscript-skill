@@ -668,10 +668,10 @@ def ensure_submission_workspace(config: ProjectConfig, round_number: int) -> Pat
     values["AUTHOR_METADATA_PATH"] = "author_metadata.tex"
     settings = config.metadata.submission
     resources = resources_root() / "submission"
-    if settings.cover_letter and not (target / "cover_letter.tex").exists():
+    if settings.cover_letter and not (target / "cover_letter_body.tex").exists():
         render_template(
-            resources / f"cover_letter_{config.language}.tex",
-            target / "cover_letter.tex",
+            resources / f"cover_letter_body_{config.language}.tex",
+            target / "cover_letter_body.tex",
             values,
         )
     if settings.highlights and not (target / "highlights.tex").exists():

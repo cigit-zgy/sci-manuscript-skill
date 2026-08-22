@@ -21,6 +21,7 @@ from .metadata import (
     PUBLISHERS,
     ManuscriptMetadata,
     SubmissionSettings,
+    generate_metadata,
     load_author_library,
     resolve_author_library_path,
     resolve_authors,
@@ -38,6 +39,7 @@ from .workspace import (
     normalize_project,
     parse_round,
     reindex_revisions,
+    resources_root,
     revision_directory_name,
     rollback_revision,
     round_name,
@@ -412,13 +414,58 @@ def _compile_submission_source(
             }
         ):
             shutil.copy2(sibling, stage / sibling.name)
-    from .metadata import generate_metadata
-
     generate_metadata(config.project, config.round_dir(config.current_round), stage)
     result = compile_tex(
         staged_source, run_dir / f"submission_build_{name}", config, engine
     )
     target = run_dir / "package_stage" / f"{name}.pdf"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(result.pdf, target)
+    return target
+
+
+def _compile_cover_letter(
+    body_source: Path,
+    config: ProjectConfig,
+    run_dir: Path,
+    engine: str | None,
+) -> Path:
+    """Assemble the package-owned cover template with user-owned body content."""
+    stage = run_dir / "cover_source"
+    stage.mkdir(parents=True)
+    if config.language == "zh":
+        stage_cjk_fonts(stage)
+    template_path = (
+        resources_root()
+        / "correspondence_templates"
+        / "cover_letter"
+        / f"cover_letter_{config.language}.tex"
+    )
+    try:
+        template = template_path.read_text(encoding="utf-8")
+        body = body_source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise WorkflowError(
+            f"Cannot read cover-letter template or body: {body_source}"
+        ) from exc
+    if template.count("%%COVER_BODY%%") != 1:
+        raise WorkflowError(
+            f"Cover-letter template must contain one %%COVER_BODY%% token: "
+            f"{template_path}"
+        )
+    staged_source = stage / "cover_letter.tex"
+    staged_source.write_text(template.replace("%%COVER_BODY%%", body), encoding="utf-8")
+    for sibling in body_source.parent.iterdir():
+        if sibling.is_file() and sibling.suffix.lower() in {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".pdf",
+        }:
+            shutil.copy2(sibling, stage / sibling.name)
+    generate_metadata(config.project, config.round_dir(config.current_round), stage)
+    result = compile_tex(staged_source, run_dir / "cover_build", config, engine)
+    target = run_dir / "package_stage" / "cover_letter.pdf"
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(result.pdf, target)
     return target
@@ -442,7 +489,7 @@ def _prepare_submission(
         require_explicit_multiple=True,
     )
     if config.metadata.submission.cover_letter:
-        cover_source = submission / "cover_letter.tex"
+        cover_source = submission / "cover_letter_body.tex"
         try:
             cover_text = cover_source.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
@@ -475,8 +522,8 @@ def _prepare_submission(
     stage.mkdir(parents=True, exist_ok=True)
     settings = config.metadata.submission
     if settings.cover_letter:
-        _compile_submission_source(
-            submission / "cover_letter.tex", "cover_letter", config, run_dir, engine
+        _compile_cover_letter(
+            submission / "cover_letter_body.tex", config, run_dir, engine
         )
     if settings.highlights:
         _compile_submission_source(

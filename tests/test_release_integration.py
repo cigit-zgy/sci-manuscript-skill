@@ -95,7 +95,7 @@ def _complete_responses(source: Path, review_ids: tuple[str, ...]) -> None:
 
 def _complete_cover(manuscript: Path, round_number: int) -> Path:
     config = load_project(manuscript, round_number)
-    source = ensure_submission_workspace(config, round_number) / "cover_letter.tex"
+    source = ensure_submission_workspace(config, round_number) / "cover_letter_body.tex"
     text = re.sub(
         r"\\guidance\{.*?\}",
         "Approved anonymous cover-letter statement.",
@@ -396,7 +396,7 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
         "\\user{User-approved addition.}\n\n"
         "An example citation~\\cite{replace_me} remains.",
     )
-    _complete_responses(r01 / "response" / "response_letter.tex", ("E-1", "1-1", "2-1"))
+    _complete_responses(r01 / "response" / "responses.tex", ("E-1", "1-1", "2-1"))
     cover_source = _complete_cover(manuscript, 1)
     before = source_digest(r01, scientific_only=True)
     r01_result = project.build_all(engine="tectonic", keep_temp=True)
@@ -437,7 +437,7 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
         "Reviewed wording.",
         "\\review{1-1}{Refined wording.}",
     )
-    _complete_responses(r02 / "response" / "response_letter.tex", ("1-1",))
+    _complete_responses(r02 / "response" / "responses.tex", ("1-1",))
     _complete_cover(manuscript, 2)
     before = source_digest(r02, scientific_only=True)
     r02_result = project.build_all(engine="tectonic")
@@ -481,7 +481,7 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
         "\\review{1-1,2-1}{已按用户确认修改示例文本。}\n\n"
         "示例文献~\\cite{replace_me}。",
     )
-    response_source = revision / "response" / "response_letter.tex"
+    response_source = revision / "response" / "responses.tex"
     _complete_responses(response_source, ("E-1", "1-1", "2-1"))
     _complete_cover(manuscript, 1)
     result = project.build_all(engine="tectonic", keep_temp=True)
@@ -498,7 +498,23 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     assert "第" in response_text and "行" in response_text
     response_source_text = response_source.read_text(encoding="utf-8")
     assert "\\ReviewLocation{E-1}" not in response_source_text
-    logs = list((manuscript / "tmp").rglob("*.compiler.log"))
+    retained_runs = list((manuscript / "tmp").glob("run_*"))
+    assert len(retained_runs) == 1
+    assembled_response = retained_runs[0] / "response_source" / "response_letter.tex"
+    assembled_cover = retained_runs[0] / "cover_source" / "cover_letter.tex"
+    assert assembled_response.is_file()
+    assert assembled_cover.is_file()
+    assembled_text = assembled_response.read_text(encoding="utf-8")
+    assert "\\ReviewLocation{E-1}" not in assembled_text
+    assert "Location unavailable" not in assembled_text
+    assert "位置不可用" not in assembled_text
+    assert assembled_text.count("\\reviewlocation{第 ") == 2
+    assert not (revision / "response" / "response_letter.tex").exists()
+    assert not (revision / "submission" / "cover_letter.tex").exists()
+    assert "\\documentclass" not in response_source_text
+    cover_body = revision / "submission" / "cover_letter_body.tex"
+    assert "\\documentclass" not in cover_body.read_text(encoding="utf-8")
+    logs = list(retained_runs[0].rglob("*.compiler.log"))
     diagnostics = "\n".join(path.read_text(errors="replace") for path in logs)
     assert "Overfull \\hbox" not in diagnostics
     assert "Overfull \\vbox" not in diagnostics
@@ -539,7 +555,7 @@ def test_chinese_revision_submission_generates_registry_and_locations(
         "Replace this placeholder with the manuscript body.",
         "\\review{1-1}{中文修订内容}\n\n示例文献~\\cite{replace_me}。",
     )
-    _complete_responses(revision / "response" / "response_letter.tex", ("1-1",))
+    _complete_responses(revision / "response" / "responses.tex", ("1-1",))
     _complete_cover(manuscript, 1)
 
     result = project.build_all(engine="tectonic", keep_temp=True)
@@ -569,4 +585,8 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     aux_text = aux.read_text(encoding="utf-8")
     assert "review:1:start" in aux_text
     assert "review:1:end" in aux_text
+    assert (retained_runs[0] / "response_source" / "response_letter.tex").is_file()
+    assert (retained_runs[0] / "cover_source" / "cover_letter.tex").is_file()
+    assert not (revision / "response" / "response_letter.tex").exists()
+    assert not (revision / "submission" / "cover_letter.tex").exists()
     shutil.rmtree(manuscript / "tmp")

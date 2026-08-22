@@ -1,38 +1,3 @@
-% !TeX program = xelatex
-\documentclass[11pt]{article}
-
-% Self-contained, publisher-neutral Chinese cover letter.
-\usepackage[margin=1in]{geometry}
-\usepackage{fontspec}
-\usepackage{xeCJK}
-\usepackage{microtype}
-\usepackage{xcolor}
-\usepackage[hidelinks]{hyperref}
-\input{%%AUTHOR_METADATA_PATH%%}
-
-\definecolor{ink}{HTML}{20262E}
-\definecolor{placeholder}{HTML}{6B7280}
-
-\color{ink}
-\setlength{\parindent}{0pt}
-\setlength{\parskip}{0.72\baselineskip}
-\pagestyle{empty}
-
-% 灰色文字为写作提示；正式投稿前必须替换或删除。
-\newcommand{\guidance}[1]{\textcolor{placeholder}{【#1】}}
-
-\begin{document}
-
-\hfill\today\par
-\EditorName\par
-\EditorTitle\par
-\textit{\JournalName}
-
-尊敬的编辑：
-
-现随信提交题为《\ManuscriptTitle》的稿件，拟以\ArticleType 的形式投稿至
-\textit{\JournalName}，恳请贵刊审议。
-
 \guidance{首先用一至两句话介绍研究的科学背景或实际应用背景，并说明该问题
 的重要性。} 尽管该领域近年来已取得一定进展，\guidance{指出本稿件所针对的
 具体科学问题、现有研究局限或尚未解决的知识空白}。
@@ -52,20 +17,3 @@
 \guidance{说明利益冲突；如无利益冲突，可写：“作者声明不存在任何利益冲突。”}
 \guidance{如期刊要求，可补充作者贡献、伦理审批、数据可用性、推荐审稿人或
 回避审稿人等声明。}
-
-感谢您审阅本稿件。期待您的回复。
-
-此致\par
-敬礼！\par
-\vspace{0.22in}
-
-\begingroup
-\setlength{\parskip}{2pt}
-{\bfseries\CorrespondenceAuthorNameZh}\par
-通讯作者，谨代表全体作者\par
-\CorrespondenceAuthorAffiliationZh\par
-\CorrespondenceAuthorAddress\par
-电子邮箱：\href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
-\endgroup
-
-\end{document}

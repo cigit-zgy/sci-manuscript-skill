@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .compile import compile_tex, stage_cjk_fonts
-from .metadata import generate_metadata, round_name
+from .metadata import generate_metadata
 from .workspace import ProjectConfig, WorkflowError, resources_root
 
 REVIEW_ID = re.compile(r"^(?:E|AE|[1-9]\d*)-[1-9]\d*$")
@@ -24,6 +24,7 @@ LEGACY_COMMENT = re.compile(r"^\s*([1-9]\d*)\.?\s+(.*)$")
 PENDING_RESPONSE = re.compile(r"\\ResponsePending\{([^}]+)\}")
 LOCATION_USE = re.compile(r"\\ReviewLocation\{([^}]+)\}")
 REVIEW_MACRO = re.compile(r"\\review\s*\{([^}]+)\}")
+RESPONSE_COMMAND = r"\Response"
 
 
 def is_review_id(value: str) -> bool:
@@ -201,7 +202,98 @@ def _comment_tex(paragraphs: tuple[str, ...]) -> list[str]:
     return [f"\\ReviewerComment{{{_escape_latex(item)}}}" for item in paragraphs]
 
 
-def _body_tex(blocks: tuple[ReviewBlock, ...], language: str) -> str:
+def _is_escaped(text: str, index: int) -> bool:
+    count = 0
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        count += 1
+        cursor -= 1
+    return count % 2 == 1
+
+
+def _skip_tex_space(text: str, start: int) -> int:
+    cursor = start
+    while cursor < len(text):
+        if text[cursor].isspace():
+            cursor += 1
+            continue
+        if text[cursor] == "%" and not _is_escaped(text, cursor):
+            newline = text.find("\n", cursor)
+            cursor = len(text) if newline == -1 else newline + 1
+            continue
+        break
+    return cursor
+
+
+def _extract_braced_response_field(text: str, start: int) -> tuple[str, int]:
+    if start >= len(text) or text[start] != "{":
+        raise WorkflowError("Response parser expected an opening brace.")
+    depth = 0
+    cursor = start
+    while cursor < len(text):
+        char = text[cursor]
+        if char == "%" and not _is_escaped(text, cursor):
+            newline = text.find("\n", cursor)
+            cursor = len(text) if newline == -1 else newline + 1
+            continue
+        if char == "{" and not _is_escaped(text, cursor):
+            depth += 1
+        elif char == "}" and not _is_escaped(text, cursor):
+            depth -= 1
+            if depth == 0:
+                return text[start + 1 : cursor], cursor + 1
+        cursor += 1
+    raise WorkflowError("Unbalanced braces in responses.tex.")
+
+
+def parse_responses(path: Path, expected_ids: tuple[str, ...]) -> dict[str, str]:
+    r"""Parse strict ``\Response{ID}{body}`` entries with nested TeX braces."""
+    if not path.is_file():
+        raise WorkflowError(f"Response content is missing: {path}")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise WorkflowError(f"Cannot read response content: {path}") from exc
+    responses: dict[str, str] = {}
+    cursor = _skip_tex_space(text, 0)
+    while cursor < len(text):
+        if not text.startswith(RESPONSE_COMMAND, cursor):
+            raise WorkflowError(
+                f"Unexpected content in responses.tex at character {cursor + 1}; "
+                "expected \\Response{ID}{...}."
+            )
+        cursor += len(RESPONSE_COMMAND)
+        if cursor < len(text) and (text[cursor].isalnum() or text[cursor] == "@"):
+            raise WorkflowError(
+                f"Unexpected command in responses.tex at character {cursor + 1}."
+            )
+        cursor = _skip_tex_space(text, cursor)
+        raw_id, cursor = _extract_braced_response_field(text, cursor)
+        review_id = raw_id.strip()
+        if not is_review_id(review_id):
+            raise WorkflowError(f"Invalid response ID: {review_id!r}")
+        if review_id in responses:
+            raise WorkflowError(f"Duplicate response ID: {review_id}")
+        cursor = _skip_tex_space(text, cursor)
+        body, cursor = _extract_braced_response_field(text, cursor)
+        responses[review_id] = body.strip()
+        cursor = _skip_tex_space(text, cursor)
+    expected = set(expected_ids)
+    observed = set(responses)
+    unknown = sorted(observed - expected)
+    if unknown:
+        raise WorkflowError("Unknown response IDs: " + ", ".join(unknown))
+    missing = sorted(expected - observed)
+    if missing:
+        raise WorkflowError("Missing response IDs: " + ", ".join(missing))
+    return responses
+
+
+def _body_tex(
+    blocks: tuple[ReviewBlock, ...],
+    language: str,
+    responses: dict[str, str],
+) -> str:
     lines: list[str] = []
     for block in blocks:
         title = block.title
@@ -223,7 +315,7 @@ def _body_tex(blocks: tuple[ReviewBlock, ...], language: str) -> str:
                     *_comment_tex(comment.paragraphs),
                     "\\end{reviewcomment}",
                     "\\begin{response}",
-                    f"\\ResponsePending{{{comment.review_id}}}",
+                    responses[comment.review_id],
                     "\\end{response}",
                     "",
                 ]
@@ -239,25 +331,42 @@ def _body_tex(blocks: tuple[ReviewBlock, ...], language: str) -> str:
 
 
 def init_response(config: ProjectConfig, round_number: int) -> Path:
-    """Create one editable response source from the version comment file."""
+    """Create one thin, editable response-content source for a revision."""
     if round_number < 1:
         raise WorkflowError("r00 does not have a reviewer response.")
     response_dir = config.round_dir(round_number) / "response"
     reviews = response_dir / "reviewer_comments.md"
     blocks = parse_reviews(reviews)
-    target = response_dir / "response_letter.tex"
+    target = response_dir / "responses.tex"
     if target.exists():
         raise WorkflowError(f"Response source already exists: {target}")
-    template = (
-        resources_root() / "response" / f"response_{config.language}.tex"
-    ).read_text(encoding="utf-8")
-    target.write_text(
-        template.replace("%%ROUND%%", round_name(round_number).upper())
-        .replace("%%BODY%%", _body_tex(blocks, config.language))
-        .replace("%%AUTHOR_METADATA_PATH%%", "author_metadata.tex"),
-        encoding="utf-8",
-    )
+    entries = [
+        f"\\Response{{{comment.review_id}}}{{\n"
+        f"\\ResponsePending{{{comment.review_id}}}\n"
+        "}"
+        for block in blocks
+        for comment in block.comments
+    ]
+    target.write_text("\n\n".join(entries) + "\n", encoding="utf-8")
     return target
+
+
+def _response_template(language: str) -> str:
+    path = (
+        resources_root()
+        / "correspondence_templates"
+        / "response"
+        / f"response_{language}.tex"
+    )
+    try:
+        template = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise WorkflowError(f"Cannot read response template: {path}") from exc
+    if template.count("%%RESPONSE_BODY%%") != 1:
+        raise WorkflowError(
+            f"Response template must contain one %%RESPONSE_BODY%% token: {path}"
+        )
+    return template
 
 
 def _ids_from_sources(version: Path) -> set[str]:
@@ -291,14 +400,19 @@ def validate_response_links(config: ProjectConfig, round_number: int) -> None:
         )
 
 
-def pending_response_ids(source: Path) -> tuple[str, ...]:
-    """Return valid unfinished IDs while ignoring the macro definition."""
-    text = source.read_text(encoding="utf-8")
-    values = tuple(PENDING_RESPONSE.findall(text))
-    for value in values:
-        if not is_review_id(value):
-            raise WorkflowError(f"Invalid pending response ID: {value}")
-    return values
+def pending_response_ids(responses: dict[str, str]) -> tuple[str, ...]:
+    """Return unfinished response IDs after validating their pending markers."""
+    pending: list[str] = []
+    for review_id, body in responses.items():
+        for value in PENDING_RESPONSE.findall(body):
+            if not is_review_id(value):
+                raise WorkflowError(f"Invalid pending response ID: {value}")
+            if value != review_id:
+                raise WorkflowError(
+                    f"Response {review_id} contains pending marker for {value}."
+                )
+            pending.append(review_id)
+    return tuple(pending)
 
 
 def build_response(
@@ -311,29 +425,48 @@ def build_response(
 ) -> Path:
     """Compile a response copy with temporary line-location substitutions."""
     validate_response_links(config, round_number)
-    source = config.round_dir(round_number) / "response" / "response_letter.tex"
-    if not source.is_file():
-        raise WorkflowError(f"Response source is missing: {source}")
-    pending = pending_response_ids(source)
+    version = config.round_dir(round_number)
+    blocks = parse_reviews(version / "response" / "reviewer_comments.md")
+    expected_ids = tuple(
+        comment.review_id for block in blocks for comment in block.comments
+    )
+    responses = parse_responses(version / "response" / "responses.tex", expected_ids)
+    pending = pending_response_ids(responses)
     if pending and not allow_placeholders:
         raise WorkflowError(
             "Response source still contains unfinished responses: " + ", ".join(pending)
+        )
+    revised_ids = {
+        comment.review_id
+        for block in blocks
+        for comment in block.comments
+        if comment.status == "manuscript_revised"
+    }
+    missing_locations = sorted(
+        review_id
+        for review_id in revised_ids
+        if review_id not in locations or locations[review_id] == "Location unavailable"
+    )
+    if missing_locations:
+        raise WorkflowError(
+            "Marked manuscript locations are missing for: "
+            + ", ".join(missing_locations)
         )
     stage = run_dir / "response_source"
     stage.mkdir(parents=True)
     if config.language == "zh":
         stage_cjk_fonts(stage)
-    text = source.read_text(encoding="utf-8")
+    text = _response_template(config.language).replace(
+        "%%RESPONSE_BODY%%", _body_tex(blocks, config.language, responses)
+    )
 
     def replace_location(match: re.Match[str]) -> str:
         review_id = match.group(1)
         if not is_review_id(review_id):
             raise WorkflowError(f"Invalid response location ID: {review_id}")
-        location = locations.get(review_id, "Location unavailable")
+        location = locations[review_id]
         if config.language != "zh":
             return location
-        if location == "Location unavailable":
-            return "位置不可用"
         if location.startswith("Lines "):
             return "第 " + location.removeprefix("Lines ") + " 行"
         if location.startswith("Line "):

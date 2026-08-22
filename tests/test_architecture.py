@@ -31,8 +31,9 @@ def test_runtime_resources_are_package_data() -> None:
         "manuscript/preamble.tex",
         "manuscript/sections/default/00_frontmatter_zh.tex",
         "manuscript/sections/default/01_manuscript.tex",
-        "response/response_en.tex",
-        "submission/cover_letter_en.tex",
+        "correspondence_templates/response/response_en.tex",
+        "correspondence_templates/cover_letter/cover_letter_en.tex",
+        "submission/cover_letter_body_en.tex",
         "submission/highlights.tex",
         "journal_templates/elsevier/elsarticle.cls",
         "journal_templates/elsevier/elsarticle-num.bst",
@@ -71,15 +72,20 @@ def test_manuscript_package_has_no_scripts_runtime_dependency() -> None:
 def test_correspondence_templates_are_self_contained() -> None:
     resources = ROOT / "src" / "sci_manuscript" / "resources"
     templates = (
-        resources / "submission" / "cover_letter_en.tex",
-        resources / "submission" / "cover_letter_zh.tex",
-        resources / "response" / "response_en.tex",
-        resources / "response" / "response_zh.tex",
+        resources / "correspondence_templates" / "cover_letter" / "cover_letter_en.tex",
+        resources / "correspondence_templates" / "cover_letter" / "cover_letter_zh.tex",
+        resources / "correspondence_templates" / "response" / "response_en.tex",
+        resources / "correspondence_templates" / "response" / "response_zh.tex",
     )
     for template in templates:
         text = template.read_text(encoding="utf-8")
         assert "correspondence_style" not in text
         assert "shared_correspondence" not in text
+        assert "\\documentclass" in text
+    assert "%%COVER_BODY%%" in templates[0].read_text(encoding="utf-8")
+    assert "%%RESPONSE_BODY%%" in templates[2].read_text(encoding="utf-8")
+    assert not any((resources / "response").glob("*.tex"))
+    assert not (resources / "submission" / "cover_letter_en.tex").exists()
     names = {path.name for path in resources.rglob("*.tex")}
     assert "correspondence_style.tex" not in names
     assert "shared_correspondence.tex" not in names

@@ -11,7 +11,7 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
-from sci_manuscript.compile import CjkProbeResult
+from sci_manuscript.compile import CjkProbeResult, CompileResult
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     MetadataError,
@@ -21,7 +21,12 @@ from sci_manuscript.metadata import (
     render_publisher_metadata,
     resolve_authors,
 )
-from sci_manuscript.response import parse_reviews, validate_review_id_list
+from sci_manuscript.response import (
+    parse_responses,
+    parse_reviews,
+    pending_response_ids,
+    validate_review_id_list,
+)
 from sci_manuscript.workspace import (
     ProjectConfig,
     WorkflowError,
@@ -363,19 +368,140 @@ def test_response_source_uses_authoritative_ids_and_preserves_user_edits(
         encoding="utf-8",
     )
     config = _revision(_workspace(tmp_path), reviews)
-    source = config.round_dir(1) / "response" / "response_letter.tex"
+    source = config.round_dir(1) / "response" / "responses.tex"
     text = source.read_text(encoding="utf-8")
-    assert "\\begin{reviewcomment}{E-1}" in text
-    assert "\\begin{reviewcomment}{1-1}" in text
-    assert "\\ReviewLocation{E-1}" not in text
-    assert "\\ReviewLocation{1-1}" in text
-    assert "newcounter" not in text
+    assert text.count("\\Response{E-1}{") == 1
+    assert text.count("\\Response{1-1}{") == 1
+    assert "Clarify scope" not in text
+    assert "Revise text" not in text
+    assert "\\documentclass" not in text
+    assert not (source.parent / "response_letter.tex").exists()
     source.write_text(text + "\n% user-owned edit\n", encoding="utf-8")
     from sci_manuscript.response import init_response
 
     with pytest.raises(WorkflowError, match="already exists"):
         init_response(config, 1)
     assert source.read_text(encoding="utf-8").endswith("% user-owned edit\n")
+
+
+def test_responses_parser_supports_nested_latex_and_pending_markers(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "responses.tex"
+    source.write_text(
+        "% editable response content\n"
+        "\\Response{E-1}{First {nested \\textbf{response}}.}\n"
+        "\\Response{1-1}{\n\\ResponsePending{1-1}\n}\n",
+        encoding="utf-8",
+    )
+    responses = parse_responses(source, ("E-1", "1-1"))
+    assert responses["E-1"] == "First {nested \\textbf{response}}."
+    assert pending_response_ids(responses) == ("1-1",)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "message"),
+    (
+        (
+            "\\Response{1-1}{A}\\Response{1-1}{B}",
+            ("1-1",),
+            "Duplicate response ID",
+        ),
+        ("\\Response{1-1}{A}", ("1-1", "2-1"), "Missing response IDs"),
+        ("\\Response{2-1}{A}", ("1-1",), "Unknown response IDs"),
+        ("\\Response{bad}{A}", ("1-1",), "Invalid response ID"),
+    ),
+)
+def test_responses_parser_rejects_invalid_contracts(
+    tmp_path: Path,
+    text: str,
+    expected: tuple[str, ...],
+    message: str,
+) -> None:
+    source = tmp_path / "responses.tex"
+    source.write_text(text, encoding="utf-8")
+    with pytest.raises(WorkflowError, match=message):
+        parse_responses(source, expected)
+
+
+def test_response_build_uses_current_package_template_without_editing_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sci_manuscript.response as response_module
+
+    reviews = tmp_path / "response_only.md"
+    reviews.write_text(
+        "# Editor\n\n## E-1 | response_only\n\nClarify scope.\n",
+        encoding="utf-8",
+    )
+    config = _revision(_workspace(tmp_path), reviews)
+    responses = config.round_dir(1) / "response" / "responses.tex"
+    responses.write_text("\\Response{E-1}{Stable user response.}\n", encoding="utf-8")
+    original = responses.read_bytes()
+    package_root = tmp_path / "upgraded_package"
+    template_dir = package_root / "correspondence_templates" / "response"
+    template_dir.mkdir(parents=True)
+    (template_dir / "response_en.tex").write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "UPGRADED TEMPLATE\n"
+        "%%RESPONSE_BODY%%\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    def fake_compile(
+        source: Path,
+        build_dir: Path,
+        _config: ProjectConfig,
+        _engine: str | None = None,
+    ) -> CompileResult:
+        assembled = source.read_text(encoding="utf-8")
+        assert "UPGRADED TEMPLATE" in assembled
+        assert "Stable user response." in assembled
+        build_dir.mkdir(parents=True)
+        pdf = build_dir / "response_letter.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        return CompileResult(pdf, "")
+
+    monkeypatch.setattr(response_module, "resources_root", lambda: package_root)
+    monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    run_dir = tmp_path / "run"
+    result = response_module.build_response(config, 1, {}, run_dir)
+    assert result.is_file()
+    assert responses.read_bytes() == original
+    assert not (responses.parent / "response_letter.tex").exists()
+    assert (run_dir / "response_source" / "response_letter.tex").is_file()
+
+
+def test_response_build_rejects_missing_marked_location(tmp_path: Path) -> None:
+    reviews = tmp_path / "revised.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n## 1-1 | manuscript_revised\n\nRevise the manuscript.\n",
+        encoding="utf-8",
+    )
+    config = _revision(_workspace(tmp_path), reviews)
+    response_source = config.round_dir(1) / "response" / "responses.tex"
+    response_source.write_text(
+        "\\Response{1-1}{Completed response.}\n", encoding="utf-8"
+    )
+    section = config.round_dir(1) / "sections" / "01_introduction.tex"
+    section.write_text(
+        section.read_text(encoding="utf-8") + "\n\\review{1-1}{Revision.}\n",
+        encoding="utf-8",
+    )
+    import sci_manuscript.response as response_module
+
+    with pytest.raises(WorkflowError, match="locations are missing for: 1-1"):
+        response_module.build_response(config, 1, {}, tmp_path / "run")
+    with pytest.raises(WorkflowError, match="locations are missing for: 1-1"):
+        response_module.build_response(
+            config,
+            1,
+            {"1-1": "Location unavailable"},
+            tmp_path / "run_unavailable",
+        )
 
 
 def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
@@ -392,9 +518,11 @@ def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
         ),
         _anonymous_author_library(tmp_path),
     )
-    source = ensure_submission_workspace(config, 0) / "cover_letter.tex"
+    source = ensure_submission_workspace(config, 0) / "cover_letter_body.tex"
     original = source.read_text(encoding="utf-8")
     assert "\\guidance{" in original
+    assert "\\documentclass" not in original
+    assert not (source.parent / "cover_letter.tex").exists()
     source.write_text(original + "\n% user-owned cover edit\n", encoding="utf-8")
     ensure_submission_workspace(config, 0)
     assert source.read_text(encoding="utf-8").endswith("% user-owned cover edit\n")

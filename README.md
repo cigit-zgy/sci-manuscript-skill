@@ -182,8 +182,11 @@ existing-project/
         ├── figures/
         ├── tables/
         ├── response/
+        │   ├── reviewer_comments.md
+        │   └── responses.tex
         ├── output/
         └── submission/
+            └── cover_letter_body.tex
 ```
 
 No project-local `run.py` is created. Built-in publisher classes and generated
@@ -191,6 +194,11 @@ metadata are staged from installed package resources inside a temporary build,
 so the user workspace stays small. A custom publisher alone creates
 `references/journal_template/`. `tmp/` is created only during work and removed
 after success.
+
+Reviewer comments remain authoritative in `response/reviewer_comments.md`;
+users edit only `response/responses.tex` and `submission/cover_letter_body.tex`.
+Complete response and cover-letter TeX documents are assembled in `tmp/` from
+the installed package correspondence templates during submission builds.
 
 ### Migrating a legacy workspace
 

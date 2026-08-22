@@ -1,0 +1,51 @@
+\documentclass[11pt]{article}
+
+% Self-contained, publisher-neutral English cover letter.
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\input{author_metadata.tex}
+
+\definecolor{ink}{HTML}{20262E}
+\definecolor{placeholder}{HTML}{6B7280}
+
+\color{ink}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.72\baselineskip}
+\pagestyle{empty}
+
+% Gray bracketed guidance must be replaced or removed before submission.
+\newcommand{\guidance}[1]{\textcolor{placeholder}{[#1]}}
+
+\begin{document}
+
+\hfill\today\par
+\EditorName\par
+\EditorTitle\par
+\textit{\JournalName}
+
+Dear Editor,
+
+Please find enclosed our manuscript entitled ``\ManuscriptTitle,'' which we
+wish to submit for consideration as a \ArticleType\ in \textit{\JournalName}.
+
+%%COVER_BODY%%
+
+Thank you for considering our manuscript. We look forward to your response.
+
+Sincerely,\par
+\vspace{0.22in}
+
+\begingroup
+\setlength{\parskip}{2pt}
+{\bfseries\CorrespondenceAuthorName}\par
+Corresponding Author, on behalf of all authors\par
+\CorrespondenceAuthorAffiliation\par
+\CorrespondenceAuthorAddress\par
+Email: \href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
+\endgroup
+
+\end{document}
