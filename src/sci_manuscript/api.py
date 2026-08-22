@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from .compile import (
     compile_tex,
     ensure_cjk_environment,
     probe_cjk_environment,
+    stage_cjk_fonts,
 )
 from .diff import MarkedResult, build_marked_manuscript
 from .metadata import (
@@ -22,6 +24,7 @@ from .metadata import (
     load_author_library,
     resolve_author_library_path,
     resolve_authors,
+    resolve_signing_author,
 )
 from .response import build_response, init_response, parse_reviews
 from .workspace import (
@@ -42,6 +45,9 @@ from .workspace import (
     sync_bibliography,
     temporary_run,
 )
+
+GUIDANCE_USE = re.compile(r"\\guidance\s*\{")
+TEMPLATE_TOKEN = re.compile(r"%%[A-Z0-9_]+%%")
 
 
 @dataclass(frozen=True)
@@ -389,6 +395,8 @@ def _compile_submission_source(
 ) -> Path:
     stage = run_dir / f"submission_source_{name}"
     stage.mkdir(parents=True)
+    if config.language == "zh":
+        stage_cjk_fonts(stage)
     staged_source = stage / source.name
     shutil.copy2(source, staged_source)
     for sibling in source.parent.iterdir():
@@ -423,6 +431,33 @@ def _prepare_submission(
     engine: str | None,
     allow_placeholders: bool,
 ) -> list[Artifact]:
+    submission = ensure_submission_workspace(config, round_number)
+    selection = resolve_authors(
+        config.metadata,
+        load_author_library(config.references / "authors.yaml"),
+    )
+    resolve_signing_author(
+        config.metadata,
+        selection,
+        require_explicit_multiple=True,
+    )
+    if config.metadata.submission.cover_letter:
+        cover_source = submission / "cover_letter.tex"
+        try:
+            cover_text = cover_source.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise WorkflowError(f"Cannot read cover letter: {cover_source}") from exc
+        if GUIDANCE_USE.search(cover_text):
+            raise WorkflowError(
+                "Cover letter still contains \\guidance{...} blocks; "
+                "replace or remove them before submission."
+            )
+        unresolved = sorted(set(TEMPLATE_TOKEN.findall(cover_text)))
+        if unresolved:
+            raise WorkflowError(
+                "Cover letter still contains unresolved template placeholders: "
+                + ", ".join(unresolved)
+            )
     clean = build_clean_manuscript(config, round_number, run_dir, engine)
     marked: MarkedResult | None = None
     response_pdf: Path | None = None
@@ -436,7 +471,6 @@ def _prepare_submission(
             engine,
             allow_placeholders,
         )
-    submission = ensure_submission_workspace(config, round_number)
     stage = run_dir / "package_stage"
     stage.mkdir(parents=True, exist_ok=True)
     settings = config.metadata.submission

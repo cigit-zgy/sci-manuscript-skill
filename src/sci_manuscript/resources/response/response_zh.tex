@@ -1,24 +1,84 @@
+% !TeX program = xelatex
 \documentclass[11pt]{article}
-\usepackage[a4paper,margin=25mm]{geometry}
+
+% Self-contained, publisher-neutral Chinese response letter.
+\usepackage[margin=1in]{geometry}
 \usepackage{fontspec}
 \usepackage{xeCJK}
+\usepackage{microtype}
 \usepackage{xcolor}
-\usepackage{parskip}
-\newcommand{\ReviewerComment}[1]{\textit{#1}\par}
-\newcommand{\ReviewLocation}[1]{[位置待生成：#1]}
-\newcommand{\ResponsePending}[1]{\textcolor{red}{[回复待完成：#1]}}
+\usepackage[most]{tcolorbox}
+\usepackage[hidelinks,hypertexnames=false]{hyperref}
 \input{%%AUTHOR_METADATA_PATH%%}
-\begin{document}
-尊敬的审稿人：
 
-感谢各位提出的意见。以下按编号逐条列出审稿意见和回复，位置均指 marked
-manuscript 中的连续行号。
+\definecolor{ink}{HTML}{20262E}
+\definecolor{navy}{HTML}{17365D}
+\definecolor{green}{HTML}{287A55}
+\definecolor{graytext}{HTML}{5C6670}
+\definecolor{quotegray}{HTML}{F2F4F6}
+
+\color{ink}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.72\baselineskip}
+\pagestyle{plain}
+
+\newcommand{\ResponseSection}[1]{\clearpage\section*{对#1的回复}}
+\newenvironment{generalcomment}[1][总体意见]
+  {\begin{tcolorbox}[
+    enhanced,breakable,frame hidden,colback=quotegray,
+    borderline west={3pt}{0pt}{graytext},
+    sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
+    before skip=10pt,after skip=12pt]
+   {\color{navy}\bfseries #1}\par\smallskip\normalfont}
+  {\end{tcolorbox}}
+\newenvironment{reviewcomment}[1]
+  {\begin{tcolorbox}[
+    enhanced,breakable,frame hidden,colback=quotegray,
+    borderline west={3pt}{0pt}{navy},
+    sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
+    before skip=10pt,after skip=12pt]
+   {\color{navy}\bfseries 意见 #1}\par\smallskip\normalfont}
+  {\end{tcolorbox}}
+\newenvironment{response}
+  {\par\noindent{\color{green}\bfseries 回复}\par\smallskip}
+  {\par\medskip}
+\newcommand{\reviewlocation}[1]{%
+  \par\noindent{\color{graytext}\bfseries 修改位置：#1}\par
+  \addvspace{1.2\baselineskip}}
+\newcommand{\ResponsePending}[1]{\textcolor{red}{[回复待完成：#1]}}
+\newcommand{\ReviewLocation}[1]{#1}
+\newcommand{\ReviewerComment}[1]{#1\par\medskip}
+\newcommand{\ManuscriptIDLine}{%
+  \if\relax\detokenize\expandafter{\ManuscriptID}\relax
+  \else 稿件编号：\ManuscriptID\fi}
+
+\begin{document}
+
+{\color{navy}\rule{\textwidth}{1.5pt}}\par
+\vspace{0.15in}
+{\sffamily\bfseries\LARGE 给编辑的回复}\par
+\vspace{0.08in}
+{\color{graytext}\ManuscriptTitle}\par
+{\small\color{graytext}\JournalName\quad\ManuscriptIDLine}
+\vspace{0.28in}
+
+尊敬的编辑：
+
+感谢您给予我们修改稿件《\ManuscriptTitle》的机会，并考虑将其发表于
+\textit{\JournalName}。衷心感谢编辑和审稿人对本稿件的认真评阅以及富有
+建设性的建议。我们已逐一回应全部意见，并相信本次修改进一步提升了稿件的
+清晰度和整体质量。
+
+在以下逐条回复中，每条原始意见之后均附有我们的回复。对于已修改正文的意见，
+修改位置由 marked manuscript 的连续行号自动生成。
+
+此致\par
+敬礼！\par
+\vspace{0.25in}
+\CorrespondenceAuthorNameZh\par
+谨代表全体作者\par
+\href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
 
 %%BODY%%
-
-此致
-
-\CorrespondingAuthorNameZh（代表全体作者）\\
-\CorrespondingAuthorEmail
 
 \end{document}

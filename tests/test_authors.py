@@ -10,16 +10,20 @@ import pytest
 
 from sci_manuscript import cli
 from sci_manuscript.cli import main
+from sci_manuscript.errors import ManuscriptError
 from sci_manuscript.metadata import (
     CONFIG_DIRECTORY_ENV,
+    CorrespondenceSettings,
     ManuscriptMetadata,
     MetadataError,
     SubmissionSettings,
     configure_author_library,
     configured_author_library_path,
     load_author_library,
+    render_author_metadata,
     resolve_author_library_path,
     resolve_authors,
+    resolve_signing_author,
 )
 from sci_manuscript.workspace import ProjectConfig, initialize_project
 
@@ -138,15 +142,85 @@ def test_explicit_library_overrides_global(
     assert resolve_author_library_path(explicit) == explicit.resolve()
 
 
-def test_missing_author_sources_fail_without_package_placeholder(
+def test_bundled_public_library_is_the_final_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv(CONFIG_DIRECTORY_ENV, str(tmp_path / "empty-config"))
+    assert not configured_author_library_path().exists()
+    bundled = resolve_author_library_path()
+    library = load_author_library(bundled)
+    assert tuple(library.authors) == (
+        "zhao_guangyao",
+        "yin_fengjun",
+        "wu_di",
+        "song_cheng",
+        "liu_hong",
+    )
+    assert library.authors["song_cheng"].email == ""
+    assert library.affiliations["1"].name_zh == ""
+    assert main(["authors", "list"]) == 0
+    assert "song_cheng: Cheng Song / 宋诚" in capsys.readouterr().out
+
+
+def test_bundled_library_never_auto_selects_all_authors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(CONFIG_DIRECTORY_ENV, str(tmp_path / "empty-config"))
-    assert not configured_author_library_path().exists()
-    with pytest.raises(MetadataError, match="authors configure"):
-        resolve_author_library_path()
-    assert main(["authors", "list"]) == 2
+    monkeypatch.setattr(cli.sys, "stdin", argparse.Namespace(isatty=lambda: False))
+    args = argparse.Namespace(
+        authors=None,
+        first_author=[],
+        corresponding_author=[],
+        other_author=[],
+    )
+    with pytest.raises(ManuscriptError, match=r"first-author|corresponding-author"):
+        cli._selected_authors(args)
+
+
+def test_signing_author_rules(tmp_path: Path) -> None:
+    library = load_author_library(_library(tmp_path / "authors.yaml"))
+    library.authors["author_two"] = replace(
+        library.authors["author_two"], email="two@example.invalid"
+    )
+    single = resolve_authors(_metadata(other=()), library)
+    assert resolve_signing_author(_metadata(other=()), single) == single.authors[0]
+    multiple_metadata = replace(
+        _metadata(other=()),
+        corresponding_authors=("author_one", "author_two"),
+    )
+    multiple = resolve_authors(multiple_metadata, library)
+    with pytest.raises(MetadataError, match="signing_author"):
+        resolve_signing_author(
+            multiple_metadata, multiple, require_explicit_multiple=True
+        )
+    selected = replace(
+        multiple_metadata,
+        correspondence=CorrespondenceSettings(signing_author="author_two"),
+    )
+    signer = resolve_signing_author(selected, multiple)
+    assert signer is not None
+    assert signer.author_id == "author_two"
+
+
+def test_correspondence_metadata_is_data_driven(tmp_path: Path) -> None:
+    library = load_author_library(_library(tmp_path / "authors.yaml"))
+    metadata = replace(
+        _metadata(other=()),
+        correspondence=CorrespondenceSettings(
+            manuscript_id="MS-2026-001",
+            editor_name="Anonymous Editor",
+            editor_title="Handling Editor",
+            signing_author="author_one",
+        ),
+    )
+    rendered = render_author_metadata(metadata, resolve_authors(metadata, library))
+    assert r"\newcommand{\ManuscriptID}{MS-2026-001}" in rendered
+    assert r"\newcommand{\EditorName}{Anonymous Editor}" in rendered
+    assert r"\newcommand{\EditorTitle}{Handling Editor}" in rendered
+    assert r"\newcommand{\CorrespondenceAuthorName}{Anonymous One}" in rendered
 
 
 def test_authors_cli_configure_list_and_show(

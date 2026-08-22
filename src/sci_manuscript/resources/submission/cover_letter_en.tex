@@ -1,22 +1,73 @@
-\documentclass[11pt]{letter}
-\usepackage[a4paper,margin=25mm]{geometry}
+\documentclass[11pt]{article}
+
+% Self-contained, publisher-neutral English cover letter.
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
 \input{%%AUTHOR_METADATA_PATH%%}
-\signature{\CorrespondingAuthorName\\\CorrespondingAuthorEmail}
-\address{\SelectedAuthorNames}
-\date{\today}
+
+\definecolor{ink}{HTML}{20262E}
+\definecolor{placeholder}{HTML}{6B7280}
+
+\color{ink}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.72\baselineskip}
+\pagestyle{empty}
+
+% Gray bracketed guidance must be replaced or removed before submission.
+\newcommand{\guidance}[1]{\textcolor{placeholder}{[#1]}}
 
 \begin{document}
-\begin{letter}{%%EDITOR_NAME%%\\\JournalName}
-\opening{Dear Editor:}
 
-Please find enclosed our manuscript entitled ``\ManuscriptTitle'' for
-consideration as a \ArticleType.
+\hfill\today\par
+\EditorName\par
+\EditorTitle\par
+\textit{\JournalName}
 
-[Briefly state why the manuscript is suitable for the journal.]
+Dear Editor,
 
-This manuscript has not been published elsewhere and is not under
-consideration by another journal. [Confirm the conflict-of-interest statement.]
+Please find enclosed our manuscript entitled ``\ManuscriptTitle,'' which we
+wish to submit for consideration as a \ArticleType\ in \textit{\JournalName}.
 
-\closing{Sincerely,}
-\end{letter}
+\guidance{Begin with one or two sentences describing the broad scientific or
+practical context and explaining why the topic is important.} Despite recent
+progress, \guidance{identify the specific unresolved problem, limitation, or
+knowledge gap addressed by the manuscript}.
+
+In this study, we \guidance{briefly describe the approach, study design, data,
+or theoretical framework without excessive technical detail}. Our principal
+findings show that \guidance{state the two or three most important results in
+plain language}. These findings \guidance{explain the main conceptual,
+methodological, or practical advance and why it matters to the field}.
+
+We believe that this work is well suited to \textit{\JournalName} because
+\guidance{explain how the manuscript matches the journal's scope, priorities,
+or readership}. The results should be of particular interest to
+\guidance{identify the relevant research communities or professional groups}.
+
+This manuscript is original, has not been published previously, and is not
+under consideration for publication elsewhere. All authors have approved the
+manuscript and agree with its submission to \textit{\JournalName}.
+\guidance{State any conflicts of interest, or write: ``The authors declare no
+conflicts of interest.''} \guidance{If required, add statements concerning
+author contributions, ethics approval, data availability, or suggested and
+opposed reviewers.}
+
+Thank you for considering our manuscript. We look forward to your response.
+
+Sincerely,\par
+\vspace{0.22in}
+
+\begingroup
+\setlength{\parskip}{2pt}
+{\bfseries\CorrespondenceAuthorName}\par
+Corresponding Author, on behalf of all authors\par
+\CorrespondenceAuthorAffiliation\par
+\CorrespondenceAuthorAddress\par
+Email: \href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
+\endgroup
+
 \end{document}

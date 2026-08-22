@@ -11,7 +11,11 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, doctor, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
-from sci_manuscript.workspace import source_digest
+from sci_manuscript.workspace import (
+    ensure_submission_workspace,
+    load_project,
+    source_digest,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -86,6 +90,20 @@ def _complete_responses(source: Path, review_ids: tuple[str, ...]) -> None:
             f"Anonymous response for {review_id}.",
         )
     source.write_text(text, encoding="utf-8")
+
+
+def _complete_cover(manuscript: Path, round_number: int) -> Path:
+    config = load_project(manuscript, round_number)
+    source = ensure_submission_workspace(config, round_number) / "cover_letter.tex"
+    text = re.sub(
+        r"\\guidance\{.*?\}",
+        "Approved anonymous cover-letter statement.",
+        source.read_text(encoding="utf-8"),
+        flags=re.DOTALL,
+    )
+    assert "\\guidance{" not in text
+    source.write_text(text, encoding="utf-8")
+    return source
 
 
 def _replace_once(path: Path, old: str, new: str) -> None:
@@ -224,6 +242,7 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
         "An example citation~\\cite{replace_me} remains.",
     )
     _complete_responses(r01 / "response" / "response_letter.tex", ("E-1", "1-1", "2-1"))
+    cover_source = _complete_cover(manuscript, 1)
     before = source_digest(r01, scientific_only=True)
     r01_result = project.build_all(engine="tectonic", keep_temp=True)
     assert source_digest(r01, scientific_only=True) == before
@@ -232,10 +251,17 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     response = r01 / "output" / "response_letter.pdf"
     marked_text = _pdf_text(marked)
     response_text = _pdf_text(response)
+    cover_text = _pdf_text(r01 / "submission" / "package" / "cover_letter.pdf")
     marked_words = _marked_words(marked_text)
     assert "Reviewed wording" in marked_words
     assert "Replace this placeholder" in marked_words
     assert "Lines" in response_text or "Line" in response_text
+    assert "E-1" in response_text
+    assert "Location unavailable" not in response_text
+    assert "Anonymous Release Validation" in cover_text
+    assert "Anonymous One" in cover_text
+    assert "guidance" not in cover_text.lower()
+    assert "Approved anonymous cover-letter statement" in cover_source.read_text()
     _assert_provenance_colors(marked, tmp_path / "rendered_marked")
     retained_runs = list((manuscript / "tmp").glob("run_*"))
     assert len(retained_runs) == 1
@@ -257,6 +283,7 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
         "\\review{1-1}{Refined wording.}",
     )
     _complete_responses(r02 / "response" / "response_letter.tex", ("1-1",))
+    _complete_cover(manuscript, 2)
     before = source_digest(r02, scientific_only=True)
     r02_result = project.build_all(engine="tectonic")
     assert source_digest(r02, scientific_only=True) == before
@@ -267,3 +294,57 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     assert "Refined wording" in r02_marked_words
     assert "Replace this placeholder and its example citation" not in r02_marked_words
     assert not (manuscript / "tmp").exists()
+
+
+def test_chinese_cover_and_response_compile_with_runtime_metadata(
+    tmp_path: Path,
+) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "中文 Correspondence Project"
+    initialize_manuscript(
+        project_dir,
+        title="匿名中文通讯模板验证",
+        journal="示例中文期刊",
+        publisher="chinese",
+        language="zh",
+        article_type="研究论文",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        authors_path=_author_library(tmp_path / "authors_zh.yaml"),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    project = ManuscriptProject(manuscript)
+    project.start_revision(
+        reviews=_review_file(tmp_path / "reviews_zh.md", 1), confirmed=True
+    )
+    revision = manuscript / "revision_01"
+    introduction = revision / "sections" / "01_introduction.tex"
+    _replace_once(
+        introduction,
+        "Replace this placeholder and its example citation~\\cite{replace_me} with the\n"
+        "introduction.",
+        "\\review{1-1,2-1}{已按用户确认修改示例文本。}",
+    )
+    response_source = revision / "response" / "response_letter.tex"
+    _complete_responses(response_source, ("E-1", "1-1", "2-1"))
+    _complete_cover(manuscript, 1)
+    result = project.build_all(engine="tectonic", keep_temp=True)
+    _assert_artifacts(result, revision)
+    cover_text = "".join(
+        _pdf_text(revision / "submission" / "package" / "cover_letter.pdf").split()
+    )
+    response_text = "".join(
+        _pdf_text(revision / "output" / "response_letter.pdf").split()
+    )
+    assert "匿名中文通讯模板验证" in cover_text
+    assert "匿名甲" in cover_text
+    assert "意见1-1" in response_text
+    assert "第" in response_text and "行" in response_text
+    response_source_text = response_source.read_text(encoding="utf-8")
+    assert "\\ReviewLocation{E-1}" not in response_source_text
+    logs = list((manuscript / "tmp").rglob("*.compiler.log"))
+    diagnostics = "\n".join(path.read_text(errors="replace") for path in logs)
+    assert "Overfull \\hbox" not in diagnostics
+    assert "Overfull \\vbox" not in diagnostics
+    shutil.rmtree(manuscript / "tmp")

@@ -7,15 +7,16 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .compile import compile_tex
+from .compile import compile_tex, stage_cjk_fonts
 from .metadata import generate_metadata, round_name
 from .workspace import ProjectConfig, WorkflowError, resources_root
 
-REVIEW_ID = re.compile(r"^(?:E|[1-9]\d*)-[1-9]\d*$")
+REVIEW_ID = re.compile(r"^(?:E|AE|[1-9]\d*)-[1-9]\d*$")
 REVIEWER_HEADING = re.compile(r"^#\s*Reviewer\s*#?\s*([1-9]\d*)\s*$", re.I)
 EDITOR_HEADING = re.compile(r"^#\s*Editor\s*$", re.I)
+ASSOCIATE_EDITOR_HEADING = re.compile(r"^#\s*Associate\s+Editor\s*$", re.I)
 EXPLICIT_COMMENT = re.compile(
-    r"^##\s*((?:E|[1-9]\d*)-[1-9]\d*)\s*"
+    r"^##\s*((?:E|AE|[1-9]\d*)-[1-9]\d*)\s*"
     r"(?:\|\s*|\[)(response_only|manuscript_revised)\]?\s*$",
     re.I,
 )
@@ -35,7 +36,8 @@ def validate_review_id_list(value: str) -> tuple[str, ...]:
     ids = tuple(item.strip() for item in value.split(","))
     if not ids or any(not is_review_id(item) for item in ids):
         raise WorkflowError(
-            f"Invalid review ID list {value!r}; use E-1, 1-1, or comma-separated IDs."
+            f"Invalid review ID list {value!r}; use E-1, AE-1, 1-1, "
+            "or comma-separated IDs."
         )
     if len(ids) != len(set(ids)):
         raise WorkflowError(f"Review ID list contains duplicates: {value!r}")
@@ -132,11 +134,14 @@ def parse_reviews(path: Path) -> tuple[ReviewBlock, ...]:
 
     for raw in lines:
         editor = EDITOR_HEADING.fullmatch(raw.strip())
+        associate_editor = ASSOCIATE_EDITOR_HEADING.fullmatch(raw.strip())
         reviewer = REVIEWER_HEADING.fullmatch(raw.strip())
-        if editor or reviewer:
+        if editor or associate_editor or reviewer:
             finish_block()
             if editor:
                 block_title, prefix = "Editor", "E"
+            elif associate_editor:
+                block_title, prefix = "Associate Editor", "AE"
             else:
                 assert reviewer is not None
                 prefix = reviewer.group(1)
@@ -157,7 +162,7 @@ def parse_reviews(path: Path) -> tuple[ReviewBlock, ...]:
                     f"Comment {current_id} does not belong under {block_title}."
                 )
             continue
-        if legacy and prefix != "E":
+        if legacy and prefix not in {"E", "AE"}:
             finish_comment()
             current_id = f"{prefix}-{int(legacy.group(1))}"
             current_status = "manuscript_revised"
@@ -199,32 +204,37 @@ def _comment_tex(paragraphs: tuple[str, ...]) -> list[str]:
 def _body_tex(blocks: tuple[ReviewBlock, ...], language: str) -> str:
     lines: list[str] = []
     for block in blocks:
-        title = "编辑" if language == "zh" and block.prefix == "E" else block.title
+        title = block.title
+        if language == "zh":
+            title = {
+                "E": "编辑",
+                "AE": "副编辑",
+            }.get(block.prefix, f"审稿人 #{block.prefix}")
         general_title = "总体意见" if language == "zh" else "General comment"
-        comment_title = "意见" if language == "zh" else "Comment"
-        response_title = "回复" if language == "zh" else "Response"
-        location_title = "位置" if language == "zh" else "Location"
-        lines.extend([f"\\section*{{{_escape_latex(title)}}}", ""])
+        lines.extend([f"\\ResponseSection{{{_escape_latex(title)}}}", ""])
         if block.general_paragraphs:
-            lines.extend([f"\\subsection*{{{general_title}}}", ""])
+            lines.extend([f"\\begin{{generalcomment}}[{general_title}]"])
             lines.extend(_comment_tex(block.general_paragraphs))
-            lines.append("")
+            lines.extend(["\\end{generalcomment}", ""])
         for comment in block.comments:
             lines.extend(
                 [
-                    f"\\subsection*{{{comment_title} {_escape_latex(comment.review_id)}}}",
-                    "",
+                    f"\\begin{{reviewcomment}}{{{_escape_latex(comment.review_id)}}}",
                     *_comment_tex(comment.paragraphs),
-                    "",
-                    f"\\textbf{{{response_title}.}}",
-                    "",
+                    "\\end{reviewcomment}",
+                    "\\begin{response}",
                     f"\\ResponsePending{{{comment.review_id}}}",
-                    "",
-                    f"\\textbf{{{location_title}:}} "
-                    f"\\ReviewLocation{{{comment.review_id}}}.",
+                    "\\end{response}",
                     "",
                 ]
             )
+            if comment.status == "manuscript_revised":
+                lines.extend(
+                    [
+                        f"\\reviewlocation{{\\ReviewLocation{{{comment.review_id}}}}}",
+                        "",
+                    ]
+                )
     return "\n".join(lines)
 
 
@@ -311,13 +321,24 @@ def build_response(
         )
     stage = run_dir / "response_source"
     stage.mkdir(parents=True)
+    if config.language == "zh":
+        stage_cjk_fonts(stage)
     text = source.read_text(encoding="utf-8")
 
     def replace_location(match: re.Match[str]) -> str:
         review_id = match.group(1)
         if not is_review_id(review_id):
             raise WorkflowError(f"Invalid response location ID: {review_id}")
-        return locations.get(review_id, "Location unavailable")
+        location = locations.get(review_id, "Location unavailable")
+        if config.language != "zh":
+            return location
+        if location == "Location unavailable":
+            return "位置不可用"
+        if location.startswith("Lines "):
+            return "第 " + location.removeprefix("Lines ") + " 行"
+        if location.startswith("Line "):
+            return "第 " + location.removeprefix("Line ") + " 行"
+        return location
 
     staged_source = stage / "response_letter.tex"
     staged_source.write_text(LOCATION_USE.sub(replace_location, text), encoding="utf-8")

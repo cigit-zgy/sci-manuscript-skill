@@ -1,23 +1,84 @@
 \documentclass[11pt]{article}
-\usepackage[a4paper,margin=25mm]{geometry}
-\usepackage{xcolor}
-\usepackage{parskip}
-\newcommand{\ReviewerComment}[1]{\textit{#1}\par}
-\newcommand{\ReviewLocation}[1]{[Location pending: #1]}
-\newcommand{\ResponsePending}[1]{\textcolor{red}{[Response pending: #1]}}
-\input{%%AUTHOR_METADATA_PATH%%}
-\begin{document}
-Dear Reviewer,
 
-We thank the editor and reviewers for their comments. Numbered comments are
-reproduced below for point-by-point response. Locations refer to continuous
-line numbers in the marked manuscript.
+% Self-contained, publisher-neutral English response letter.
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[most]{tcolorbox}
+\usepackage[hidelinks,hypertexnames=false]{hyperref}
+\input{%%AUTHOR_METADATA_PATH%%}
+
+\definecolor{ink}{HTML}{20262E}
+\definecolor{navy}{HTML}{17365D}
+\definecolor{green}{HTML}{287A55}
+\definecolor{graytext}{HTML}{5C6670}
+\definecolor{quotegray}{HTML}{F2F4F6}
+
+\color{ink}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.72\baselineskip}
+\pagestyle{plain}
+
+\newcommand{\ResponseSection}[1]{\clearpage\section*{Response to #1}}
+\newenvironment{generalcomment}[1][General comment]
+  {\begin{tcolorbox}[
+    enhanced,breakable,frame hidden,colback=quotegray,
+    borderline west={3pt}{0pt}{graytext},
+    sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
+    before skip=10pt,after skip=12pt]
+   {\color{navy}\bfseries #1}\par\smallskip\normalfont}
+  {\end{tcolorbox}}
+\newenvironment{reviewcomment}[1]
+  {\begin{tcolorbox}[
+    enhanced,breakable,frame hidden,colback=quotegray,
+    borderline west={3pt}{0pt}{navy},
+    sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
+    before skip=10pt,after skip=12pt]
+   {\color{navy}\bfseries Comment #1}\par\smallskip\normalfont}
+  {\end{tcolorbox}}
+\newenvironment{response}
+  {\par\noindent{\color{green}\bfseries Response}\par\smallskip}
+  {\par\medskip}
+\newcommand{\reviewlocation}[1]{%
+  \par\noindent{\color{graytext}\bfseries Location: #1}\par
+  \addvspace{1.2\baselineskip}}
+\newcommand{\ResponsePending}[1]{\textcolor{red}{[Response pending: #1]}}
+\newcommand{\ReviewLocation}[1]{#1}
+\newcommand{\ReviewerComment}[1]{#1\par\medskip}
+\newcommand{\ManuscriptIDLine}{%
+  \if\relax\detokenize\expandafter{\ManuscriptID}\relax
+  \else Manuscript ID: \ManuscriptID\fi}
+
+\begin{document}
+
+{\color{navy}\rule{\textwidth}{1.5pt}}\par
+\vspace{0.15in}
+{\sffamily\bfseries\LARGE Response to the Editor}\par
+\vspace{0.08in}
+{\color{graytext}\ManuscriptTitle}\par
+{\small\color{graytext}\JournalName\quad\ManuscriptIDLine}
+\vspace{0.28in}
+
+Dear Editor,
+
+Thank you for the opportunity to revise our manuscript, ``\ManuscriptTitle,''
+for consideration in \textit{\JournalName}. We appreciate the editor's and
+reviewers' careful assessment and constructive suggestions. We have addressed
+every comment and believe that the revisions have improved the clarity and
+strength of the manuscript.
+
+In the point-by-point response below, each original comment is followed by our
+response. Where the manuscript was revised, the location is resolved from the
+continuous line numbers in the marked manuscript.
+
+Sincerely,\par
+\vspace{0.25in}
+\CorrespondenceAuthorName\par
+on behalf of all authors\par
+\href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
 
 %%BODY%%
-
-Sincerely,
-
-\CorrespondingAuthorName, on behalf of all authors\\
-\CorrespondingAuthorEmail
 
 \end{document}

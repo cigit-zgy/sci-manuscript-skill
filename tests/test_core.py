@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from sci_manuscript.api import LifecycleResult
 from sci_manuscript.compile import CjkProbeResult
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
+    MetadataError,
     SubmissionSettings,
     load_author_library,
     load_meta,
@@ -22,6 +24,7 @@ from sci_manuscript.response import parse_reviews, validate_review_id_list
 from sci_manuscript.workspace import (
     ProjectConfig,
     WorkflowError,
+    ensure_submission_workspace,
     finalize_revision_creation,
     initialize_project,
     reindex_revisions,
@@ -129,8 +132,8 @@ def test_author_library_is_role_free_and_allows_overlap(tmp_path: Path) -> None:
     example = resources_root() / "authors.yaml"
     text = example.read_text(encoding="utf-8")
     assert "role:" not in text
-    assert "First Author" not in text
-    assert "Corresponding Author" not in text
+    assert "zhao_guangyao:" in text
+    assert "song_cheng:" in text
     path = _anonymous_author_library(tmp_path)
     library = load_author_library(path)
     selection = resolve_authors(_metadata(), library)
@@ -268,6 +271,63 @@ def test_review_parser_ids_status_and_paragraphs(tmp_path: Path) -> None:
     assert validate_review_id_list("1-1,2-3") == ("1-1", "2-3")
     with pytest.raises(WorkflowError):
         validate_review_id_list("E-0")
+
+
+def test_response_source_uses_authoritative_ids_and_preserves_user_edits(
+    tmp_path: Path,
+) -> None:
+    reviews = tmp_path / "reviews.md"
+    reviews.write_text(
+        "# Editor\n\n## E-1 | response_only\n\nClarify scope.\n\n"
+        "# Reviewer #1\n\n## 1-1 | manuscript_revised\n\nRevise text.\n",
+        encoding="utf-8",
+    )
+    config = _revision(_workspace(tmp_path), reviews)
+    source = config.round_dir(1) / "response" / "response_letter.tex"
+    text = source.read_text(encoding="utf-8")
+    assert "\\begin{reviewcomment}{E-1}" in text
+    assert "\\begin{reviewcomment}{1-1}" in text
+    assert "\\ReviewLocation{E-1}" not in text
+    assert "\\ReviewLocation{1-1}" in text
+    assert "newcounter" not in text
+    source.write_text(text + "\n% user-owned edit\n", encoding="utf-8")
+    from sci_manuscript.response import init_response
+
+    with pytest.raises(WorkflowError, match="already exists"):
+        init_response(config, 1)
+    assert source.read_text(encoding="utf-8").endswith("% user-owned edit\n")
+
+
+def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cover project" / "manuscript"
+    config = initialize_project(
+        ProjectConfig(
+            root,
+            replace(
+                _metadata(),
+                corresponding_authors=("first_author",),
+            ),
+        ),
+        _anonymous_author_library(tmp_path),
+    )
+    source = ensure_submission_workspace(config, 0) / "cover_letter.tex"
+    original = source.read_text(encoding="utf-8")
+    assert "\\guidance{" in original
+    source.write_text(original + "\n% user-owned cover edit\n", encoding="utf-8")
+    ensure_submission_workspace(config, 0)
+    assert source.read_text(encoding="utf-8").endswith("% user-owned cover edit\n")
+    with pytest.raises(WorkflowError, match="guidance"):
+        ManuscriptProject(root).prepare_submission()
+
+
+def test_submission_requires_signer_for_multiple_corresponding_authors(
+    tmp_path: Path,
+) -> None:
+    config = _workspace(tmp_path)
+    with pytest.raises(MetadataError, match="signing_author"):
+        ManuscriptProject(config.project).prepare_submission()
 
 
 def test_multi_id_review_location_registry(tmp_path: Path) -> None:

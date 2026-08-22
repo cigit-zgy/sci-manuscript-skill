@@ -6,6 +6,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, replace
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,16 @@ class SubmissionSettings:
 
 
 @dataclass(frozen=True)
+class CorrespondenceSettings:
+    """Optional journal correspondence metadata for one manuscript round."""
+
+    manuscript_id: str = ""
+    editor_name: str = ""
+    editor_title: str = ""
+    signing_author: str = ""
+
+
+@dataclass(frozen=True)
 class ManuscriptMetadata:
     """The complete editable configuration for one manuscript version."""
 
@@ -82,6 +93,7 @@ class ManuscriptMetadata:
     corresponding_authors: tuple[str, ...]
     other_authors: tuple[str, ...]
     submission: SubmissionSettings = SubmissionSettings()
+    correspondence: CorrespondenceSettings = CorrespondenceSettings()
 
     @property
     def author_ids(self) -> tuple[str, ...]:
@@ -167,7 +179,7 @@ def configured_author_library_path() -> Path:
 
 
 def resolve_author_library_path(explicit: str | Path | None = None) -> Path:
-    """Resolve explicit then user-level author data, never package examples."""
+    """Resolve explicit, user-level, then bundled public author data."""
     if explicit is not None:
         selected = Path(explicit).expanduser().resolve()
         if not selected.is_file():
@@ -176,10 +188,10 @@ def resolve_author_library_path(explicit: str | Path | None = None) -> Path:
     configured = configured_author_library_path()
     if configured.is_file():
         return configured
-    raise MetadataError(
-        "No author library is configured. Run "
-        "'sci-manuscript authors configure PATH' or pass --authors PATH."
-    )
+    bundled = Path(str(files("sci_manuscript.resources") / "authors.yaml"))
+    if not bundled.is_file():
+        raise MetadataError("Bundled author library is missing from the installation.")
+    return bundled
 
 
 def configure_author_library(source: str | Path) -> Path:
@@ -273,7 +285,14 @@ def revision_directory_name(round_number: int) -> str:
 def load_meta(path: Path) -> ManuscriptMetadata:
     """Load and validate one version's ``meta.yaml``."""
     data = _read_yaml(path)
-    expected = {"revision", "manuscript", "journal", "authors", "submission"}
+    expected = {
+        "revision",
+        "manuscript",
+        "journal",
+        "authors",
+        "submission",
+        "correspondence",
+    }
     unexpected = set(data) - expected
     if unexpected:
         raise MetadataError(
@@ -316,6 +335,56 @@ def load_meta(path: Path) -> ManuscriptMetadata:
                 "submission.graphical_abstract",
             ),
         )
+    raw_correspondence = data.get("correspondence")
+    if raw_correspondence is None:
+        correspondence = CorrespondenceSettings()
+    else:
+        settings = _mapping(raw_correspondence, "correspondence")
+        unexpected_correspondence = set(settings) - {
+            "manuscript_id",
+            "editor_name",
+            "editor_title",
+            "signing_author",
+        }
+        if unexpected_correspondence:
+            raise MetadataError(
+                "Unsupported correspondence keys: "
+                + ", ".join(sorted(unexpected_correspondence))
+            )
+        correspondence = CorrespondenceSettings(
+            manuscript_id=_text(
+                settings.get("manuscript_id"),
+                "correspondence.manuscript_id",
+                optional=True,
+            ),
+            editor_name=_text(
+                settings.get("editor_name"),
+                "correspondence.editor_name",
+                optional=True,
+            ),
+            editor_title=_text(
+                settings.get("editor_title"),
+                "correspondence.editor_title",
+                optional=True,
+            ),
+            signing_author=_text(
+                settings.get("signing_author"),
+                "correspondence.signing_author",
+                optional=True,
+            ),
+        )
+        if (
+            correspondence.signing_author
+            and correspondence.signing_author
+            not in _author_group(
+                authors.get("corresponding_author"),
+                "authors.corresponding_author",
+                required=True,
+            )
+        ):
+            raise MetadataError(
+                "correspondence.signing_author must be a corresponding author."
+            )
     return ManuscriptMetadata(
         title=_text(manuscript.get("title"), "manuscript.title"),
         article_type=_text(manuscript.get("article_type"), "manuscript.article_type"),
@@ -338,6 +407,7 @@ def load_meta(path: Path) -> ManuscriptMetadata:
             required=False,
         ),
         submission=submission,
+        correspondence=correspondence,
     )
 
 
@@ -371,6 +441,12 @@ def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
             "cover_letter": metadata.submission.cover_letter,
             "highlights": metadata.submission.highlights,
             "graphical_abstract": metadata.submission.graphical_abstract,
+        },
+        "correspondence": {
+            "manuscript_id": metadata.correspondence.manuscript_id or None,
+            "editor_name": metadata.correspondence.editor_name or None,
+            "editor_title": metadata.correspondence.editor_title or None,
+            "signing_author": metadata.correspondence.signing_author or None,
         },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -515,6 +591,30 @@ def resolve_authors(
     )
 
 
+def resolve_signing_author(
+    metadata: ManuscriptMetadata,
+    selection: AuthorSelection,
+    *,
+    require_explicit_multiple: bool = False,
+) -> AuthorRecord | None:
+    """Resolve the correspondence signer without assigning an author-library role."""
+    requested = metadata.correspondence.signing_author
+    if requested:
+        for author in selection.corresponding_authors:
+            if author.author_id == requested:
+                return author
+        raise MetadataError(
+            "correspondence.signing_author must be a corresponding author."
+        )
+    if len(selection.corresponding_authors) == 1:
+        return selection.corresponding_authors[0]
+    if require_explicit_multiple:
+        raise MetadataError(
+            "Multiple corresponding authors require correspondence.signing_author."
+        )
+    return None
+
+
 def _latex_escape(value: str) -> str:
     replacements = {
         "\\": r"\textbackslash{}",
@@ -577,6 +677,28 @@ def render_author_metadata(
         + _latex_escape(_affiliation_text(item, "en"))
         for item in selection.affiliations
     ]
+    signer = resolve_signing_author(metadata, selection)
+    signer_affiliations = (
+        tuple(
+            affiliation
+            for affiliation in selection.affiliations
+            if signer is not None and affiliation.affiliation_id in signer.affiliations
+        )
+        if signer is not None
+        else ()
+    )
+    signer_affiliation_en = "; ".join(
+        _latex_escape(item.name_en) for item in signer_affiliations
+    )
+    signer_affiliation_zh = "; ".join(
+        _latex_escape(item.name_zh or item.name_en) for item in signer_affiliations
+    )
+    signer_addresses = "; ".join(
+        dict.fromkeys(
+            _latex_escape(item.address) for item in signer_affiliations if item.address
+        )
+    )
+    correspondence = metadata.correspondence
     return "\n".join(
         [
             "% Generated from meta.yaml and authors.yaml. Do not edit.",
@@ -589,6 +711,21 @@ def render_author_metadata(
             f"\\newcommand{{\\CorrespondingAuthorName}}{{{corresponding_names}}}",
             f"\\newcommand{{\\CorrespondingAuthorNameZh}}{{{corresponding_names_zh}}}",
             f"\\newcommand{{\\CorrespondingAuthorEmail}}{{{emails}}}",
+            "\\newcommand{\\CorrespondenceAuthorName}{"
+            + (_latex_escape(signer.name_en) if signer is not None else "")
+            + "}",
+            "\\newcommand{\\CorrespondenceAuthorNameZh}{"
+            + (_latex_escape(signer.name_zh) if signer is not None else "")
+            + "}",
+            "\\newcommand{\\CorrespondenceAuthorEmail}{"
+            + (_latex_escape(signer.email) if signer is not None else "")
+            + "}",
+            f"\\newcommand{{\\CorrespondenceAuthorAffiliation}}{{{signer_affiliation_en}}}",
+            f"\\newcommand{{\\CorrespondenceAuthorAffiliationZh}}{{{signer_affiliation_zh}}}",
+            f"\\newcommand{{\\CorrespondenceAuthorAddress}}{{{signer_addresses}}}",
+            f"\\newcommand{{\\ManuscriptID}}{{{_latex_escape(correspondence.manuscript_id)}}}",
+            f"\\newcommand{{\\EditorName}}{{{_latex_escape(correspondence.editor_name)}}}",
+            f"\\newcommand{{\\EditorTitle}}{{{_latex_escape(correspondence.editor_title)}}}",
             "\\newcommand{\\AuthorAffiliations}{%",
             r"\\".join(affiliation_lines),
             "}",

@@ -1,14 +1,43 @@
-# Schema example only. Configure a reusable library with:
-# sci-manuscript authors configure /path/to/authors.yaml
 affiliations:
-  example_affiliation:
-    name_en: Example Research Institute
-    name_zh: 示例研究机构
-    address: Example City
+  1:
+    name_en: Chongqing Institute of Green and Intelligent Technology, Chinese Academy of Sciences
+    address: Chongqing 400714, China
+  2:
+    name_en: Three Gorges Laboratory
+    address: Chongqing 400714, China
 
 authors:
-  example_author:
-    name_en: Example Author
-    name_zh: 示例作者
+  zhao_guangyao:
+    name_en: Guangyao Zhao
+    name_zh: 赵光耀
+    email: zhaoguangyao@cigit.ac.cn
     affiliations:
-      - example_affiliation
+      - 1
+      - 2
+  yin_fengjun:
+    name_en: Fengjun Yin
+    name_zh: 殷逢俊
+    email: yinfengjun@cigit.ac.cn
+    affiliations:
+      - 1
+      - 2
+  wu_di:
+    name_en: Di Wu
+    name_zh: 吴镝
+    email: wd@cigit.ac.cn
+    affiliations:
+      - 1
+      - 2
+  song_cheng:
+    name_en: Cheng Song
+    name_zh: 宋诚
+    affiliations:
+      - 1
+      - 2
+  liu_hong:
+    name_en: Hong Liu
+    name_zh: 刘鸿
+    email: liuhong@cigit.ac.cn
+    affiliations:
+      - 1
+      - 2

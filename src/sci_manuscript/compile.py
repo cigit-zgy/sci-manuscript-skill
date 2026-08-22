@@ -36,6 +36,35 @@ class CjkProbeResult:
     detail: str
 
 
+def _cjk_font_directories() -> tuple[Path, ...]:
+    configured = os.environ.get("SCI_MANUSCRIPT_CJK_FONT_DIR")
+    candidates = [
+        Path.home() / "Library" / "Fonts",
+        Path("/Library/Fonts"),
+        Path("/usr/share/fonts/opentype/fandol"),
+    ]
+    if configured:
+        candidates.insert(0, Path(configured).expanduser())
+    return tuple(dict.fromkeys(path.resolve() for path in candidates))
+
+
+def stage_cjk_fonts(target: Path) -> tuple[Path, ...]:
+    """Stage installed Fandol fonts beside one CJK source without bundling fonts."""
+    target.mkdir(parents=True, exist_ok=True)
+    for directory in _cjk_font_directories():
+        regular = directory / "FandolSong-Regular.otf"
+        if not regular.is_file():
+            continue
+        staged: list[Path] = []
+        for source in sorted(directory.glob("Fandol*.otf")):
+            destination = target / source.name
+            if not destination.exists():
+                shutil.copy2(source, destination)
+            staged.append(destination)
+        return tuple(staged)
+    return ()
+
+
 def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
     """Compile and extract a minimal Chinese document with the selected engine."""
     selected = engine
@@ -59,21 +88,12 @@ def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
         source = root / "cjk_probe.tex"
         output = root / "output"
         output.mkdir()
-        font_setup = ""
-        configured_font_dir = os.environ.get("SCI_MANUSCRIPT_CJK_FONT_DIR")
-        font_candidates = [
-            Path.home() / "Library" / "Fonts",
-            Path("/Library/Fonts"),
-            Path("/usr/share/fonts/opentype/fandol"),
-        ]
-        if configured_font_dir:
-            font_candidates.insert(0, Path(configured_font_dir).expanduser())
-        for directory in font_candidates:
-            font = directory / "FandolSong-Regular.otf"
-            if font.is_file():
-                shutil.copy2(font, root / font.name)
-                font_setup = "\\setCJKmainfont[Path=./]{FandolSong-Regular.otf}\n"
-                break
+        staged_fonts = stage_cjk_fonts(root)
+        font_setup = (
+            "\\setCJKmainfont[Path=./]{FandolSong-Regular.otf}\n"
+            if staged_fonts
+            else ""
+        )
         source_text = (
             "\\documentclass{article}\n"
             "\\usepackage{xeCJK}\n"
@@ -263,6 +283,8 @@ def stage_runtime_resources(
     """Stage package resources and current metadata without mutating user source."""
     version = config.round_dir(round_number)
     target.mkdir(parents=True, exist_ok=True)
+    if config.language == "zh" or config.metadata.publisher == "chinese":
+        stage_cjk_fonts(target)
     if include_manuscript:
         shutil.copy2(version / "manuscript.tex", target / "manuscript.tex")
         for directory in ("sections", "figures", "tables"):

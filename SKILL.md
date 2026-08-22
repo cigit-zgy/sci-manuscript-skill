@@ -57,6 +57,15 @@ publisher resource only to diagnose that exact publisher build.
 - Successful operations remove lazy `tmp/`; failed runs may retain diagnostics.
 - Editable responses and submission sources are created once and not replaced
   by later builds.
+- Author-library priority is explicit `--authors`, configured user library,
+  then the bundled role-free public library. Initialization always requires
+  explicit manuscript roles and never auto-selects bundled authors.
+- Correspondence uses the selected corresponding authors. A sole corresponding
+  author signs automatically; multiple corresponding authors require an
+  explicit `correspondence.signing_author` before submission.
+- Cover-letter `\guidance{...}` blocks and unresolved template tokens block
+  submission. `response_only` comments omit locations; `manuscript_revised`
+  comments use marked-manuscript locations.
 
 ## Entrypoints
 

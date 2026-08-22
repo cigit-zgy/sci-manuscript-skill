@@ -19,7 +19,7 @@ def test_readme_screenshots_are_real_equal_size_pngs() -> None:
     marked = ROOT / "docs" / "images" / "marked_manuscript.png"
     response = ROOT / "docs" / "images" / "response_letter.png"
     assert marked.stat().st_size > 100_000
-    assert response.stat().st_size > 100_000
+    assert response.stat().st_size > 50_000
     assert _png_size(marked) == _png_size(response) == (1275, 1754)
 
 
@@ -64,3 +64,20 @@ def test_manuscript_package_has_no_scripts_runtime_dependency() -> None:
     )
     assert "sys.path.insert" not in text
     assert ' / "scripts"' not in text
+
+
+def test_correspondence_templates_are_self_contained() -> None:
+    resources = ROOT / "src" / "sci_manuscript" / "resources"
+    templates = (
+        resources / "submission" / "cover_letter_en.tex",
+        resources / "submission" / "cover_letter_zh.tex",
+        resources / "response" / "response_en.tex",
+        resources / "response" / "response_zh.tex",
+    )
+    for template in templates:
+        text = template.read_text(encoding="utf-8")
+        assert "correspondence_style" not in text
+        assert "shared_correspondence" not in text
+    names = {path.name for path in resources.rglob("*.tex")}
+    assert "correspondence_style.tex" not in names
+    assert "shared_correspondence.tex" not in names

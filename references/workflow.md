@@ -31,8 +31,8 @@ existing author YAML or BibTeX file. Do not infer missing scientific or identity
 data.
 
 The author-library priority is strict: explicit `init --authors PATH`, then the
-configured user library, then no usable author data. The package
-`resources/authors.yaml` is schema-only example data and is never selected.
+configured user library, then the bundled role-free public team library in
+`resources/authors.yaml`.
 Configure a reusable library once with:
 
 ```bash
@@ -63,11 +63,13 @@ sci-manuscript init \
   --bib /absolute/path/to/references.bib
 ```
 
-Omitting `--authors` uses only a configured user library; if none exists,
-interactive and non-interactive initialization both fail with a configure
-instruction. Omitting `--bib` uses the package bibliography placeholder and must
-be reported as requiring replacement. Initialization creates and builds only
-`initial_submission`; it must not create a revision or a submission package.
+Omitting `--authors` uses a configured user library or the bundled fallback.
+Neither source assigns manuscript roles: interactive initialization asks for
+them, and non-interactive initialization still requires explicit
+`--first-author` and `--corresponding-author`. Omitting `--bib` uses the package
+bibliography placeholder and must be reported as requiring replacement.
+Initialization creates and builds only `initial_submission`; it must not create
+a revision or a submission package.
 
 ## Initial submission
 

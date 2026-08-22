@@ -61,10 +61,12 @@ sci-manuscript init --project /path/to/existing-project
 
 `init --authors PATH` overrides the configured user library for that run. On
 macOS the configured copy is stored under
-`~/Library/Application Support/sci-manuscript/authors.yaml`. The package copy is
-schema-only example data and is never selected as an author. A validated copy
-of the chosen library is placed in `manuscript/references/authors.yaml`, while
-first, corresponding, and other roles remain round-local in `meta.yaml`.
+`~/Library/Application Support/sci-manuscript/authors.yaml`. If neither source
+exists, the package's public, role-free five-person team library is used. The
+priority is explicit path, configured user library, then bundled library. A
+validated copy is placed in `manuscript/references/authors.yaml`; init still
+requires explicit first, corresponding, and other role selection and never
+selects every bundled author automatically.
 
 ## Quick start
 
@@ -237,10 +239,23 @@ authors:
   first_author: [author_one]
   corresponding_author: [author_one]
   other_author: []
+correspondence:
+  manuscript_id: null
+  editor_name: null
+  editor_title: null
+  signing_author: null
 ```
 
 Python resolves both files and generates publisher metadata only in the isolated
-build stage. User TeX and YAML remain authoritative.
+build stage. A sole corresponding author signs correspondence automatically.
+With multiple corresponding authors, `correspondence.signing_author` must name
+one of them before submission. User TeX and YAML remain authoritative.
+
+Cover and response sources are created once and are never overwritten by later
+builds. The editable cover template intentionally includes gray
+`\guidance{...}` prompts; every prompt and unresolved `%%TOKEN%%` must be replaced
+or removed before submission packaging. English and Chinese correspondence
+templates are self-contained; Chinese correspondence uses XeLaTeX and xeCJK.
 
 ## Revision and response
 
@@ -274,7 +289,10 @@ Please revise the sentence.
 
 `manuscript_revised` requires its ID in at least one `\review`. Pending response
 macros block submission unless the diagnostic-only `--allow-placeholders` is
-explicitly supplied.
+explicitly supplied. The response source displays only IDs supplied by
+`reviewer_comments.md`: it has no independent LaTeX numbering counter.
+`manuscript_revised` entries receive real marked-manuscript line locations;
+`response_only` entries omit location output.
 
 `revision_creation.yaml` hashes protected user sources. Rollback is allowed only
 while that digest is unchanged. Reindex first copies all affected revisions to
