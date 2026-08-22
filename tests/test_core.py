@@ -10,6 +10,7 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
+from sci_manuscript.compile import CjkProbeResult
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     SubmissionSettings,
@@ -47,11 +48,43 @@ def _metadata(publisher: str = "elsevier", language: str = "en") -> ManuscriptMe
     )
 
 
+def _anonymous_author_library(tmp_path: Path) -> Path:
+    path = tmp_path / "anonymous_authors.yaml"
+    if not path.exists():
+        path.write_text(
+            """affiliations:
+  institute:
+    name_en: Anonymous Research Institute
+    address: Example City
+authors:
+  first_author:
+    name_en: First Author
+    name_zh: 第一作者
+    email: first@example.invalid
+    affiliations: [institute]
+  corresponding_author:
+    name_en: Corresponding Author
+    name_zh: 通讯作者
+    email: corresponding@example.invalid
+    affiliations: [institute]
+  other_author:
+    name_en: Other Author
+    name_zh: 其他作者
+    affiliations: [institute]
+""",
+            encoding="utf-8",
+        )
+    return path
+
+
 def _workspace(tmp_path: Path, publisher: str = "elsevier") -> ProjectConfig:
     root = tmp_path / "existing project" / "manuscript"
     root.parent.mkdir(parents=True)
     (root.parent / "unrelated.txt").write_text("preserve", encoding="utf-8")
-    return initialize_project(ProjectConfig(root, _metadata(publisher)))
+    return initialize_project(
+        ProjectConfig(root, _metadata(publisher)),
+        _anonymous_author_library(tmp_path),
+    )
 
 
 def _revision(config: ProjectConfig, reviews: Path | None = None) -> ProjectConfig:
@@ -89,17 +122,58 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert "Document class" in (initial / "manuscript.tex").read_text()
     assert load_meta(initial / "meta.yaml").first_authors == ("first_author",)
     with pytest.raises(WorkflowError, match="overwrite"):
-        initialize_project(config)
+        initialize_project(config, _anonymous_author_library(tmp_path))
 
 
-def test_author_library_is_role_free_and_allows_overlap() -> None:
-    path = resources_root() / "authors.yaml"
-    text = path.read_text(encoding="utf-8")
+def test_author_library_is_role_free_and_allows_overlap(tmp_path: Path) -> None:
+    example = resources_root() / "authors.yaml"
+    text = example.read_text(encoding="utf-8")
     assert "role:" not in text
+    assert "First Author" not in text
+    assert "Corresponding Author" not in text
+    path = _anonymous_author_library(tmp_path)
     library = load_author_library(path)
     selection = resolve_authors(_metadata(), library)
     assert selection.first_authors[0] in selection.corresponding_authors
     assert selection.authors[0].author_id == "first_author"
+
+
+def test_chinese_build_refuses_a_failed_real_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _workspace(tmp_path, publisher="chinese")
+    monkeypatch.setattr(
+        "sci_manuscript.compile.probe_cjk_environment",
+        lambda _engine: CjkProbeResult(False, "anonymous CJK probe failure"),
+    )
+    with pytest.raises(WorkflowError, match="Chinese environment is blocked"):
+        ManuscriptProject(config.project).build(engine="tectonic")
+
+
+def test_chinese_init_preflight_runs_before_workspace_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def blocked(_config: ProjectConfig, _engine: str) -> None:
+        raise WorkflowError("Chinese environment is blocked: anonymous failure")
+
+    monkeypatch.setattr("sci_manuscript.api.ensure_cjk_environment", blocked)
+    project = tmp_path / "blocked Chinese project"
+    with pytest.raises(WorkflowError, match="Chinese environment is blocked"):
+        initialize_manuscript(
+            project,
+            title="Blocked Test",
+            journal="Example Journal",
+            publisher="chinese",
+            language="zh",
+            article_type="Research Article",
+            first_authors=("first_author",),
+            corresponding_authors=("corresponding_author",),
+            authors_path=_anonymous_author_library(tmp_path),
+            engine="tectonic",
+        )
+    assert not (project / "manuscript").exists()
 
 
 def test_revision_contract_and_parent_integrity(tmp_path: Path) -> None:
@@ -133,30 +207,44 @@ def test_rollback_success_and_refusal(tmp_path: Path) -> None:
 def test_reindex_success_preserves_scientific_bytes(tmp_path: Path) -> None:
     r01 = _revision(_workspace(tmp_path))
     r02 = _revision(r01)
-    old = r02.round_dir(2)
-    digest = source_digest(old, scientific_only=True)
-    shutil.rmtree(r02.round_dir(1))
-    with temporary_run(r02.project) as run_dir:
-        mapping = reindex_revisions(r02.project, run_dir)
-    assert mapping == (("revision_02", "revision_01"),)
-    assert source_digest(r02.round_dir(1), scientific_only=True) == digest
-    assert load_meta(r02.round_dir(1) / "meta.yaml").round_number == 1
-    assert any((r02.project / "00_archive").iterdir())
+    r03 = _revision(r02)
+    before = {
+        2: source_digest(r03.round_dir(2), scientific_only=True),
+        3: source_digest(r03.round_dir(3), scientific_only=True),
+    }
+    shutil.rmtree(r03.round_dir(1))
+    with temporary_run(r03.project) as run_dir:
+        mapping = reindex_revisions(r03.project, run_dir)
+    assert mapping == (
+        ("revision_02", "revision_01"),
+        ("revision_03", "revision_02"),
+    )
+    assert source_digest(r03.round_dir(1), scientific_only=True) == before[2]
+    assert source_digest(r03.round_dir(2), scientific_only=True) == before[3]
+    assert load_meta(r03.round_dir(1) / "meta.yaml").round_number == 1
+    assert load_meta(r03.round_dir(2) / "meta.yaml").round_number == 2
+    assert any((r03.project / "00_archive").iterdir())
 
 
 def test_reindex_injected_failure_restores_original(tmp_path: Path) -> None:
-    r02 = _revision(_revision(_workspace(tmp_path)))
-    shutil.rmtree(r02.round_dir(1))
-    before = hashlib.sha256((r02.round_dir(2) / "meta.yaml").read_bytes()).hexdigest()
+    r03 = _revision(_revision(_revision(_workspace(tmp_path))))
+    shutil.rmtree(r03.round_dir(1))
+    before = {
+        number: hashlib.sha256(
+            (r03.round_dir(number) / "meta.yaml").read_bytes()
+        ).hexdigest()
+        for number in (2, 3)
+    }
     with pytest.raises(WorkflowError, match="Injected"):
-        with temporary_run(r02.project) as run_dir:
-            reindex_revisions(r02.project, run_dir, fail_after_swap=True)
-    assert r02.round_dir(2).is_dir()
-    assert not r02.round_dir(1).exists()
-    assert (
-        hashlib.sha256((r02.round_dir(2) / "meta.yaml").read_bytes()).hexdigest()
-        == before
-    )
+        with temporary_run(r03.project) as run_dir:
+            reindex_revisions(r03.project, run_dir, fail_after_swap=True)
+    assert not r03.round_dir(1).exists()
+    for number in (2, 3):
+        assert r03.round_dir(number).is_dir()
+        observed = hashlib.sha256(
+            (r03.round_dir(number) / "meta.yaml").read_bytes()
+        ).hexdigest()
+        assert observed == before[number]
 
 
 def test_review_parser_ids_status_and_paragraphs(tmp_path: Path) -> None:
@@ -202,6 +290,7 @@ def test_multi_id_review_location_registry(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.integration
 def test_init_api_returns_structured_result(tmp_path: Path) -> None:
     result = initialize_manuscript(
         tmp_path / "API Project 中文",
@@ -212,6 +301,7 @@ def test_init_api_returns_structured_result(tmp_path: Path) -> None:
         article_type="Research Article",
         first_authors=("first_author",),
         corresponding_authors=("corresponding_author",),
+        authors_path=_anonymous_author_library(tmp_path),
         engine="tectonic",
     )
     assert isinstance(result, LifecycleResult)

@@ -24,9 +24,30 @@ rejected.
 ## Initialization
 
 Run `doctor` before initialization when the environment has not already been
-verified. Collect an existing parent project path, title, journal, publisher,
-language, article type, author order, and any existing author YAML or BibTeX
-file. Do not infer missing scientific or identity data.
+verified. For Chinese targets, run `sci-manuscript doctor --language zh` so the
+real CJK compile-and-glyph probe is included. Collect an existing parent project
+path, title, journal, publisher, language, article type, author order, and any
+existing author YAML or BibTeX file. Do not infer missing scientific or identity
+data.
+
+The author-library priority is strict: explicit `init --authors PATH`, then the
+configured user library, then no usable author data. The package
+`resources/authors.yaml` is schema-only example data and is never selected.
+Configure a reusable library once with:
+
+```bash
+sci-manuscript authors configure /absolute/path/to/authors.yaml
+sci-manuscript authors list
+sci-manuscript authors show author_id
+```
+
+The configured location follows the operating-system user configuration
+directory (macOS:
+`~/Library/Application Support/sci-manuscript/authors.yaml`). In an interactive
+terminal, `init` lists every configured ID with English and Chinese names and
+asks separately for first, corresponding, and other IDs. Multiple IDs and
+first/corresponding overlap are valid. These roles are written only to the
+paper's `meta.yaml`; the global profile library stays role-free.
 
 ```bash
 sci-manuscript init \
@@ -42,10 +63,11 @@ sci-manuscript init \
   --bib /absolute/path/to/references.bib
 ```
 
-When the user accepts bundled placeholders, omit `--authors` or `--bib` and
-identify the copied files that must be replaced. Initialization creates and
-builds only `initial_submission`; it must not create a revision or a submission
-package.
+Omitting `--authors` uses only a configured user library; if none exists,
+interactive and non-interactive initialization both fail with a configure
+instruction. Omitting `--bib` uses the package bibliography placeholder and must
+be reported as requiring replacement. Initialization creates and builds only
+`initial_submission`; it must not create a revision or a submission package.
 
 ## Initial submission
 

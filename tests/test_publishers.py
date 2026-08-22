@@ -10,6 +10,10 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
+import pytest
+
+pytestmark = pytest.mark.integration
+
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISHER_ASSETS = ROOT / "src" / "sci_manuscript" / "resources" / "journal_templates"
 PNG_1X1 = base64.b64decode(

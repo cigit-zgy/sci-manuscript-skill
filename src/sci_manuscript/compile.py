@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +25,107 @@ class CompileResult:
 
     pdf: Path
     output: str
+
+
+@dataclass(frozen=True)
+class CjkProbeResult:
+    """Result of a real minimal CJK compilation and glyph extraction probe."""
+
+    ready: bool
+    detail: str
+
+
+def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
+    """Compile and extract a minimal Chinese document with the selected engine."""
+    selected = engine
+    if selected == "auto":
+        selected = "tectonic" if shutil.which("tectonic") else "latex"
+    if selected == "tectonic":
+        executable = shutil.which("tectonic")
+        if executable is None:
+            return CjkProbeResult(False, "Tectonic is not available.")
+    elif selected == "latex":
+        executable = shutil.which("xelatex")
+        if executable is None:
+            return CjkProbeResult(False, "XeLaTeX is not available.")
+    else:
+        return CjkProbeResult(False, f"Unsupported engine: {selected}")
+    pdftotext = shutil.which("pdftotext")
+    if pdftotext is None:
+        return CjkProbeResult(False, "pdftotext is required for CJK glyph validation.")
+    source_text = (
+        "\\documentclass{article}\n"
+        "\\usepackage{xeCJK}\n"
+        "\\begin{document}\n"
+        "中文环境测试\n"
+        "\\end{document}\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="sci-manuscript-cjk-") as temporary:
+        root = Path(temporary)
+        source = root / "cjk_probe.tex"
+        output = root / "output"
+        output.mkdir()
+        source.write_text(source_text, encoding="utf-8")
+        if selected == "tectonic":
+            command = [
+                executable,
+                "-X",
+                "compile",
+                f"--outdir={output}",
+                str(source),
+            ]
+        else:
+            command = [
+                executable,
+                "-interaction=nonstopmode",
+                "-halt-on-error",
+                f"-output-directory={output}",
+                str(source),
+            ]
+        compiled = subprocess.run(
+            command,
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if compiled.returncode != 0:
+            diagnostics = (compiled.stdout + compiled.stderr).strip()
+            tail = "\n".join(diagnostics.splitlines()[-8:])
+            return CjkProbeResult(
+                False,
+                f"{selected} could not compile the xeCJK probe. {tail}",
+            )
+        pdf = output / "cjk_probe.pdf"
+        if not pdf.is_file():
+            return CjkProbeResult(False, "CJK probe did not produce a PDF.")
+        extracted = subprocess.run(
+            [pdftotext, str(pdf), "-"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if extracted.returncode != 0:
+            return CjkProbeResult(False, "CJK probe PDF text extraction failed.")
+        normalized = "".join(extracted.stdout.split())
+        if "中文环境测试" not in normalized:
+            return CjkProbeResult(
+                False, "CJK probe compiled but Chinese glyphs are empty."
+            )
+    return CjkProbeResult(
+        True, f"{selected} compiled xeCJK and preserved Chinese glyphs."
+    )
+
+
+def ensure_cjk_environment(config: ProjectConfig, engine: str | None = None) -> None:
+    """Block Chinese targets unless the real CJK probe succeeds."""
+    if config.language != "zh" and config.metadata.publisher != "chinese":
+        return
+    result = probe_cjk_environment(engine or config.engine)
+    if not result.ready:
+        raise WorkflowError(f"Chinese environment is blocked: {result.detail}")
 
 
 def resolve_engine(config: ProjectConfig, override: str | None = None) -> str:
@@ -103,10 +205,14 @@ def compile_tex(
             str(source),
         ]
     result = run_command(command, cwd=source.parent)
+    diagnostics = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    (build_dir / f"{source.stem}.compiler.log").write_text(
+        diagnostics,
+        encoding="utf-8",
+    )
     pdf = build_dir / f"{source.stem}.pdf"
     if not pdf.is_file():
         raise WorkflowError(f"Compiler did not produce the expected PDF: {pdf}")
-    diagnostics = "\n".join(part for part in (result.stdout, result.stderr) if part)
     return CompileResult(pdf, diagnostics)
 
 
@@ -167,6 +273,7 @@ def build_clean_manuscript(
     engine_override: str | None = None,
 ) -> Path:
     """Build and publish the clean PDF for one existing version."""
+    ensure_cjk_environment(config, engine_override)
     source_dir = run_dir / "clean_source"
     source = stage_runtime_resources(
         config, round_number, source_dir, include_manuscript=True

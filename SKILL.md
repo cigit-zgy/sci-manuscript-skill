@@ -30,7 +30,7 @@ not write reviewer-response prose on the user's behalf.
 | Request | Action |
 | --- | --- |
 | Check environment | Run `sci-manuscript doctor`; read [environment.md](references/environment.md) only for a blocker |
-| Start a paper | Collect project, journal, publisher, language, article type, author roles, and optional bibliography; run `init` |
+| Start a paper | Collect project, journal, publisher, language, article type, author roles, and optional bibliography; if no author library is configured, route to `sci-manuscript authors configure PATH`, then run `init` |
 | Build | Run `build`; do not change TeX or create a revision |
 | Start revision | Read the response/revision parts of [workflow.md](references/workflow.md); run `revision` only after explicit confirmation |
 | Prepare submission | Confirm all user responses are complete; run `submission` |
@@ -62,6 +62,8 @@ publisher resource only to diagnose that exact publisher build.
 
 ```bash
 sci-manuscript doctor
+sci-manuscript authors configure /path/to/authors.yaml
+sci-manuscript authors list
 sci-manuscript init --help
 sci-manuscript status --project /path/to/project
 sci-manuscript build --project /path/to/project

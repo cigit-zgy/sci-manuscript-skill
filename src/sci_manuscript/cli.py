@@ -16,8 +16,13 @@ from .api import (
     initialize_manuscript,
 )
 from .errors import ManuscriptError
-from .metadata import PUBLISHERS, load_author_library
-from .workspace import resources_root
+from .metadata import (
+    PUBLISHERS,
+    configure_author_library,
+    configured_author_library_path,
+    load_author_library,
+    resolve_author_library_path,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -26,7 +31,19 @@ def _parser() -> argparse.ArgumentParser:
         description="Manage a reproducible SCI LaTeX manuscript lifecycle.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("doctor", help="Inspect the local toolchain.")
+    doctor_parser = commands.add_parser("doctor", help="Inspect the local toolchain.")
+    doctor_parser.add_argument("--language", choices=("en", "zh"))
+    doctor_parser.add_argument("--publisher", choices=PUBLISHERS)
+    doctor_parser.add_argument(
+        "--engine", choices=("auto", "tectonic", "latex"), default="auto"
+    )
+    authors = commands.add_parser("authors", help="Manage the user author library.")
+    author_commands = authors.add_subparsers(dest="authors_command", required=True)
+    configure = author_commands.add_parser("configure", help="Install a library.")
+    configure.add_argument("path", type=Path)
+    author_commands.add_parser("list", help="List configured author profiles.")
+    show = author_commands.add_parser("show", help="Show one author profile.")
+    show.add_argument("author_id")
     init = commands.add_parser("init", help="Create PROJECT/manuscript.")
     init.add_argument("--project", type=Path, required=True)
     for name in ("title", "journal", "article-type"):
@@ -82,8 +99,8 @@ def _prompt(value: str | None, label: str) -> str:
 def _selected_authors(
     args: argparse.Namespace,
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    library_path = args.authors or resources_root() / "authors.yaml"
-    library = load_author_library(Path(library_path).expanduser().resolve())
+    library_path = resolve_author_library_path(args.authors)
+    library = load_author_library(library_path)
     selected = (
         tuple(args.first_author),
         tuple(args.corresponding_author),
@@ -96,8 +113,9 @@ def _selected_authors(
             "--first-author and --corresponding-author are required in non-interactive mode."
         )
     print("Available authors:")
-    for author_id, author in library.authors.items():
-        print(f"  {author_id}: {author.name_zh} / {author.name_en}")
+    for index, (author_id, author) in enumerate(library.authors.items(), 1):
+        print(f"\n{index}. {author_id}")
+        print(f"   {author.name_en} / {author.name_zh}")
 
     def choose(label: str, required: bool) -> tuple[str, ...]:
         raw = input(f"{label} author IDs (comma separated): ").strip()
@@ -161,14 +179,49 @@ def _print_doctor(result: DoctorResult) -> None:
     print(f"Result: {'READY' if result.ready else 'BLOCKED'}")
 
 
+def _print_author_library() -> None:
+    path = resolve_author_library_path()
+    library = load_author_library(path)
+    print(f"Author library: {path}")
+    for author_id, author in library.authors.items():
+        print(f"  {author_id}: {author.name_en} / {author.name_zh}")
+
+
+def _print_author(author_id: str) -> None:
+    path = resolve_author_library_path()
+    library = load_author_library(path)
+    author = library.authors.get(author_id)
+    if author is None:
+        raise ManuscriptError(f"Unknown author ID: {author_id}")
+    print(f"Author ID: {author.author_id}")
+    print(f"English name: {author.name_en}")
+    print(f"Chinese name: {author.name_zh}")
+    print(f"Email: {author.email or 'not configured'}")
+    print(f"Affiliations: {', '.join(author.affiliations)}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the console interface and return a stable process status."""
     args = _parser().parse_args(argv)
     try:
         if args.command == "doctor":
-            doctor_result = doctor()
+            doctor_result = doctor(
+                language=args.language,
+                publisher=args.publisher,
+                engine=args.engine,
+            )
             _print_doctor(doctor_result)
             return 0 if doctor_result.ready else 2
+        if args.command == "authors":
+            if args.authors_command == "configure":
+                target = configure_author_library(args.path)
+                print(f"Author library configured: {target}")
+            elif args.authors_command == "list":
+                _print_author_library()
+            elif args.authors_command == "show":
+                _print_author(args.author_id)
+            print(f"Configuration directory: {configured_author_library_path().parent}")
+            return 0
         if args.command == "init":
             first, corresponding, other = _selected_authors(args)
             lifecycle_result = initialize_manuscript(

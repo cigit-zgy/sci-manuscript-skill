@@ -8,13 +8,19 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .compile import build_clean_manuscript, compile_tex
+from .compile import (
+    build_clean_manuscript,
+    compile_tex,
+    ensure_cjk_environment,
+    probe_cjk_environment,
+)
 from .diff import MarkedResult, build_marked_manuscript
 from .metadata import (
     PUBLISHERS,
     ManuscriptMetadata,
     SubmissionSettings,
     load_author_library,
+    resolve_author_library_path,
     resolve_authors,
 )
 from .response import build_response, init_response, parse_reviews
@@ -94,7 +100,12 @@ def _tool_detail(name: str) -> tuple[bool, str]:
     return True, executable
 
 
-def doctor() -> DoctorResult:
+def doctor(
+    *,
+    language: str | None = None,
+    publisher: str | None = None,
+    engine: str = "auto",
+) -> DoctorResult:
     """Inspect required manuscript tooling without changing the environment."""
     try:
         yaml_version = importlib.metadata.version("PyYAML")
@@ -108,7 +119,7 @@ def doctor() -> DoctorResult:
     pdftoppm = _tool_detail("pdftoppm")
     latexdiff = _tool_detail("latexdiff")
     bibliography = tectonic[0] or _tool_detail("bibtex")[0] or _tool_detail("biber")[0]
-    checks = (
+    checks: tuple[DoctorCheck, ...] = (
         DoctorCheck(
             "Python >= 3.11",
             sys.version_info >= (3, 11),
@@ -138,6 +149,12 @@ def doctor() -> DoctorResult:
         DoctorCheck("Ruff", _tool_detail("ruff")[0], _tool_detail("ruff")[1], False),
         DoctorCheck("Mypy", _tool_detail("mypy")[0], _tool_detail("mypy")[1], False),
     )
+    if language == "zh" or publisher == "chinese":
+        cjk = probe_cjk_environment(engine)
+        checks = (
+            *checks,
+            DoctorCheck("CJK compilation probe", cjk.ready, cjk.detail, True),
+        )
     return DoctorResult(
         all(check.available for check in checks if check.required), checks
     )
@@ -162,10 +179,8 @@ def initialize_manuscript(
     """Initialize and compile ``path/manuscript/initial_submission``."""
     if publisher not in PUBLISHERS:
         raise WorkflowError(f"Unsupported publisher: {publisher}")
-    author_source = Path(authors_path).expanduser().resolve() if authors_path else None
-    from .workspace import resources_root
-
-    library = load_author_library(author_source or resources_root() / "authors.yaml")
+    author_source = resolve_author_library_path(authors_path)
+    library = load_author_library(author_source)
     metadata = ManuscriptMetadata(
         title=title,
         article_type=article_type,
@@ -182,6 +197,7 @@ def initialize_manuscript(
     resolve_authors(metadata, library)
     manuscript_root = normalize_project(path, initialize=True)
     config = ProjectConfig(manuscript_root, metadata, engine)
+    ensure_cjk_environment(config, engine)
     initialize_project(
         config,
         author_source,

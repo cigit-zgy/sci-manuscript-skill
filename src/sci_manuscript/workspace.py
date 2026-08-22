@@ -301,7 +301,7 @@ def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
 
 def initialize_project(
     config: ProjectConfig,
-    authors_source: Path | None = None,
+    authors_source: Path,
     bibliography_source: Path | None = None,
     custom_template: Path | None = None,
 ) -> ProjectConfig:
@@ -323,15 +323,14 @@ def initialize_project(
         initial / "submission",
     ):
         directory.mkdir(parents=True, exist_ok=True)
-    authors = authors_source or resources_root() / "authors.yaml"
     bibliography = (
         bibliography_source or resources_root() / "manuscript" / "references.bib"
     )
-    if not authors.is_file():
-        raise WorkflowError(f"Author library is missing: {authors}")
+    if not authors_source.is_file():
+        raise WorkflowError(f"Author library is missing: {authors_source}")
     if not bibliography.is_file():
         raise WorkflowError(f"Bibliography is missing: {bibliography}")
-    shutil.copy2(authors, config.references / "authors.yaml")
+    shutil.copy2(authors_source, config.references / "authors.yaml")
     shutil.copy2(bibliography, config.references / "references.bib")
     shutil.copy2(
         resources_root() / "revision_style.tex",

@@ -35,12 +35,18 @@ Then run the installed command:
 
 ```bash
 sci-manuscript doctor
+sci-manuscript doctor --language zh
 ```
 
 `doctor` reports `READY` and exits 0 only when every required category is
 available. It reports `BLOCKED` and exits 2 when at least one is missing. The
 diagnostic remains usable when PyYAML is absent, so a missing YAML package is
 reported normally rather than as an import traceback.
+
+The target-aware Chinese check compiles a minimal `xeCJK` document with the
+selected engine, extracts its PDF text, and verifies non-empty Chinese glyphs.
+It reports `BLOCKED` on a compile, package, engine, extraction, or glyph failure;
+it never installs or silently switches toolchains.
 
 If the selected interpreter is older than Python 3.11, do not alter the system
 Python. Ask which Conda environment or virtual environment should be used.

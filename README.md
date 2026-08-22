@@ -21,7 +21,7 @@ text in blue, and user-initiated text in green.
 - Elsevier `elsarticle`, Springer Nature `sn-jnl`, ACS `achemso`, and a general
   Chinese-journal `kxtbcas` resource.
 - One installed CLI and one Python API backed by the same implementation.
-- Shared role-free author library and shared `references.bib`.
+- Reusable user-level, role-free author profiles and shared `references.bib`.
 - Fixed `r00`, `r01`, `r02` identities with adjacent `latexdiff` only.
 - Safe rollback for untouched newest revisions and transactional reindexing.
 - Editor/reviewer response IDs, response status validation, and line locations.
@@ -46,6 +46,25 @@ For development:
 ```bash
 python -m pip install -e ".[dev]"
 ```
+
+## Author library
+
+Configure the reusable, role-free author profiles once, then select manuscript
+roles independently for each paper:
+
+```bash
+sci-manuscript authors configure ~/authors.yaml
+sci-manuscript authors list
+sci-manuscript authors show author_one
+sci-manuscript init --project /path/to/existing-project
+```
+
+`init --authors PATH` overrides the configured user library for that run. On
+macOS the configured copy is stored under
+`~/Library/Application Support/sci-manuscript/authors.yaml`. The package copy is
+schema-only example data and is never selected as an author. A validated copy
+of the chosen library is placed in `manuscript/references/authors.yaml`, while
+first, corresponding, and other roles remain round-local in `meta.yaml`.
 
 ## Quick start
 
@@ -96,6 +115,7 @@ flowchart TD
 | Command | Behavior |
 | --- | --- |
 | `doctor` | Read-only dependency report |
+| `authors configure/list/show` | Manage reusable user-level author profiles |
 | `init` | Create and compile `PROJECT/manuscript/initial_submission` |
 | `status` | Show latest round, parent, metadata, and final artifacts |
 | `build` | Compile one clean manuscript without changing sources |
@@ -120,8 +140,8 @@ initialize_manuscript(
     publisher="elsevier",
     language="en",
     article_type="Research Article",
-    first_authors=("zhao_guangyao",),
-    corresponding_authors=("zhao_guangyao",),
+    first_authors=("author_one",),
+    corresponding_authors=("author_one",),
 )
 
 project = ManuscriptProject("/path/to/existing-project")
@@ -187,15 +207,15 @@ preferred to an unsafe heuristic conversion of scientific work.
 
 ```yaml
 affiliations:
-  cigit:
-    name_zh: 中国科学院重庆绿色智能技术研究院
-    name_en: Chongqing Institute of Green and Intelligent Technology, Chinese Academy of Sciences
+  institute:
+    name_en: Anonymous Research Institute
+    address: Example City
 authors:
-  zhao_guangyao:
-    name_zh: 赵光耀
-    name_en: Guangyao Zhao
-    email: example@example.org
-    affiliations: [cigit]
+  author_one:
+    name_zh: 匿名作者
+    name_en: Anonymous Author
+    email: author@example.invalid
+    affiliations: [institute]
 ```
 
 Each round's `meta.yaml` selects roles independently. Overlap is valid, so one
@@ -214,8 +234,8 @@ journal:
   name: Target Journal
   publisher: elsevier
 authors:
-  first_author: [zhao_guangyao]
-  corresponding_author: [zhao_guangyao]
+  first_author: [author_one]
+  corresponding_author: [author_one]
   other_author: []
 ```
 
@@ -282,8 +302,11 @@ python -m build
 Release validation also installs the wheel in a clean environment, audits
 package resources, compiles all four publishers, runs an anonymous
 `r00 -> r01 -> r02` PDF lifecycle, checks rollback/reindex safety and temporary
-cleanup, inspects rendered pages, and verifies the two README screenshots have
-identical dimensions.
+cleanup, verifies blue reviewer/red deletion/green user provenance with zero
+marked-PDF overfull boxes, inspects rendered pages, and verifies the two README
+screenshots have identical dimensions. GitHub Actions keeps a fast Linux quality
+job and a macOS integration-release job with the real Tectonic/latexdiff/Poppler
+toolchain.
 
 ## License
 

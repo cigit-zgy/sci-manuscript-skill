@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ PUBLISHER_TEMPLATES = {
 }
 PUBLISHERS = (*PUBLISHER_TEMPLATES, "custom")
 ROUND_PATTERN = re.compile(r"^r(\d{2,})$")
+CONFIG_DIRECTORY_ENV = "SCI_MANUSCRIPT_CONFIG_DIR"
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,7 @@ class AffiliationRecord:
     affiliation_id: str
     name_zh: str
     name_en: str
+    address: str
 
 
 @dataclass(frozen=True)
@@ -107,11 +110,103 @@ class AuthorSelection:
     affiliation_numbers: dict[str, int]
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader,
+    node: yaml.nodes.MappingNode,
+    deep: bool = False,
+) -> dict[Any, Any]:
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
+def user_config_directory() -> Path:
+    """Return the single operating-system user configuration directory."""
+    explicit = os.environ.get(CONFIG_DIRECTORY_ENV)
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "sci-manuscript"
+    if os.name == "nt":
+        base = os.environ.get("APPDATA")
+        return (
+            Path(base).expanduser().resolve() / "sci-manuscript"
+            if base
+            else Path.home() / "AppData" / "Roaming" / "sci-manuscript"
+        )
+    base = os.environ.get("XDG_CONFIG_HOME")
+    return (
+        Path(base).expanduser().resolve() / "sci-manuscript"
+        if base
+        else Path.home() / ".config" / "sci-manuscript"
+    )
+
+
+def configured_author_library_path() -> Path:
+    """Return the canonical user-level author library path."""
+    return user_config_directory() / "authors.yaml"
+
+
+def resolve_author_library_path(explicit: str | Path | None = None) -> Path:
+    """Resolve explicit then user-level author data, never package examples."""
+    if explicit is not None:
+        selected = Path(explicit).expanduser().resolve()
+        if not selected.is_file():
+            raise MetadataError(f"Author library is missing: {selected}")
+        return selected
+    configured = configured_author_library_path()
+    if configured.is_file():
+        return configured
+    raise MetadataError(
+        "No author library is configured. Run "
+        "'sci-manuscript authors configure PATH' or pass --authors PATH."
+    )
+
+
+def configure_author_library(source: str | Path) -> Path:
+    """Validate and atomically install one reusable user author library."""
+    selected = Path(source).expanduser().resolve()
+    load_author_library(selected)
+    target = configured_author_library_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".yaml.new")
+    try:
+        temporary.write_bytes(selected.read_bytes())
+        os.replace(temporary, target)
+    except OSError as exc:
+        if temporary.exists():
+            temporary.unlink()
+        raise MetadataError(f"Cannot configure author library: {target}") from exc
+    return target
+
+
 def _read_yaml(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise MetadataError(f"YAML file is missing: {path}")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = yaml.load(
+            path.read_text(encoding="utf-8"),
+            Loader=_UniqueKeyLoader,
+        )
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise MetadataError(f"Invalid YAML in {path}: {exc}") from exc
     if not isinstance(data, dict):
@@ -126,7 +221,7 @@ def _mapping(value: Any, location: str) -> dict[Any, Any]:
 
 
 def _text(value: Any, location: str, *, optional: bool = False) -> str:
-    if value is None and optional:
+    if optional and (value is None or value == ""):
         return ""
     if not isinstance(value, str) or not value.strip():
         requirement = "a string" if optional else "a non-empty string"
@@ -306,16 +401,30 @@ def load_author_library(path: Path) -> AuthorLibrary:
     affiliations: dict[str, AffiliationRecord] = {}
     for raw_id, item in raw_affiliations.items():
         affiliation_id = _text(str(raw_id), "affiliation ID")
+        if affiliation_id in affiliations:
+            raise MetadataError(f"Duplicate affiliation ID: {affiliation_id}")
         record = _mapping(item, f"affiliations.{affiliation_id}")
+        unexpected_affiliation = set(record) - {"name_zh", "name_en", "address"}
+        if unexpected_affiliation:
+            raise MetadataError(
+                f"Affiliation {affiliation_id!r} contains unsupported keys: "
+                + ", ".join(sorted(unexpected_affiliation))
+            )
         affiliations[affiliation_id] = AffiliationRecord(
             affiliation_id,
             _text(
                 record.get("name_zh"),
                 f"affiliations.{affiliation_id}.name_zh",
+                optional=True,
             ),
             _text(
                 record.get("name_en"),
                 f"affiliations.{affiliation_id}.name_en",
+            ),
+            _text(
+                record.get("address"),
+                f"affiliations.{affiliation_id}.address",
+                optional=True,
             ),
         )
     if not affiliations:
@@ -324,6 +433,8 @@ def load_author_library(path: Path) -> AuthorLibrary:
     authors: dict[str, AuthorRecord] = {}
     for raw_id, item in raw_authors.items():
         author_id = _text(str(raw_id), "author ID")
+        if author_id in authors:
+            raise MetadataError(f"Duplicate author ID: {author_id}")
         record = _mapping(item, f"authors.{author_id}")
         unexpected_author = set(record) - {
             "name_zh",
@@ -432,6 +543,16 @@ def _author_label(
     return f"{_latex_escape(name)}$^{{{','.join(markers)}}}$"
 
 
+def _affiliation_text(affiliation: AffiliationRecord, language: str) -> str:
+    """Render one affiliation without inventing unavailable translations."""
+    name = (
+        affiliation.name_zh
+        if language == "zh" and affiliation.name_zh
+        else affiliation.name_en
+    )
+    return ", ".join(part for part in (name, affiliation.address) if part)
+
+
 def render_author_metadata(
     metadata: ManuscriptMetadata,
     selection: AuthorSelection,
@@ -453,7 +574,7 @@ def render_author_metadata(
     )
     affiliation_lines = [
         f"$^{{{selection.affiliation_numbers[item.affiliation_id]}}}$"
-        + _latex_escape(item.name_en)
+        + _latex_escape(_affiliation_text(item, "en"))
         for item in selection.affiliations
     ]
     return "\n".join(
@@ -511,7 +632,9 @@ def render_publisher_metadata(
         lines.append(f"\\cortext[cor1]{{Corresponding author emails: {emails}.}}")
         for item in selection.affiliations:
             label = selection.affiliation_numbers[item.affiliation_id]
-            lines.append(f"\\address[{label}]{{{_latex_escape(item.name_en)}}}")
+            lines.append(
+                f"\\address[{label}]{{{_latex_escape(_affiliation_text(item, 'en'))}}}"
+            )
     elif metadata.publisher == "nature":
         lines.append(f"\\title[{title}]{{{title}}}")
         for author in selection.authors:
@@ -525,7 +648,8 @@ def render_publisher_metadata(
         for item in selection.affiliations:
             label = selection.affiliation_numbers[item.affiliation_id]
             lines.append(
-                f"\\affil[{label}]{{\\orgname{{{_latex_escape(item.name_en)}}}}}"
+                f"\\affil[{label}]"
+                f"{{\\orgname{{{_latex_escape(_affiliation_text(item, 'en'))}}}}}"
             )
     elif metadata.publisher == "acs":
         lines.append(f"\\title{{{title}}}")
@@ -535,7 +659,7 @@ def render_publisher_metadata(
                 lines.append(f"\\email{{{_latex_escape(author.email)}}}")
             for index, key in enumerate(author.affiliations):
                 command = "affiliation" if index == 0 else "alsoaffiliation"
-                name = _latex_escape(affiliations[key].name_en)
+                name = _latex_escape(_affiliation_text(affiliations[key], "en"))
                 lines.append(f"\\{command}[{name}]{{{name}}}")
     elif metadata.publisher == "chinese":
         labels_en = ", ".join(
@@ -546,12 +670,12 @@ def render_publisher_metadata(
         )
         affiliation_en = r"\\".join(
             f"$^{{{selection.affiliation_numbers[item.affiliation_id]}}}$"
-            f"{_latex_escape(item.name_en)}"
+            f"{_latex_escape(_affiliation_text(item, 'en'))}"
             for item in selection.affiliations
         )
         affiliation_zh = r"\\".join(
             f"$^{{{selection.affiliation_numbers[item.affiliation_id]}}}$"
-            f"{_latex_escape(item.name_zh)}"
+            f"{_latex_escape(_affiliation_text(item, 'zh'))}"
             for item in selection.affiliations
         )
         corr_en = "; ".join(
