@@ -1,0 +1,19 @@
+bibliography:
+  package: "% Bibliography support is supplied by achemso."
+  style: achemso
+
+sections:
+  - file: 00_abstract.tex
+    source: 00_abstract.tex
+  - file: 01_introduction.tex
+    source: 01_introduction.tex
+    title: Introduction
+  - file: 02_experimental.tex
+    source: 02_methods.tex
+    title: Experimental Section
+  - file: 03_results_and_discussion.tex
+    source: 03_results.tex
+    title: Results and Discussion
+  - file: 04_conclusion.tex
+    source: 05_conclusion.tex
+    title: Conclusions

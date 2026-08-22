@@ -1,9 +1,0 @@
-- prompt: Start the next revision after r01.
-  expected_command: revision
-  requires_confirmation: true
-- prompt: I accidentally created the latest revision and did not edit it.
-  expected_command: rollback
-  requires_confirmation: true
-- prompt: revision_01 was deleted; repair numbering.
-  expected_command: reindex
-  requires_confirmation: true

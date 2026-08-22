@@ -1,3 +1,123 @@
-# Workflow reference
+# Lifecycle workflow
 
-The lifecycle uses adjacent canonical rounds `r00`, `r01`, `r02`, ... and directories `initial_submission`, `revision_01`, `revision_02`, .... A revision creation manifest records protected source hashes at creation time. Rollback checks against this immutable baseline. Reindex operates transactionally and validates the final gap-free chain plus protected-source hashes before commit.
+Read this reference before creating a revision, resolving response
+placeholders, synchronizing BibTeX, or preparing a submission package.
+
+## Version model
+
+```text
+initial_submission/   r0, parent null
+revision_1/           r1, parent r0
+revision_2/           r2, parent r1
+```
+
+The project root contains the only `references/` tree: author library,
+generated metadata, bibliography, revision style, and all publisher resources.
+No version may contain `references/`. `python run.py revision` is the only
+normal revision creator. It copies manuscript state from the current highest
+version, removes inherited provenance wrappers from manuscript prose, resets
+outputs, and creates a response workspace. It never copies or regenerates
+shared references. Gaps, duplicates, `revision_0`, and non-adjacent parents are
+rejected.
+
+## Initialization
+
+Run `doctor` before initialization when the environment has not already been
+verified. Collect a new or empty project path, title, journal, publisher,
+language, article type, author order, and any existing author YAML or BibTeX
+file. Do not infer missing scientific or identity data.
+
+```bash
+python scripts/run.py init \
+  --project /absolute/path/to/project \
+  --title "User-supplied title" \
+  --journal "Target Journal" \
+  --publisher elsevier \
+  --language en \
+  --authors /absolute/path/to/authors.yaml \
+  --author "First Author" \
+  --author "Corresponding Author" \
+  --bib /absolute/path/to/references.bib
+```
+
+When the user accepts bundled placeholders, omit `--authors` or `--bib` and
+identify the copied files that must be replaced. Initialization creates and
+builds only `initial_submission`; it must not create a revision or a submission
+package.
+
+## Initial submission
+
+```bash
+python run.py build
+python run.py submission
+```
+
+The clean PDF is `initial_submission/output/manuscript.pdf`. Submission sources
+are created on demand under `initial_submission/submission/`; their package is
+published under `submission/package/` without exposing compiler intermediates.
+
+`build` recompiles only the selected clean manuscript. It must not create the
+next revision, submission sources, or scientific content.
+
+## Revision response
+
+Reviewer comments use Markdown headings and consecutive numbered comments:
+
+```text
+# Reviewer #1
+
+General assessment.
+
+1. First specific comment.
+```
+
+Use `\review{1-1}{revised text}` for reviewer-linked manuscript changes and
+`\selfadd{additional text}` for author-initiated additions. Replace every
+generated `\ResponsePending{1-1}` with the real response.
+
+```bash
+python run.py all
+```
+
+This publishes:
+
+```text
+revision_N/output/manuscript_clean.pdf
+revision_N/output/manuscript_marked.pdf
+revision_N/output/response_letter.pdf
+revision_N/submission/package/
+```
+
+Response locations are calculated from continuous line labels in the marked
+PDF. Registries, flattened TeX, extracted text, and compiler files remain
+temporary.
+
+## Submission and artifact contract
+
+Use `submission` for an initial submission or when only version-local submission
+materials are needed. Use `all` for a completed revision because it builds the
+clean manuscript, adjacent marked comparison, response letter, and submission
+package together. The marked comparison is always direct-parent to current.
+
+Manuscript, clean-manuscript, and marked-manuscript PDFs have continuous line
+numbers. Cover letters, response letters, highlights, and graphical abstracts
+do not use manuscript line numbering. Editable submission and response sources
+are created once and survive later builds.
+
+## Bibliography synchronization
+
+Every version reads the single root `references/references.bib`. Explicit
+Better BibTeX synchronization atomically replaces that shared file:
+
+```bash
+python run.py sync-bib --bib-export /absolute/path/to/export.bib
+```
+
+No Zotero process or network service is contacted. Rebuild packages after
+synchronizing a changed bibliography.
+
+## Temporary-file contract
+
+Every command uses `project/tmp/run_<timestamp>_<pid>_<id>/`. A successful run
+removes its run directory. A failure retains it and reports a project-relative
+path. `--keep-temp` retains a successful run only for explicit diagnostics.

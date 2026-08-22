@@ -1,0 +1,22 @@
+bibliography:
+  package: "% Bibliography support is supplied by kxtbcas."
+  style: unsrtnat
+
+sections:
+  - file: 00_abstract.tex
+    source: 00_abstract.tex
+  - file: 01_introduction.tex
+    source: 01_introduction.tex
+    title: 引言
+  - file: 02_methods.tex
+    source: 02_methods.tex
+    title: 材料与方法
+  - file: 03_results.tex
+    source: 03_results.tex
+    title: 结果
+  - file: 04_discussion.tex
+    source: 04_discussion.tex
+    title: 讨论
+  - file: 05_conclusion.tex
+    source: 05_conclusion.tex
+    title: 结论

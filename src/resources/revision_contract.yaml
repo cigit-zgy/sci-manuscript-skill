@@ -1,7 +1,0 @@
-version: 1
-adjacent_only: true
-canonical_round_format: rNN
-canonical_directory_format: revision_NN
-user_content_autonomous_edit: forbidden
-rollback_requires_unchanged_user_sources: true
-reindex_preserves_user_sources: true

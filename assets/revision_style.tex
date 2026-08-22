@@ -1,0 +1,41 @@
+% =====================================
+% Added text
+% =====================================
+
+% Added text color.
+\definecolor{RevisionAddedColor}{RGB}{0,92,153}
+
+% Added text underline style. Alternatives include \uline and identity (#1).
+\newcommand{\RevisionAddedUnderline}[1]{\uwave{#1}}
+
+% =====================================
+% Deleted text
+% =====================================
+
+% Deleted text color.
+\definecolor{RevisionDeletedColor}{RGB}{220,45,45}
+
+% Deleted text strikeout style. Use identity (#1) to disable the strikeout.
+\newcommand{\RevisionDeletedStrikeout}[1]{\sout{#1}}
+
+% =====================================
+% Background
+% =====================================
+
+% Background wrappers. Replace #1 with \colorbox{color}{#1} to enable.
+\newcommand{\RevisionAddedBackground}[1]{#1}
+\newcommand{\RevisionDeletedBackground}[1]{#1}
+\newcommand{\RevisionSelfBackground}[1]{#1}
+
+% =====================================
+% Font
+% =====================================
+
+% Leave empty to inherit the manuscript font.
+\newcommand{\RevisionAddedFont}{}
+\newcommand{\RevisionDeletedFont}{}
+\newcommand{\RevisionSelfFont}{}
+
+% Author-initiated additions are visually distinct from reviewer-linked text.
+\definecolor{RevisionSelfColor}{RGB}{0,135,90}
+\newcommand{\RevisionSelfUnderline}[1]{\uline{#1}}
