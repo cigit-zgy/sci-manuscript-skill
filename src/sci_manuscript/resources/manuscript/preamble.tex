@@ -27,6 +27,11 @@
 % Publisher-selected reference support.
 %%BIBLIOGRAPHY_PACKAGE%%
 
+% Revision provenance commands.
+% Transparent in clean manuscript output.
+\providecommand{\review}[2]{#2}
+\providecommand{\user}[1]{#1}
+
 % Font and language support. CJK is loaded only for Chinese projects.
 \ifXeTeX
   \usepackage{fontspec}

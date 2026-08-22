@@ -161,8 +161,8 @@ def test_bundled_public_library_is_the_final_fallback(
     assert library.authors["song_cheng"].email == "songcheng@cigit.ac.cn"
     affiliation_1 = library.affiliations["1"]
     affiliation_2 = library.affiliations["2"]
-    assert affiliation_1.name_zh == "重庆绿色智能技术研究院"
-    assert affiliation_2.name_zh == "三峡实验室"
+    assert affiliation_1.name_zh == "中国科学院重庆绿色智能技术研究院，重庆 400714"  # noqa: RUF001
+    assert affiliation_2.name_zh == "三峡实验室，重庆400714"  # noqa: RUF001
     assert affiliation_1.address == ""
     assert affiliation_2.address == ""
     assert affiliation_1.name_en == (

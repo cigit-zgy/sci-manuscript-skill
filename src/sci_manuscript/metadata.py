@@ -802,7 +802,7 @@ def render_publisher_metadata(
         labels_en = ", ".join(
             _author_label(item, selection, "en") for item in selection.authors
         )
-        labels_zh = "、".join(
+        labels_zh = "，".join(  # noqa: RUF001 - intentional Chinese punctuation
             _author_label(item, selection, "zh") for item in selection.authors
         )
         affiliation_en = r"\\".join(

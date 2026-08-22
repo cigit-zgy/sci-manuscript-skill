@@ -18,6 +18,7 @@ from sci_manuscript.metadata import (
     SubmissionSettings,
     load_author_library,
     load_meta,
+    render_publisher_metadata,
     resolve_authors,
 )
 from sci_manuscript.response import parse_reviews, validate_review_id_list
@@ -80,12 +81,16 @@ authors:
     return path
 
 
-def _workspace(tmp_path: Path, publisher: str = "elsevier") -> ProjectConfig:
+def _workspace(
+    tmp_path: Path,
+    publisher: str = "elsevier",
+    language: str = "en",
+) -> ProjectConfig:
     root = tmp_path / "existing project" / "manuscript"
     root.parent.mkdir(parents=True)
     (root.parent / "unrelated.txt").write_text("preserve", encoding="utf-8")
     return initialize_project(
-        ProjectConfig(root, _metadata(publisher)),
+        ProjectConfig(root, _metadata(publisher, language)),
         _anonymous_author_library(tmp_path),
     )
 
@@ -123,9 +128,46 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert (initial / "meta.yaml").is_file()
     assert not (initial / "manuscript.yaml").exists()
     assert "Document class" in (initial / "manuscript.tex").read_text()
+    assert (initial / "sections" / "00_abstract.tex").is_file()
+    assert not (initial / "sections" / "00_frontmatter.tex").exists()
     assert load_meta(initial / "meta.yaml").first_authors == ("first_author",)
     with pytest.raises(WorkflowError, match="overwrite"):
         initialize_project(config, _anonymous_author_library(tmp_path))
+
+
+def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
+    tmp_path: Path,
+) -> None:
+    config = _workspace(tmp_path, publisher="chinese", language="zh")
+    initial = config.round_dir(0)
+    sections = initial / "sections"
+    assert {path.name for path in sections.iterdir()} == {
+        "00_frontmatter.tex",
+        "01_manuscript.tex",
+    }
+    manuscript = (initial / "manuscript.tex").read_text(encoding="utf-8")
+    frontmatter_input = r"\input{sections/00_frontmatter}"
+    assert manuscript.index(frontmatter_input) < manuscript.index(r"\begin{document}")
+    assert r"\input{sections/01_manuscript}" in manuscript
+    assert r"\usepackage{indentfirst}" in manuscript
+    assert r"\setlength{\parindent}" not in manuscript
+    assert r"\bibliographystyle{unsrtnat}" in manuscript
+    assert r"\bibliography{references}" in manuscript
+    assert r"\clearpage" not in manuscript
+    assert "kxtbsummary" not in manuscript
+    for forbidden in ("methods", "results", "discussion", "conclusion"):
+        assert forbidden not in manuscript.lower()
+    frontmatter = (sections / "00_frontmatter.tex").read_text(encoding="utf-8")
+    for command in (
+        r"\title{",
+        r"\author{",
+        r"\enauthor{",
+        r"\affiliation{",
+        r"\enaffiliation{",
+        r"\corrauthorcn{",
+        r"\corrauthoren{",
+    ):
+        assert command not in frontmatter
 
 
 def test_author_library_is_role_free_and_allows_overlap(tmp_path: Path) -> None:
@@ -139,6 +181,44 @@ def test_author_library_is_role_free_and_allows_overlap(tmp_path: Path) -> None:
     selection = resolve_authors(_metadata(), library)
     assert selection.first_authors[0] in selection.corresponding_authors
     assert selection.authors[0].author_id == "first_author"
+
+
+def test_chinese_publisher_uses_full_width_commas_between_authors(
+    tmp_path: Path,
+) -> None:
+    metadata = _metadata(publisher="chinese", language="zh")
+    selection = resolve_authors(
+        metadata,
+        load_author_library(_anonymous_author_library(tmp_path)),
+    )
+    rendered = render_publisher_metadata(metadata, selection)
+    author_line = next(
+        line for line in rendered.splitlines() if line.startswith(r"\author{")
+    )
+    assert author_line == (
+        r"\author{第一作者$^{1,*}$，其他作者$^{1}$，通讯作者$^{1,*}$}"  # noqa: RUF001
+    )
+    assert "、" not in author_line
+    assert (
+        r"\enauthor{First Author$^{1,*}$, Other Author$^{1}$, "
+        r"Corresponding Author$^{1,*}$}"
+    ) in rendered
+
+
+def test_revision_provenance_fallbacks_live_only_in_shared_preamble() -> None:
+    root = resources_root()
+    preamble = (root / "manuscript" / "preamble.tex").read_text(encoding="utf-8")
+    definitions = (
+        r"\providecommand{\review}[2]{#2}",
+        r"\providecommand{\user}[1]{#1}",
+    )
+    for definition in definitions:
+        assert definition in preamble
+    templates = root / "journal_templates"
+    for workflow in templates.glob("*/workflow.tex"):
+        text = workflow.read_text(encoding="utf-8")
+        for definition in definitions:
+            assert definition not in text
 
 
 def test_chinese_build_refuses_a_failed_real_preflight(

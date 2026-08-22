@@ -19,7 +19,7 @@ from sci_manuscript.workspace import (
 
 pytestmark = pytest.mark.integration
 
-REQUIRED_TOOLS = ("tectonic", "latexdiff", "pdftotext", "pdftoppm")
+REQUIRED_TOOLS = ("tectonic", "latexdiff", "pdftotext", "pdftoppm", "pdfinfo")
 
 
 def _require_toolchain() -> None:
@@ -124,6 +124,17 @@ def _pdf_text(path: Path) -> str:
     return result.stdout
 
 
+def _pdf_urls(path: Path) -> str:
+    result = subprocess.run(
+        [shutil.which("pdfinfo") or "pdfinfo", "-url", str(path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return result.stdout
+
+
 def _marked_words(text: str) -> str:
     """Normalize wave-underline extraction artifacts without hiding content loss."""
     return " ".join(re.sub(r":+", "", text).split())
@@ -207,6 +218,117 @@ def test_target_aware_chinese_doctor_runs_real_probe() -> None:
     assert result.ready
     assert cjk.available
     assert "preserved Chinese glyphs" in cjk.detail
+
+
+def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "Fresh Chinese Project"
+    initialize_manuscript(
+        project_dir,
+        title="中文模板测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_two",),
+        authors_path=_author_library(tmp_path / "fresh_authors.yaml"),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    initial = manuscript / "initial_submission"
+    assert {path.name for path in (initial / "sections").iterdir()} == {
+        "00_frontmatter.tex",
+        "01_manuscript.tex",
+    }
+    body = initial / "sections" / "01_manuscript.tex"
+    _replace_once(
+        body,
+        "Replace this placeholder with the manuscript body.",
+        "DOI \\nolinkurl{10.1000/example-doi}.\n\n"
+        "URL \\nolinkurl{https://example.org/resource}.\n\n"
+        "Plain \\nolinkurl{ordinary-token}.\n\n"
+        "Citation~\\cite{replace_me}.",
+    )
+    result = ManuscriptProject(manuscript).build(engine="tectonic", keep_temp=True)
+    pdf = result.artifacts[0].path
+    text = _pdf_text(pdf)
+    urls = _pdf_urls(pdf)
+    assert "ordinary-token" in text
+    assert "https://doi.org/10.1000/example-doi" in urls
+    assert "https://example.org/resource" in urls
+    assert "ordinary-token" not in urls
+    logs = list((manuscript / "tmp").rglob("*.compiler.log"))
+    diagnostics = "\n".join(path.read_text(errors="replace") for path in logs)
+    assert "Option clash" not in diagnostics
+    assert "Overfull \\hbox" not in diagnostics
+    assert "Overfull \\vbox" not in diagnostics
+    shutil.rmtree(manuscript / "tmp")
+
+
+@pytest.mark.parametrize(
+    ("publisher", "expected_sections"),
+    (
+        (
+            "elsevier",
+            {
+                "00_abstract.tex",
+                "01_introduction.tex",
+                "02_methods.tex",
+                "03_results.tex",
+                "04_discussion.tex",
+                "05_conclusion.tex",
+            },
+        ),
+        (
+            "nature",
+            {
+                "00_abstract.tex",
+                "01_introduction.tex",
+                "02_results.tex",
+                "03_discussion.tex",
+                "04_methods.tex",
+            },
+        ),
+        (
+            "acs",
+            {
+                "00_abstract.tex",
+                "01_introduction.tex",
+                "02_experimental.tex",
+                "03_results_and_discussion.tex",
+                "04_conclusion.tex",
+            },
+        ),
+    ),
+)
+def test_non_chinese_initial_workflows_remain_unchanged(
+    tmp_path: Path,
+    publisher: str,
+    expected_sections: set[str],
+) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / f"{publisher} initial project"
+    initialize_manuscript(
+        project_dir,
+        title=f"{publisher.title()} Initial Workflow",
+        journal="Example Journal",
+        publisher=publisher,
+        language="en",
+        article_type="Research Article",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        authors_path=_author_library(tmp_path / f"{publisher}_authors.yaml"),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    initial = manuscript / "initial_submission"
+    assert {path.name for path in (initial / "sections").iterdir()} == expected_sections
+    source = (initial / "manuscript.tex").read_text(encoding="utf-8")
+    assert "FRONTMATTER_INPUT" not in source
+    assert "00_frontmatter" not in source
+    result = ManuscriptProject(manuscript).build(engine="tectonic")
+    assert _pdf_text(result.artifacts[0].path).strip()
 
 
 def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
@@ -319,12 +441,12 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
         reviews=_review_file(tmp_path / "reviews_zh.md", 1), confirmed=True
     )
     revision = manuscript / "revision_01"
-    introduction = revision / "sections" / "01_introduction.tex"
+    introduction = revision / "sections" / "01_manuscript.tex"
     _replace_once(
         introduction,
-        "Replace this placeholder and its example citation~\\cite{replace_me} with the\n"
-        "introduction.",
-        "\\review{1-1,2-1}{已按用户确认修改示例文本。}",
+        "Replace this placeholder with the manuscript body.",
+        "\\review{1-1,2-1}{已按用户确认修改示例文本。}\n\n"
+        "示例文献~\\cite{replace_me}。",
     )
     response_source = revision / "response" / "response_letter.tex"
     _complete_responses(response_source, ("E-1", "1-1", "2-1"))

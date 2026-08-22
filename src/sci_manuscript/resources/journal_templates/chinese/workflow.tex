@@ -1,24 +1,43 @@
-% Document class
 \documentclass[review]{kxtbcas}
 
-% Journal configuration
+% Runtime metadata.
 \input{publisher_metadata}
 
-% Shared configuration
+% Shared manuscript infrastructure.
 \input{preamble}
 
-% Revision markup (transparent in clean output)
-\providecommand{\review}[2]{#2}
-\providecommand{\user}[1]{#1}
+% Chinese-specific defaults.
+\usepackage{indentfirst}
+
+% Make bare DOI and URL values emitted through \nolinkurl clickable while
+% preserving ordinary \nolinkurl content.
+\usepackage{xstring}
+\makeatletter
+\let\kxtb@orig@nolinkurl\nolinkurl
+\renewcommand{\nolinkurl}[1]{%
+  \IfBeginWith{#1}{10.}{%
+    \href{https://doi.org/#1}{\kxtb@orig@nolinkurl{#1}}%
+  }{%
+    \IfBeginWith{#1}{http}{%
+      \href{#1}{\kxtb@orig@nolinkurl{#1}}%
+    }{%
+      \kxtb@orig@nolinkurl{#1}%
+    }%
+  }%
+}
+\makeatother
+
+% Publisher front matter.
+%%FRONTMATTER_INPUT%%
 
 \begin{document}
+
 \maketitle
 
-% Manuscript content
-%%ABSTRACT_INPUT%%
 %%SECTION_INPUTS%%
 
-% Bibliography
-\bibliographystyle{unsrtnat}
-\bibliography{references}
+\renewcommand{\refname}{参考文献}
+\bibliographystyle{%%BIBLIOGRAPHY_STYLE%%}
+\bibliography{%%BIBLIOGRAPHY_PATH%%}
+
 \end{document}

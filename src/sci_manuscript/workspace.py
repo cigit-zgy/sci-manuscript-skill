@@ -242,7 +242,7 @@ def publisher_resource(config: ProjectConfig) -> Path:
 
 def _publisher_layout(
     config: ProjectConfig,
-) -> tuple[list[dict[str, str]], str, str]:
+) -> tuple[dict[str, str] | None, list[dict[str, str]], str, str]:
     path = publisher_resource(config) / "sections.yaml"
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -250,6 +250,7 @@ def _publisher_layout(
         raise WorkflowError(f"Cannot load publisher section mapping: {path}") from exc
     sections = data.get("sections") if isinstance(data, dict) else None
     bibliography = data.get("bibliography") if isinstance(data, dict) else None
+    frontmatter = data.get("frontmatter") if isinstance(data, dict) else None
     if (
         not isinstance(sections, list)
         or not sections
@@ -260,6 +261,19 @@ def _publisher_layout(
     style = str(bibliography.get("style", "")).strip()
     if not package or not style:
         raise WorkflowError(f"Publisher bibliography mapping is incomplete: {path}")
+    frontmatter_plan: dict[str, str] | None = None
+    if frontmatter is not None:
+        if (
+            not isinstance(frontmatter, dict)
+            or "file" not in frontmatter
+            or "source" not in frontmatter
+        ):
+            raise WorkflowError(f"Invalid publisher frontmatter mapping: {path}")
+        frontmatter_plan = {
+            "file": str(frontmatter["file"]),
+            "source": str(frontmatter["source"]),
+            "title": "",
+        }
     plan: list[dict[str, str]] = []
     for index, item in enumerate(sections, 1):
         if not isinstance(item, dict) or "file" not in item or "source" not in item:
@@ -271,27 +285,39 @@ def _publisher_layout(
                 "title": str(item.get("title", "")),
             }
         )
-    return plan, package, style
+    return frontmatter_plan, plan, package, style
 
 
 def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
-    plan, _, style = _publisher_layout(config)
-    abstract = plan[0]
+    frontmatter, plan, _, style = _publisher_layout(config)
+    abstract_input = ""
+    body_plan = plan
+    if frontmatter is None:
+        abstract = plan[0]
+        abstract_input = f"\\input{{sections/{Path(abstract['file']).stem}}}"
+        body_plan = plan[1:]
     section_inputs = "\n".join(
-        f"\\input{{sections/{Path(item['file']).stem}}}" for item in plan[1:]
+        f"\\input{{sections/{Path(item['file']).stem}}}" for item in body_plan
+    )
+    frontmatter_input = (
+        f"\\input{{sections/{Path(frontmatter['file']).stem}}}"
+        if frontmatter is not None
+        else ""
     )
     render_template(
         publisher_resource(config) / "workflow.tex",
         version / "manuscript.tex",
         {
-            "ABSTRACT_INPUT": f"\\input{{sections/{Path(abstract['file']).stem}}}",
+            "ABSTRACT_INPUT": abstract_input,
+            "FRONTMATTER_INPUT": frontmatter_input,
             "SECTION_INPUTS": section_inputs,
             "BIBLIOGRAPHY_STYLE": style,
             "BIBLIOGRAPHY_PATH": "references",
         },
     )
     defaults = resources_root() / "manuscript" / "sections" / "default"
-    for item in plan:
+    source_plan = ([frontmatter] if frontmatter is not None else []) + plan
+    for item in source_plan:
         render_template(
             defaults / item["source"],
             version / "sections" / item["file"],

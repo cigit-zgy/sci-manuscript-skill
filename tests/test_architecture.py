@@ -29,6 +29,8 @@ def test_runtime_resources_are_package_data() -> None:
         "authors.yaml",
         "revision_style.tex",
         "manuscript/preamble.tex",
+        "manuscript/sections/default/00_frontmatter_zh.tex",
+        "manuscript/sections/default/01_manuscript.tex",
         "response/response_en.tex",
         "submission/cover_letter_en.tex",
         "submission/highlights.tex",
