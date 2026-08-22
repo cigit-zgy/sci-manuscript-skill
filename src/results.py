@@ -1,160 +1,59 @@
-"""Structured results returned by the public manuscript lifecycle API."""
-
+"""Typed result objects returned by public operations."""
 from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 
-
 @dataclass(frozen=True)
 class Artifact:
-    """One named final workflow artifact."""
-
     label: str
     path: Path
 
-
-@dataclass(frozen=True)
-class DependencyCheck:
-    """One read-only environment dependency observation."""
-
-    name: str
-    available: bool
-    detail: str
-    required: bool
-
-
-@dataclass(frozen=True)
-class DoctorResult:
-    """Environment readiness without installation side effects."""
-
-    ready: bool
-    checks: tuple[DependencyCheck, ...]
-
-
-@dataclass(frozen=True)
-class InitializationResult:
-    """Initialized project and its first compiled artifact."""
-
-    project: Path
-    version: str
-    artifacts: tuple[Artifact, ...]
-    authors_need_review: bool
-    bibliography_needs_configuration: bool
-
-
-@dataclass(frozen=True)
-class BuildResult:
-    """Completed clean-manuscript build."""
-
-    project: Path
-    version: str
-    artifacts: tuple[Artifact, ...]
-
-
-@dataclass(frozen=True)
-class RevisionResult:
-    """New adjacent revision workspace and direct parent identity."""
-
-    project: Path
-    version: str
-    parent: str
-    artifacts: tuple[Artifact, ...]
-
-
-@dataclass(frozen=True)
-class SubmissionResult:
-    """Completed submission build with every existing final artifact."""
-
-    project: Path
-    version: str
-    artifacts: tuple[Artifact, ...]
-
-
-@dataclass(frozen=True)
-class CheckResult:
-    """Citation-key validation result for one manuscript version."""
-
-    project: Path
-    version: str
-    missing_citations: tuple[str, ...]
-
-    @property
-    def passed(self) -> bool:
-        """Return whether every manuscript citation key exists."""
-        return not self.missing_citations
-
-
 @dataclass(frozen=True)
 class StatusResult:
-    """Resolved lifecycle state and all currently published artifacts."""
-
     project: Path
     version: str
     round_number: int
     parent: str | None
-    authors: tuple[str, ...]
-    publisher: str
-    journal: str
-    project_format_version: int
-    artifacts: tuple[Artifact, ...]
-
+    broken: bool
+    versions: tuple[str, ...]
+    artifacts: tuple[Artifact, ...] = ()
 
 @dataclass(frozen=True)
-class UpgradeResult:
-    """Safe project-infrastructure migration result."""
-
+class RevisionResult:
     project: Path
-    status: str
-    from_format: int
-    to_format: int
-    artifacts: tuple[Artifact, ...]
-
-
-@dataclass(frozen=True)
-class ZoteroSetupResult:
-    """Project-local Better BibTeX target and manual setup guide."""
-
-    project: Path
-    artifacts: tuple[Artifact, ...]
-
-
-@dataclass(frozen=True)
-class BibliographySyncResult:
-    """Explicitly synchronized shared bibliography files."""
-
-    project: Path
-    artifacts: tuple[Artifact, ...]
-
+    version: str
+    parent: str
+    artifacts: tuple[Artifact, ...] = ()
 
 @dataclass(frozen=True)
 class RollbackResult:
-    """User-source comparison between the latest revision and its parent."""
-
     project: Path
     version: str
     parent: str
     changed_files: tuple[str, ...]
 
-
 @dataclass(frozen=True)
 class ReindexResult:
-    """Planned or executed renumbering of a round sequence."""
-
     project: Path
     applied: bool
     renames: tuple[tuple[str, str], ...]
-    parent_updates: tuple[tuple[str, str, str], ...]
-    invalidated: tuple[str, ...]
+    invalidated: tuple[str, ...] = ()
     status: str = "planned"
 
+@dataclass(frozen=True)
+class BuildResult:
+    project: Path
+    version: str
+    artifacts: tuple[Artifact, ...]
 
 @dataclass(frozen=True)
-class ChainDiagnosticsResult:
-    """Read-only round-sequence inspection for status rendering."""
-
+class InitializationResult:
     project: Path
-    versions: tuple[tuple[str, str], ...]
-    current: str | None
-    broken: bool
-    missing: tuple[str, ...]
+    version: str
+    artifacts: tuple[Artifact, ...]
+
+@dataclass(frozen=True)
+class SubmissionResult:
+    project: Path
+    version: str
+    artifacts: tuple[Artifact, ...]

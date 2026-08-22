@@ -1,9 +1,0 @@
-name: initialization_requires_user_metadata
-prompt: Create a new manuscript project for me.
-expected_behavior:
-  - Check the workflow environment when its state is unknown.
-  - Ask for project location, title, journal, publisher, language, authors, corresponding authors, bibliography source, and existing LaTeX files.
-  - Initialize only after required identity information is supplied.
-must_not:
-  - Invent authors, journal details, citations, or scientific manuscript content.
-  - Create a revision during initialization.

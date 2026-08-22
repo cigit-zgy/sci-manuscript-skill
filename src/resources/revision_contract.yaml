@@ -1,23 +1,7 @@
-revision:
-  default_permission: no_content_edit
-
-forbidden_operations:
-  - scientific_content_change
-  - paragraph_rewrite
-  - section_restructure
-  - novelty_change
-  - interpretation_change
-  - unsupported_addition
-
-allowed_operations:
-  - user_supplied_exact_text_replacement
-  - user_supplied_exact_text_insertion
-  - user_confirmed_concrete_edit_operation
-
-require_confirmation:
-  - typo_fix
-  - formatting_fix
-  - language_rewrite
-  - paragraph_reorganization
-  - new_reference
-  - new_claim
+version: 1
+adjacent_only: true
+canonical_round_format: rNN
+canonical_directory_format: revision_NN
+user_content_autonomous_edit: forbidden
+rollback_requires_unchanged_user_sources: true
+reindex_preserves_user_sources: true

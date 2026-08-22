@@ -1,40 +1,22 @@
-"""Revision lifecycle services: creation, rollback, and reindex."""
-
+"""Revision-focused public functions."""
 from __future__ import annotations
-
 from pathlib import Path
-
 from ..results import ReindexResult, RevisionResult, RollbackResult
-from .project import ManuscriptProject
+from ..workflow.revision import start_revision as _start
+from ..workflow.rollback import inspect_rollback as _inspect, rollback_latest as _rollback
+from ..workflow.reindex import plan_reindex as _plan, execute_reindex as _execute
 
-__all__ = [
-    "ReindexResult",
-    "RevisionResult",
-    "RollbackResult",
-    "create_revision",
-    "reindex",
-    "rollback",
-]
+def start_revision(project: str | Path, reviews: str | Path | None = None, requested_round: int | None = None) -> RevisionResult:
+    return _start(project, reviews, requested_round)
 
+def rollback_plan(project: str | Path) -> RollbackResult:
+    return _inspect(project)
 
-def create_revision(
-    project: str | Path,
-    reviews: str | Path | None = None,
-    *,
-    round: str | int | None = None,
-    keep_temp: bool = False,
-) -> RevisionResult:
-    """Create the next adjacent revision workspace (no content edits)."""
-    return ManuscriptProject(project).start_revision(
-        reviews, round=round, keep_temp=keep_temp
-    )
+def rollback_latest(project: str | Path) -> RollbackResult:
+    return _rollback(project)
 
+def reindex_plan(project: str | Path) -> ReindexResult:
+    return _plan(project)
 
-def rollback(project: str | Path) -> RollbackResult:
-    """Inspect the latest revision; removal requires explicit confirmation."""
-    return ManuscriptProject(project).rollback_plan()
-
-
-def reindex(project: str | Path, apply: bool = False) -> ReindexResult:
-    """Plan (apply=False) or transactionally execute a round-sequence reindex."""
-    return ManuscriptProject(project).reindex(apply=apply)
+def reindex(project: str | Path) -> ReindexResult:
+    return _execute(project)
