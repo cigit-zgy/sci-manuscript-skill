@@ -4,12 +4,15 @@ on:
   push:
     branches:
       - fix/reviewer-diff-semantics
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 concurrency:
-  group: apply-revision-semantics-${{ github.ref }}
+  group: apply-revision-semantics-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
