@@ -9,7 +9,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  patch-pairwise:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/reviewer-diff-semantics
+          fetch-depth: 0
+      - name: Use itertools.pairwise for adjacent CJK characters
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/sci_manuscript/diff.py')
+          text = path.read_text(encoding='utf-8')
+          if 'from itertools import pairwise\n' not in text:
+              anchor = 'import shutil\n'
+              if anchor not in text:
+                  raise SystemExit('import anchor not found')
+              text = text.replace(anchor, anchor + 'from itertools import pairwise\n', 1)
+          old = 'for previous, current in zip(text, text[1:]):'
+          new = 'for previous, current in pairwise(text):'
+          if old not in text and new not in text:
+              raise SystemExit('pairwise loop anchor not found')
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          python -m compileall -q src
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/sci_manuscript/diff.py
+          if ! git diff --cached --quiet; then
+            git commit -m 'Use pairwise for CJK diff tokenization'
+            git push origin HEAD:fix/reviewer-diff-semantics
+          fi
+
   quality:
+    needs: patch-pairwise
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +71,7 @@ jobs:
           /tmp/sci-wheel/bin/sci-manuscript authors --help
 
   integration-release:
+    needs: patch-pairwise
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
