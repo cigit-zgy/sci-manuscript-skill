@@ -21,6 +21,8 @@ DIF_CONTROL_PATTERN = re.compile(r"\\DIF(?:add|del|mod)(?:begin|end)(?:FL)?\s*")
 REVIEW_REGISTRY_HEADER = "sci-manuscript-reviewloc-v2"
 STYLE_BEGIN = "% SCI_DIFF_STYLE_BEGIN"
 STYLE_END = "% SCI_DIFF_STYLE_END"
+CHARACTER_REFINEMENT_THRESHOLD = 0.70
+MAX_CHARACTER_REFINEMENT_CHARS = 2000
 CHINESE_TEXT_COMMANDS = (
     "cnabstract",
     "cnkeywords",
@@ -50,15 +52,7 @@ _REVISION_RUNTIME_TEMPLATE = r"""
 \newbox\DIFdelDisplayMathBox
 \providecommand{\DIFdelMath}[1]{%
   \ifmmode
-    \begingroup
-      \setbox\DIFdelDisplayMathBox=\hbox{$\displaystyle\RevisionDeletedFont
-        \color{RevisionDeletedColor}#1$}%
-      \dimen0=.5\ht\DIFdelDisplayMathBox
-      \advance\dimen0 by -.5\dp\DIFdelDisplayMathBox
-      \rlap{\raise\dimen0\hbox{\color{RevisionDeletedColor}%
-        \rule{\wd\DIFdelDisplayMathBox}{0.6pt}}}%
-      \box\DIFdelDisplayMathBox
-    \endgroup
+    {\RevisionDeletedFont\color{RevisionDeletedColor}#1}%
   \else
     \begingroup
       \setbox\DIFdelDisplayMathBox=\hbox{{\RevisionDeletedFont
@@ -285,10 +279,24 @@ def _separator_is_diff_only(text: str) -> bool:
     return not stripped.strip()
 
 
-def _safe_character_refinement(old: str, new: str) -> bool:
-    """Restrict character-level refinement to prose, never TeX structure."""
+def _character_refinement_matcher(
+    old: str, new: str
+) -> SequenceMatcher[str] | None:
+    """Return a matcher only for bounded, structurally safe, similar prose."""
     unsafe = set(r"\{}$%&#_^~")
-    return not any(char in unsafe for char in old + new)
+    if any(char in unsafe for char in old + new):
+        return None
+    if max(len(old), len(new)) > MAX_CHARACTER_REFINEMENT_CHARS:
+        return None
+    matcher = SequenceMatcher(a=old, b=new, autojunk=False)
+    if matcher.ratio() < CHARACTER_REFINEMENT_THRESHOLD:
+        return None
+    return matcher
+
+
+def _safe_character_refinement(old: str, new: str) -> bool:
+    """Return whether a replacement is eligible for character refinement."""
+    return _character_refinement_matcher(old, new) is not None
 
 
 class _AdditionLocator:
@@ -341,10 +349,10 @@ def _refine_replacement(
     new: str,
     provenance: ProvenanceSource,
     new_start: int,
+    matcher: SequenceMatcher[str],
     *,
     full_document: bool,
 ) -> str:
-    matcher = SequenceMatcher(a=old, b=new, autojunk=False)
     pieces: list[str] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
@@ -401,13 +409,17 @@ def _classify_region(
             addition = segments[addition_index]
             start, end = locator.locate(addition.content)
             full_document = addition.macro.endswith("FL")
-            if _safe_character_refinement(segment.content, addition.content):
+            matcher = _character_refinement_matcher(
+                segment.content, addition.content
+            )
+            if matcher is not None:
                 output.append(
                     _refine_replacement(
                         segment.content,
                         addition.content,
                         provenance,
                         start,
+                        matcher,
                         full_document=full_document,
                     )
                 )
