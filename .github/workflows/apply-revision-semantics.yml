@@ -28,7 +28,19 @@ jobs:
         with:
           python-version: '3.11'
       - name: Apply skill-level refactor
-        run: python tools/apply_revision_semantics.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/apply_revision_semantics.py')
+          text = path.read_text(encoding='utf-8')
+          old = 'updated, count = re.subn(pattern, replacement, text, count=1, flags=re.DOTALL)'
+          new = 'updated, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=re.DOTALL)'
+          if old not in text:
+              raise SystemExit('migration helper substitution target missing')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          python tools/apply_revision_semantics.py
       - name: Install development dependencies
         run: python -m pip install -e '.[dev]'
       - name: Normalize and validate source
