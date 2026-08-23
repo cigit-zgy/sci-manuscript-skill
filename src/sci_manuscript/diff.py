@@ -128,9 +128,7 @@ _REVISION_RUNTIME_TEMPLATE = r"""
 """
 REVISION_RUNTIME = _REVISION_RUNTIME_TEMPLATE.replace(
     "%%REVIEW_REGISTRY_HEADER%%", REVIEW_REGISTRY_HEADER
-).replace(
-    "%%CJK_REVISION_PACKAGE%%", ""
-)
+).replace("%%CJK_REVISION_PACKAGE%%", "")
 
 
 def _revision_runtime(language: str) -> str:
