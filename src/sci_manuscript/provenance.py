@@ -116,9 +116,7 @@ def extract_provenance(text: str) -> ProvenanceSource:
                         "Nested \\review scopes are ambiguous; combine reviewer IDs "
                         "in one wrapper instead."
                     )
-                ids_raw, after_ids = _extract_braced(
-                    fragment, cursor + len(r"\review")
-                )
+                ids_raw, after_ids = _extract_braced(fragment, cursor + len(r"\review"))
                 body, end = _extract_braced(fragment, after_ids)
                 ids = _parse_review_ids(ids_raw)
                 parsed = parse(body, inside_review=True)
