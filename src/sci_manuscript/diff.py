@@ -573,7 +573,9 @@ def _parse_registry(path: Path) -> list[tuple[str, int]]:
 
 def _parse_labels(path: Path) -> dict[tuple[int, str], int]:
     if not path.exists():
-        raise WorkflowError(f"Location build did not create a line-number AUX file: {path}")
+        raise WorkflowError(
+            f"Location build did not create a line-number AUX file: {path}"
+        )
     labels: dict[tuple[int, str], int] = {}
     text = path.read_text(encoding="utf-8", errors="replace")
     for block, edge, line in LABEL_PATTERN.findall(text):
