@@ -5,8 +5,8 @@ from __future__ import annotations
 import collections
 import re
 import shutil
-from itertools import pairwise
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 
 from .compile import compile_tex, run_command, stage_runtime_resources
