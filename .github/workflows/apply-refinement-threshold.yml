@@ -29,7 +29,7 @@ jobs:
           path = Path('src/sci_manuscript/diff.py')
           text = path.read_text(encoding='utf-8')
           old = '''def _safe_character_refinement(old: str, new: str) -> bool:\n    """Restrict character-level refinement to prose, never TeX structure."""\n    unsafe = set(r"\\{}$%&#_^~")\n    return not any(char in unsafe for char in old + new)\n'''
-          new = '''def _safe_character_refinement(old: str, new: str) -> bool:\n    """Refine only structurally safe, genuinely similar prose replacements."""\n    unsafe = set(r"\\{}$%&#_^~")\n    if any(char in unsafe for char in old + new):\n        return False\n    return SequenceMatcher(a=old, b=new, autojunk=False).ratio() >= 0.60\n'''
+          new = '''def _safe_character_refinement(old: str, new: str) -> bool:\n    """Refine only structurally safe, genuinely similar prose replacements."""\n    unsafe = set(r"\\{}$%&#_^~")\n    if any(char in unsafe for char in old + new):\n        return False\n    return SequenceMatcher(a=old, b=new, autojunk=False).ratio() >= 0.70\n'''
           if text.count(old) != 1:
               raise SystemExit('safe refinement function did not match exactly once')
           path.write_text(text.replace(old, new), encoding='utf-8')
@@ -53,6 +53,13 @@ def test_unrelated_replacement_is_not_fragmented_by_character_matches() -> None:
     assert r"\DIFdel{Replace this placeholder and its }" in classified
     assert r"\DIFaddReview{Reviewed wording.}" in classified
     assert "Reviewed wording." in classified
+
+
+def test_similarity_threshold_is_seventy_percent() -> None:
+    from sci_manuscript.diff import _safe_character_refinement
+
+    assert _safe_character_refinement("模型能够执行计算", "模型能够稳定执行计算")
+    assert not _safe_character_refinement("候选对象转化为规范结构化对象", "通过程序验证并经人工核查的候选对象进入正式结构化对象层")
 '''
           tests.write_text(test_text, encoding='utf-8')
           PY
@@ -61,5 +68,5 @@ def test_unrelated_replacement_is_not_fragmented_by_character_matches() -> None:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/sci_manuscript/diff.py tests/test_provenance.py .github/workflows/apply-refinement-threshold.yml
-          git commit -m 'Guard character refinement by similarity'
+          git commit -m 'Guard character refinement at 0.70 similarity'
           git push origin HEAD:refactor/revision-provenance-map-v2
