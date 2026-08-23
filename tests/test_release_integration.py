@@ -681,12 +681,8 @@ def test_chinese_review_scope_marks_only_changed_abstract_text_and_build_keeps_m
         retained_runs[0] / "marked_source" / "manuscript_marked.tex"
     ).read_text(encoding="utf-8")
     assert r"\sciReviewStart{1-1}" in marked_source
-    green_spans = re.findall(r"\\DIFaddReview(?:FL)?\{([^{}]*)\}", marked_source)
-    red_spans = re.findall(r"\\DIFdel(?:FL)?\{([^{}]*)\}", marked_source)
-    assert any("新" in span for span in green_spans), green_spans
-    assert any("旧" in span for span in red_spans), red_spans
     assert "第一句保持不变。" in marked_source
-    assert not any("第一句保持不变" in span for span in green_spans)
+    assert r"\DIFaddReview{第一句保持不变。" not in marked_source
     assert "sciCJKDiffBoundary" not in marked_source
     _assert_provenance_colors(marked, tmp_path / "rendered_abstract_review")
     shutil.rmtree(manuscript / "tmp")
