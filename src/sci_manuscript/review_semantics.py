@@ -138,15 +138,9 @@ def _insert_review_boundaries(text: str, scopes: tuple[ReviewScope, ...]) -> str
         key=lambda item: (item[1], item[2]),
         reverse=True,
     ):
+        result = result[:end] + f"{_diff.INTERNAL_REVIEW_END}{{{ids}}}" + result[end:]
         result = (
-            result[:end]
-            + f"{_diff.INTERNAL_REVIEW_END}{{{ids}}}"
-            + result[end:]
-        )
-        result = (
-            result[:start]
-            + f"{_diff.INTERNAL_REVIEW_START}{{{ids}}}"
-            + result[start:]
+            result[:start] + f"{_diff.INTERNAL_REVIEW_START}{{{ids}}}" + result[start:]
         )
     return result
 
