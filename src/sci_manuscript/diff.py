@@ -17,10 +17,10 @@ from .workspace import ProjectConfig, WorkflowError, strip_provenance_wrappers
 INPUT_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
 LABEL_PATTERN = re.compile(r"\\newlabel\{review:(\d+):(start|end)\}\{\{(\d+)\}")
 DIF_COMMENT_PATTERN = re.compile(r"(?m)^%DIF[^\n]*(?:\n|$)")
-DIF_CONTROL_PATTERN = re.compile(
-    r"\\DIF(?:add|del|mod)(?:begin|end)(?:FL)?\s*"
-)
+DIF_CONTROL_PATTERN = re.compile(r"\\DIF(?:add|del|mod)(?:begin|end)(?:FL)?\s*")
 REVIEW_REGISTRY_HEADER = "sci-manuscript-reviewloc-v2"
+STYLE_BEGIN = "% SCI_DIFF_STYLE_BEGIN"
+STYLE_END = "% SCI_DIFF_STYLE_END"
 CHINESE_TEXT_COMMANDS = (
     "cnabstract",
     "cnkeywords",
@@ -107,6 +107,15 @@ _REVISION_RUNTIME_TEMPLATE = r"""
 \providecommand{\review}[2]{#2}
 \providecommand{\user}[1]{#1}
 \providecommand{\selfadd}[1]{#1}
+
+% Keep the historical empty registry contract for standalone runtime probes.
+% Real reviewer locations are compiled independently and copied over this file.
+\newwrite\MarkedReviewLocationFile
+\AtBeginDocument{%
+  \immediate\openout\MarkedReviewLocationFile=\jobname.reviewloc
+  \immediate\write\MarkedReviewLocationFile{sci-manuscript-reviewloc-v2}%
+}
+\AtEndDocument{\immediate\closeout\MarkedReviewLocationFile}
 """
 
 _LOCATION_RUNTIME = rf"""
@@ -202,7 +211,7 @@ def _flatten_tex(
     return INPUT_PATTERN.sub(replace_input, text)
 
 
-def _copy_resources(config: ProjectConfig, round_dir: Path, target: Path) -> None:
+def _copy_resources(config: ProjectConfig, target: Path) -> None:
     stage_runtime_resources(
         config,
         config.current_round,
@@ -356,15 +365,13 @@ def _refine_replacement(
     return "".join(pieces)
 
 
-def _classify_body_additions(body: str, provenance: ProvenanceSource) -> str:
-    """Classify actual additions using a sidecar provenance map.
-
-    Reviewer wrappers never enter latexdiff. Pure-prose replacement blocks are
-    refined at Unicode-character granularity so unchanged Chinese text remains
-    unmarked even when latexdiff reports a coarse replacement.
-    """
-    segments = _split_diff_segments(body)
-    locator = _AdditionLocator(provenance)
+def _classify_region(
+    text: str,
+    provenance: ProvenanceSource,
+    locator: _AdditionLocator,
+) -> str:
+    """Classify one real manuscript region, excluding generated diff style."""
+    segments = _split_diff_segments(text)
     output: list[str] = []
     index = 0
     while index < len(segments):
@@ -430,14 +437,22 @@ def _classify_reviewer_additions(
     latexdiff_output: str,
     provenance: ProvenanceSource,
 ) -> str:
-    marker = r"\begin{document}"
-    index = latexdiff_output.find(marker)
-    if index < 0:
-        raise WorkflowError("latexdiff output does not contain \\begin{document}.")
-    body_start = index + len(marker)
+    """Classify additions everywhere, including Chinese pre-document frontmatter."""
+    start = latexdiff_output.find(STYLE_BEGIN)
+    end = latexdiff_output.find(STYLE_END)
+    locator = _AdditionLocator(provenance)
+    if start < 0 and end < 0:
+        return _classify_region(latexdiff_output, provenance, locator)
+    if start < 0 or end < 0 or end < start:
+        raise WorkflowError("Marked diff style boundaries are incomplete.")
+    style_end = end + len(STYLE_END)
+    prefix = latexdiff_output[:start]
+    style = latexdiff_output[start:style_end]
+    suffix = latexdiff_output[style_end:]
     return (
-        latexdiff_output[:body_start]
-        + _classify_body_additions(latexdiff_output[body_start:], provenance)
+        _classify_region(prefix, provenance, locator)
+        + style
+        + _classify_region(suffix, provenance, locator)
     )
 
 
@@ -510,27 +525,20 @@ def _separate_inline_math_from_diff_markup(text: str) -> str:
         r"\DIFadd",
         r"\DIFdel",
     )
-    marker = r"\begin{document}"
-    marker_index = text.find(marker)
-    if marker_index < 0:
-        return text
-    body_start = marker_index + len(marker)
-    prefix = text[:body_start]
-    body = text[body_start:]
     output: list[str] = []
     cursor = 0
-    while cursor < len(body):
-        candidates = [(body.find(f"{macro}{{", cursor), macro) for macro in macros]
+    while cursor < len(text):
+        candidates = [(text.find(f"{macro}{{", cursor), macro) for macro in macros]
         matches = [item for item in candidates if item[0] >= 0]
         if not matches:
-            output.append(body[cursor:])
+            output.append(text[cursor:])
             break
         index, macro = min(matches, key=lambda item: item[0])
-        output.append(body[cursor:index])
-        content, end = _extract_braced(body, index + len(macro))
+        output.append(text[cursor:index])
+        content, end = _extract_braced(text, index + len(macro))
         output.append(_split_inline_math(content, macro))
         cursor = end
-    return prefix + "".join(output)
+    return "".join(output)
 
 
 def _parse_registry(path: Path) -> list[tuple[str, int]]:
@@ -572,7 +580,10 @@ def _join_locations(locations: list[str]) -> str:
     return f"{', '.join(locations[:-1])}, and {locations[-1]}"
 
 
-def _calculate_locations(build_dir: Path, stem: str) -> dict[str, str]:
+def _calculate_locations(
+    build_dir: Path,
+    stem: str = "manuscript_marked",
+) -> dict[str, str]:
     registry = _parse_registry(build_dir / f"{stem}.reviewloc")
     labels = _parse_labels(build_dir / f"{stem}.aux")
     by_comment: dict[str, list[str]] = collections.defaultdict(list)
@@ -624,7 +635,16 @@ def _build_review_locations(
         engine_override,
         keep_intermediates=True,
     )
-    return _calculate_locations(build_dir, source.stem)
+    locations = _calculate_locations(build_dir, source.stem)
+
+    # Preserve the historical retained-run paths for downstream diagnostics.
+    marked_build = run_dir / "marked_build"
+    marked_build.mkdir(exist_ok=True)
+    for suffix in ("reviewloc", "aux"):
+        candidate = build_dir / f"{source.stem}.{suffix}"
+        if candidate.exists():
+            shutil.copy2(candidate, marked_build / f"manuscript_marked.{suffix}")
+    return locations
 
 
 def build_marked_manuscript(
@@ -663,9 +683,10 @@ def build_marked_manuscript(
     style = source_dir / "revision_preamble.tex"
     user_style = (config.references / "revision_style.tex").read_text(encoding="utf-8")
     style.write_text(
-        f"{user_style}\n{_revision_runtime(config.language)}", encoding="utf-8"
+        f"{STYLE_BEGIN}\n{user_style}\n{_revision_runtime(config.language)}\n{STYLE_END}\n",
+        encoding="utf-8",
     )
-    _copy_resources(config, current, source_dir)
+    _copy_resources(config, source_dir)
 
     command = [
         shutil.which("latexdiff") or "latexdiff",
