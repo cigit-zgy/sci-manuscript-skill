@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from sci_manuscript.diff import _classify_reviewer_additions
+from sci_manuscript.diff import (
+    _classify_reviewer_additions,
+    _safe_character_refinement,
+)
 from sci_manuscript.provenance import extract_provenance, split_by_review_provenance
 from sci_manuscript.workspace import WorkflowError
 
@@ -59,3 +62,30 @@ def test_frontmatter_addition_is_classified_before_begin_document() -> None:
     assert r"\DIFaddReview{新}" in classified
     assert r"\DIFaddReview{第一句不变" not in classified
     assert r"\providecommand{\DIFadd}[1]{#1}" in classified
+
+
+def test_unrelated_replacement_is_not_fragmented_by_character_matches() -> None:
+    provenance = extract_provenance(
+        r"\begin{document}\review{1-1}{Reviewed wording.}\end{document}"
+    )
+    latexdiff = (
+        r"\begin{document}"
+        r"\DIFdel{Replace this placeholder and its }"
+        r"\DIFadd{Reviewed wording.}"
+        r"\end{document}"
+    )
+    classified = _classify_reviewer_additions(latexdiff, provenance)
+    assert r"\DIFdel{Replace this placeholder and its }" in classified
+    assert r"\DIFaddReview{Reviewed wording.}" in classified
+
+
+def test_character_refinement_uses_seventy_percent_threshold() -> None:
+    assert _safe_character_refinement("模型能够执行计算", "模型能够稳定执行计算")
+    assert not _safe_character_refinement(
+        "候选对象转化为规范结构化对象",
+        "通过程序验证并经人工核查的候选对象进入正式结构化对象层",
+    )
+
+
+def test_character_refinement_has_size_guard() -> None:
+    assert not _safe_character_refinement("甲" * 2001, "甲" * 2000 + "乙")
