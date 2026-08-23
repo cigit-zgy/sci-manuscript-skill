@@ -1,0 +1,190 @@
+name: apply-provenance-map-tests
+
+on:
+  push:
+    branches:
+      - refactor/revision-provenance-map-v2
+    paths:
+      - .github/workflows/apply-provenance-map-tests.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/revision-provenance-map-v2
+          fetch-depth: 0
+      - name: Restore stable tests and add provenance-map coverage
+        run: |
+          git fetch origin main
+          git checkout origin/main -- tests/test_core.py tests/test_release_integration.py
+
+          python - <<'PY'
+          from pathlib import Path
+
+          diff_path = Path('src/sci_manuscript/diff.py')
+          diff = diff_path.read_text(encoding='utf-8')
+          runtime_anchor = r'''\providecommand{\selfadd}[1]{#1}
+"""
+'''
+          runtime_replacement = r'''\providecommand{\selfadd}[1]{#1}
+\newwrite\MarkedReviewLocationFile
+\AtBeginDocument{%
+  \immediate\openout\MarkedReviewLocationFile=\jobname.reviewloc
+  \immediate\write\MarkedReviewLocationFile{sci-manuscript-reviewloc-v2}%
+}
+\AtEndDocument{\immediate\closeout\MarkedReviewLocationFile}
+"""
+'''
+          if runtime_anchor not in diff:
+              raise SystemExit('marked runtime anchor missing')
+          diff = diff.replace(runtime_anchor, runtime_replacement, 1)
+          diff = diff.replace(
+              'def _calculate_locations(build_dir: Path, stem: str) -> dict[str, str]:',
+              'def _calculate_locations(\n    build_dir: Path, stem: str = "manuscript_marked"\n) -> dict[str, str]:',
+              1,
+          )
+          diff_path.write_text(diff, encoding='utf-8')
+
+          release_path = Path('tests/test_release_integration.py')
+          release = release_path.read_text(encoding='utf-8')
+          release = release.replace(
+              'retained_runs[0] / "marked_build" / "manuscript_marked.reviewloc"',
+              'retained_runs[0] / "location_build" / "manuscript.reviewloc"',
+          )
+          release = release.replace(
+              'retained_runs[0] / "marked_build" / "manuscript_marked.aux"',
+              'retained_runs[0] / "location_build" / "manuscript.aux"',
+          )
+          release += r'''
+
+
+def test_chinese_review_scope_marks_only_actual_changed_text_and_build_keeps_marked(
+    tmp_path: Path,
+) -> None:
+    """Review provenance must not color unchanged Chinese text."""
+    _require_toolchain()
+    project_dir = tmp_path / "Chinese provenance map project"
+    initialize_manuscript(
+        project_dir,
+        title="审稿修改语义测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_two",),
+        authors_path=_author_library(tmp_path / "review_authors.yaml"),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    initial = manuscript / "initial_submission"
+    (initial / "sections" / "00_frontmatter.tex").write_text(
+        r"""\cnabstract{第一句保持不变。第二句使用旧表述。}
+\cnkeywords{结构化对象；初稿}
+\enabstract{The first sentence is unchanged.}
+\enkeywords{structured object; original}
+""",
+        encoding="utf-8",
+    )
+    (initial / "sections" / "01_manuscript.tex").write_text(
+        "原有正文。\n", encoding="utf-8"
+    )
+    project = ManuscriptProject(manuscript)
+    project.start_revision(
+        reviews=_review_file(tmp_path / "reviews_scope.md", 1), confirmed=True
+    )
+    revision = manuscript / "revision_01"
+    (revision / "sections" / "00_frontmatter.tex").write_text(
+        r"""\cnabstract{\review{1-1}{第一句保持不变。第二句使用新表述。}}
+\cnkeywords{结构化对象；初稿}
+\enabstract{The first sentence is unchanged.}
+\enkeywords{structured object; original}
+""",
+        encoding="utf-8",
+    )
+    (revision / "sections" / "01_manuscript.tex").write_text(
+        "原有正文。\n作者自行增加一句。\n", encoding="utf-8"
+    )
+
+    result = project.build(engine="tectonic", keep_temp=True)
+    assert {artifact.label for artifact in result.artifacts} == {
+        "Clean manuscript",
+        "Marked manuscript",
+    }
+    marked = revision / "output" / "manuscript_marked.pdf"
+    assert marked.is_file()
+    retained_runs = list((manuscript / "tmp").glob("run_*"))
+    assert len(retained_runs) == 1
+    marked_source = (
+        retained_runs[0] / "marked_source" / "manuscript_marked.tex"
+    ).read_text(encoding="utf-8")
+    body = marked_source.split(r"\begin{document}", 1)[1]
+    assert r"\review{" not in body
+    assert r"\DIFdel{旧}" in body
+    assert r"\DIFaddReview{新}" in body
+    assert r"\DIFaddReview{第一句保持不变" not in body
+    assert r"\DIFadd{作者自行增加一句。}" in body
+    _assert_provenance_colors(marked, tmp_path / "rendered_provenance_map")
+    shutil.rmtree(manuscript / "tmp")
+'''
+          release_path.write_text(release, encoding='utf-8')
+
+          Path('tests/test_provenance.py').write_text(r'''"""Unit tests for reviewer provenance sidecar classification."""
+
+from __future__ import annotations
+
+import pytest
+
+from sci_manuscript.diff import _classify_reviewer_additions
+from sci_manuscript.provenance import extract_provenance, split_by_review_provenance
+from sci_manuscript.workspace import WorkflowError
+
+
+def test_review_wrapper_is_removed_but_interval_is_retained() -> None:
+    source = extract_provenance(
+        r"Before \review{1-1,2-1}{模型能够稳定执行。} After"
+    )
+    assert source.text == "Before 模型能够稳定执行。 After"
+    assert len(source.review_spans) == 1
+    span = source.review_spans[0]
+    assert span.review_ids == ("1-1", "2-1")
+    assert source.text[span.start:span.end] == "模型能够稳定执行。"
+    assert split_by_review_provenance(source, span.start, span.end) == (
+        (span.start, span.end, ("1-1", "2-1")),
+    )
+
+
+def test_nested_review_scope_is_rejected() -> None:
+    with pytest.raises(WorkflowError, match="Nested"):
+        extract_provenance(r"\review{1-1}{outer \review{2-1}{inner}}")
+
+
+def test_character_refinement_colors_only_real_reviewer_change() -> None:
+    provenance = extract_provenance(
+        r"\begin{document}\review{1-1}{模型能够稳定执行。} 作者新增。\end{document}"
+    )
+    latexdiff = (
+        r"\begin{document}"
+        r"\DIFdel{模型能够执行。}\DIFadd{模型能够稳定执行。} "
+        r"\DIFadd{作者新增。}"
+        r"\end{document}"
+    )
+    classified = _classify_reviewer_additions(latexdiff, provenance)
+    assert r"模型能够\DIFaddReview{稳定}执行。" in classified
+    assert r"\DIFdel{" not in classified.split("模型能够", 1)[0]
+    assert r"\DIFadd{作者新增。}" in classified
+    assert r"\DIFaddReview{模型能够" not in classified
+''', encoding='utf-8')
+          PY
+
+          python -m compileall -q src tests
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/sci_manuscript/diff.py tests/test_core.py tests/test_release_integration.py tests/test_provenance.py
+          git commit -m 'Test provenance-map revision semantics'
+          git push origin HEAD:refactor/revision-provenance-map-v2
