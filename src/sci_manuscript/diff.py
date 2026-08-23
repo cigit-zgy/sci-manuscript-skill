@@ -242,7 +242,7 @@ def _tokenize_cjk_for_diff(text: str) -> str:
         return text
     tex_structure = set("{}\\$%&#_^~")
     output = [text[0]]
-    for previous, current in zip(text, text[1:], strict=True):
+    for previous, current in zip(text, text[1:]):
         if (
             not previous.isspace()
             and not current.isspace()
