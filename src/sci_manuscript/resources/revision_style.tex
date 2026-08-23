@@ -12,10 +12,11 @@
 \definecolor{RevisionAddedColor}{RGB}{0,92,153}
 
 % Chinese builds load xeCJKfntef so long CJK additions remain line-breakable.
+% Starred CJK decorators keep the mark continuous across CJK punctuation.
 % Other builds use ulem. Mathematics is excluded by the runtime.
 \newcommand{\RevisionAddedUnderline}[1]{%
   \ifcsname CJKunderwave\endcsname
-    \CJKunderwave[format=\color{RevisionAddedColor},textformat=\color{RevisionAddedColor}]{#1}%
+    \CJKunderwave*[format=\color{RevisionAddedColor},textformat=\color{RevisionAddedColor}]{#1}%
   \else\uwave{#1}\fi}
 
 % =====================================
@@ -27,7 +28,7 @@
 
 \newcommand{\RevisionDeletedStrikeout}[1]{%
   \ifcsname CJKsout\endcsname
-    \CJKsout[format=\color{RevisionDeletedColor},textformat=\color{RevisionDeletedColor}]{#1}%
+    \CJKsout*[format=\color{RevisionDeletedColor},textformat=\color{RevisionDeletedColor}]{#1}%
   \else\sout{#1}\fi}
 
 % =====================================
@@ -37,7 +38,7 @@
 \definecolor{RevisionReviewColor}{RGB}{0,135,90}
 \newcommand{\RevisionReviewUnderline}[1]{%
   \ifcsname CJKunderline\endcsname
-    \CJKunderline[format=\color{RevisionReviewColor},textformat=\color{RevisionReviewColor}]{#1}%
+    \CJKunderline*[format=\color{RevisionReviewColor},textformat=\color{RevisionReviewColor}]{#1}%
   \else\uline{#1}\fi}
 
 % =====================================
