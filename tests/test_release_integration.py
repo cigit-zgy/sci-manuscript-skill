@@ -181,8 +181,8 @@ def _assert_provenance_colors(pdf: Path, render_dir: Path) -> None:
     pixels = b"".join(
         _ppm_pixels(path) for path in sorted(render_dir.glob("marked-*.ppm"))
     )
-    assert _count_color(pixels, (0, 92, 153)) > 20, "blue review markup missing"
-    assert _count_color(pixels, (0, 135, 90)) > 20, "green user markup missing"
+    assert _count_color(pixels, (0, 92, 153)) > 20, "blue automatic addition missing"
+    assert _count_color(pixels, (0, 135, 90)) > 20, "green reviewer markup missing"
     assert _count_color(pixels, (220, 45, 45)) > 20, "red deletion markup missing"
 
 
@@ -192,6 +192,7 @@ def _assert_artifacts(result: LifecycleResult, version: Path) -> None:
         "Clean manuscript",
         "Marked manuscript",
         "Response letter",
+        "Revision layout QA",
         "Cover letter",
         "Highlights",
         "Graphical abstract",
@@ -393,7 +394,7 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
         "Replace this placeholder and its example citation~\\cite{replace_me} with the\n"
         "introduction.",
         "\\review{1-1,2-1}{Reviewed wording.}\n\n"
-        "\\user{User-approved addition.}\n\n"
+        "User-approved ordinary addition.\n\n"
         "An example citation~\\cite{replace_me} remains.",
     )
     _complete_responses(r01 / "response" / "responses.tex", ("E-1", "1-1", "2-1"))
@@ -547,13 +548,27 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     )
     manuscript = project_dir / "manuscript"
     project = ManuscriptProject(manuscript)
+    initial_body = manuscript / "initial_submission" / "sections" / "01_manuscript.tex"
+    old_paragraph = (
+        "原始中文段落包含行内公式 $A \\longrightarrow B$、引用"
+        "~\\cite{replace_me}，并保留足够长的连续文字来验证自动差异标记"
+        "不会改变中文断行或制造不可分割的水平盒子。"
+    )
+    _replace_once(
+        initial_body,
+        "Replace this placeholder with the manuscript body.",
+        old_paragraph,
+    )
     project.start_revision(reviews=reviews, confirmed=True)
     revision = manuscript / "revision_01"
     body = revision / "sections" / "01_manuscript.tex"
     _replace_once(
         body,
-        "Replace this placeholder with the manuscript body.",
-        "\\review{1-1}{中文修订内容}\n\n示例文献~\\cite{replace_me}。",
+        old_paragraph,
+        "\\review{1-1}{修订后的中文长段落同样包含行内公式 "
+        "$A \\longrightarrow C$、引用~\\cite{replace_me}，并覆盖标题、公式、"
+        "引用及跨行中文在颜色标记下保持原生断行的回归场景。}\n\n"
+        "作者普通新增中文包含行内公式 $x+y$，用于验证蓝色波浪线与数学隔离。",
     )
     _complete_responses(revision / "response" / "responses.tex", ("1-1",))
     _complete_cover(manuscript, 1)
@@ -568,11 +583,18 @@ def test_chinese_revision_submission_generates_registry_and_locations(
         "response_letter.pdf",
     }
     marked_text = "".join(_pdf_text(output / "manuscript_marked.pdf").split())
+    marked_plain = marked_text.replace(":", "")
     response_text = "".join(_pdf_text(output / "response_letter.pdf").split())
-    assert "中文修订内容" in marked_text
+    assert "修订后的中文长段落" in marked_plain
+    assert "不会改变中文断行或制造不可分割的水平盒子" in marked_plain
+    assert "作者普通新增中文" in marked_plain
     assert "第" in response_text and "行" in response_text
     assert "Locationunavailable" not in response_text
     assert "位置不可用" not in response_text
+    layout_report = (output / "revision_layout_qa.txt").read_text(encoding="utf-8")
+    assert "Marked-specific overfull boxes: 0" in layout_report
+    assert "Result: PASS" in layout_report
+    _assert_provenance_colors(output / "manuscript_marked.pdf", tmp_path / "colors")
 
     retained_runs = list((manuscript / "tmp").glob("run_*"))
     assert len(retained_runs) == 1

@@ -97,9 +97,10 @@ General assessment.
 1. First specific comment.
 ```
 
-Use `\review{1-1}{revised text}` for reviewer-linked manuscript changes and
-`\user{additional text}` for user-initiated additions. Replace every
-generated `\ResponsePending{1-1}` with the real response.
+Use `\review{1-1}{revised text}` only for reviewer-linked manuscript changes.
+Write ordinary author additions directly; adjacent latexdiff detects them.
+Legacy `\user{additional text}` remains readable but should not be added.
+Replace every generated `\ResponsePending{1-1}` with the real response.
 
 ```bash
 sci-manuscript submission --project /absolute/path/to/project
@@ -123,6 +124,22 @@ temporary.
 `submission` builds the clean manuscript and version-local submission material;
 for a revision it also builds the adjacent marked comparison and response
 letter. The marked comparison is always direct-parent to current.
+
+After clean and marked compilation, the workflow parses both compiler logs and
+compares their unique overfull boxes. Any marked-specific overfull box fails the
+revision build. A passing run publishes
+`revision_NN/output/revision_layout_qa.txt`; shared warnings still require
+visual PDF inspection and must not be hidden through global spacing, font-size,
+page-geometry, or manual line-break workarounds.
+
+The default automatic markup distinguishes three semantic states: ordinary
+author additions detected by latexdiff use a blue wave underline, deletions use
+red strikeout, and reviewer-linked additions use a green straight underline.
+The legacy `\user{}` wrapper has the same ordinary-addition rendering and should
+not be added to new text. Structural wrappers are not decorated as one box. The
+workflow separates mathematics before the CJK/ulem text
+decorators run and uses a zero-width overlay for deleted formulae, preventing
+mixed CJK/math arguments from changing grouping or creating unbreakable boxes.
 
 Marked-manuscript PDFs have continuous line numbers. Cover letters, response
 letters, highlights, and graphical abstracts do not use manuscript line

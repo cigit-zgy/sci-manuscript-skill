@@ -200,7 +200,13 @@
   \AtBeginDocument{\fontsize{10.5}{12.6}\selectfont}
 \fi
 
-\AtBeginEnvironment{thebibliography}{\fontsize{10}{12}\selectfont\setstretch{1.2}}
+\AtBeginEnvironment{thebibliography}{%
+  \fontsize{10}{12}\selectfont\setstretch{1.2}%
+  % The class-level \doi command stores article metadata. Restrict the
+  % bibliography meaning to visible, breakable DOI output so BibTeX entries are
+  % not swallowed into \kxtb@doi and followed by an orphan full stop.
+  \renewcommand{\doi}[1]{\href{https://doi.org/##1}{\nolinkurl{##1}}}%
+}
 
 \def\kxtb@entitle{}
 \def\kxtb@enauthor{}

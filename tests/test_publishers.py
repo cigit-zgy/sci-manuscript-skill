@@ -235,11 +235,11 @@ Figure~\ref{fig:test} and citation~\cite{template2026} are included.
 \includegraphics[width=10mm]{figure.png}
 \bicaption{模板图片}{Template figure}\label{fig:test}
 \end{figure}
-\bibliographystyle{unsrtnat}
+\bibliographystyle{kxtbcas-numeric}
 \bibliography{references}
 \end{document}
 """
-        self._compile("chinese", source, ("kxtbcas.cls",))
+        self._compile("chinese", source, ("kxtbcas.cls", "kxtbcas-numeric.bst"))
 
 
 if __name__ == "__main__":

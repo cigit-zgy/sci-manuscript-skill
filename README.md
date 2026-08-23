@@ -9,8 +9,9 @@ packages. It never writes scientific prose or decides how to answer reviewers.
 ## Real E2E output
 
 The images below are equal-size renders from the anonymous test lifecycle, not
-mockups. The marked manuscript shows latexdiff deletion in red, reviewer-linked
-text in blue, and user-initiated text in green.
+mockups. The marked-manuscript contract is: ordinary author additions detected
+by latexdiff use a blue wave underline, deletions use red strikeout, and
+reviewer-linked text uses a green straight underline.
 
 | Marked manuscript | Response letter with location |
 | --- | --- |
@@ -25,6 +26,7 @@ text in blue, and user-initiated text in green.
 - Fixed `r00`, `r01`, `r02` identities with adjacent `latexdiff` only.
 - Safe rollback for untouched newest revisions and transactional reindexing.
 - Editor/reviewer response IDs, response status validation, and line locations.
+- Clean-versus-marked overfull-box regression QA with a durable layout report.
 - Version-local cover letter, highlights, graphical abstract, and package.
 - Lazy `tmp/` creation and successful-run cleanup.
 
@@ -124,7 +126,7 @@ flowchart TD
 | `revision` | Confirm and create exactly the next adjacent revision |
 | `rollback` | Archive an untouched newest revision; refuse edited sources |
 | `reindex` | Transactionally close revision-number gaps |
-| `submission` | Build clean/marked/response/submission artifacts as applicable |
+| `submission` | Build clean/marked/response artifacts and fail marked-only overflow |
 | `sync-bib` | Atomically replace the single shared bibliography |
 
 Use `sci-manuscript <command> --help` for options. The CLI catches workflow
@@ -199,6 +201,9 @@ Reviewer comments remain authoritative in `response/reviewer_comments.md`;
 users edit only `response/responses.tex` and `submission/cover_letter_body.tex`.
 Complete response and cover-letter TeX documents are assembled in `tmp/` from
 the installed package correspondence templates during submission builds.
+Revision submission also publishes `output/revision_layout_qa.txt`; a marked
+overflow not present in the clean compiler log fails the entire workflow.
+Visual inspection of the marked PDF remains required for small shared warnings.
 
 ### Migrating a legacy workspace
 
@@ -278,8 +283,22 @@ Only explicit user edits are permitted. Mark additions with:
 \review{1-1}{reviewer-linked text}
 \review{1-1,2-3}{text linked to multiple comments}
 \review{E-1}{editor-linked text}
-\user{author-initiated text}
 ```
+
+The visual semantics are fixed and mutually exclusive:
+
+| Meaning | Color | Line style | Source |
+| --- | --- | --- | --- |
+| Ordinary addition not linked to a comment | Blue `(0,92,153)` | Wave underline | adjacent `latexdiff` |
+| Deletion | Red `(220,45,45)` | Strikeout | adjacent `latexdiff` |
+| Reviewer/editor-linked addition | Green `(0,135,90)` | Straight underline | `\review{IDs}{...}` |
+
+Ordinary author additions need no wrapper. `\user{...}` remains accepted only
+for backward compatibility and renders with the same ordinary blue-wave style.
+Do not use `\review` merely to recolor an ordinary edit: its IDs drive response
+coverage and marked-manuscript line locations. Mathematics follows the same
+color semantics; deleted formulae use a zero-width red strike overlay, while
+text line decorators never scan mathematical content.
 
 Deletions need no wrapper; adjacent `latexdiff` detects them. A new revision
 removes inherited `\review`/`\user` wrappers while preserving their text.
@@ -333,7 +352,8 @@ python -m build
 Release validation also installs the wheel in a clean environment, audits
 package resources, compiles all four publishers, runs an anonymous
 `r00 -> r01 -> r02` PDF lifecycle, checks rollback/reindex safety and temporary
-cleanup, verifies blue reviewer/red deletion/green user provenance with zero
+cleanup, verifies blue ordinary-addition/red deletion/green reviewer provenance
+with zero
 marked-PDF overfull boxes, inspects rendered pages, and verifies the two README
 screenshots have identical dimensions. GitHub Actions keeps a fast Linux quality
 job and a macOS integration-release job with the real Tectonic/latexdiff/Poppler

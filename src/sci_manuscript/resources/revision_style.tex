@@ -1,12 +1,22 @@
+% Marked-manuscript semantic contract:
+%   ordinary latexdiff addition = blue wave underline
+%   deletion                    = red strikeout
+%   reviewer-linked addition    = green straight underline
+%   author ordinary addition    = blue wave underline
+
 % =====================================
-% Added text
+% Ordinary latexdiff addition
 % =====================================
 
-% Added text color.
+% Ordinary addition color.
 \definecolor{RevisionAddedColor}{RGB}{0,92,153}
 
-% Added text underline style. Alternatives include \uline and identity (#1).
-\newcommand{\RevisionAddedUnderline}[1]{\uwave{#1}}
+% Chinese builds load xeCJKfntef so long CJK additions remain line-breakable.
+% Other builds use ulem. Mathematics is excluded by the runtime.
+\newcommand{\RevisionAddedUnderline}[1]{%
+  \ifcsname CJKunderwave\endcsname
+    \CJKunderwave[format=\color{RevisionAddedColor},textformat=\color{RevisionAddedColor}]{#1}%
+  \else\uwave{#1}\fi}
 
 % =====================================
 % Deleted text
@@ -15,8 +25,20 @@
 % Deleted text color.
 \definecolor{RevisionDeletedColor}{RGB}{220,45,45}
 
-% Deleted text strikeout style. Use identity (#1) to disable the strikeout.
-\newcommand{\RevisionDeletedStrikeout}[1]{\sout{#1}}
+\newcommand{\RevisionDeletedStrikeout}[1]{%
+  \ifcsname CJKsout\endcsname
+    \CJKsout[format=\color{RevisionDeletedColor},textformat=\color{RevisionDeletedColor}]{#1}%
+  \else\sout{#1}\fi}
+
+% =====================================
+% Reviewer/editor-linked additions (\review)
+% =====================================
+
+\definecolor{RevisionReviewColor}{RGB}{0,135,90}
+\newcommand{\RevisionReviewUnderline}[1]{%
+  \ifcsname CJKunderline\endcsname
+    \CJKunderline[format=\color{RevisionReviewColor},textformat=\color{RevisionReviewColor}]{#1}%
+  \else\uline{#1}\fi}
 
 % =====================================
 % Background
@@ -25,7 +47,7 @@
 % Background wrappers. Replace #1 with \colorbox{color}{#1} to enable.
 \newcommand{\RevisionAddedBackground}[1]{#1}
 \newcommand{\RevisionDeletedBackground}[1]{#1}
-\newcommand{\RevisionUserBackground}[1]{#1}
+\newcommand{\RevisionReviewBackground}[1]{#1}
 
 % =====================================
 % Font
@@ -34,8 +56,4 @@
 % Leave empty to inherit the manuscript font.
 \newcommand{\RevisionAddedFont}{}
 \newcommand{\RevisionDeletedFont}{}
-\newcommand{\RevisionUserFont}{}
-
-% Author-initiated additions are visually distinct from reviewer-linked text.
-\definecolor{RevisionUserColor}{RGB}{0,135,90}
-\newcommand{\RevisionUserUnderline}[1]{\uline{#1}}
+\newcommand{\RevisionReviewFont}{}

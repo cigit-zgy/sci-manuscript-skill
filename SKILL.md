@@ -33,7 +33,7 @@ not write reviewer-response prose on the user's behalf.
 | Start a paper | Collect project, journal, publisher, language, article type, author roles, and optional bibliography; if no author library is configured, route to `sci-manuscript authors configure PATH`, then run `init` |
 | Build | Run `build`; do not change TeX or create a revision |
 | Start revision | Read the response/revision parts of [workflow.md](references/workflow.md); run `revision` only after explicit confirmation |
-| Prepare submission | Confirm all user responses are complete; run `submission` |
+| Prepare submission | Confirm all user responses are complete; run `submission`, which must pass clean/marked layout QA |
 | Roll back or reindex | Explain the archive/digest transaction, obtain confirmation, then run the exact command |
 | Synchronize bibliography | Use only a user-specified BibTeX export with `sync-bib` |
 
@@ -52,8 +52,9 @@ publisher resource only to diagnose that exact publisher build.
   custom publisher creates `references/journal_template/`.
 - `manuscript.tex` is a user-owned composition root. Builds read it but never
   overwrite it.
-- `\review{ID}{text}` and `\user{text}` are the only manual provenance wrappers.
-  Deletions are detected by adjacent `latexdiff`.
+- `\review{ID}{text}` is the only manual provenance wrapper for new work.
+  Ordinary additions and deletions are detected by adjacent `latexdiff`;
+  legacy `\user{text}` remains readable but should not be added.
 - Successful operations remove lazy `tmp/`; failed runs may retain diagnostics.
 - Editable `response/responses.tex` and `submission/cover_letter_body.tex`
   sources are created once and not replaced by later builds. Complete
@@ -89,6 +90,25 @@ sci-manuscript sync-bib --project /path/to/project --bib export.bib
 
 Report the exact current round and parent, final project-relative artifacts,
 pending responses, source-integrity result, and whether `tmp/` was removed.
-Validate extractable PDF text and visually inspect marked/response pages. Never
+For every revision, `submission` builds clean, direct-parent marked, and
+response PDFs from the same source and shared bibliography. It parses both
+compiler logs, compares overfull boxes, and fails if marked introduces an
+overflow absent from clean; the durable result is
+`revision_NN/output/revision_layout_qa.txt`. Do not suppress failures with
+global `\sloppy`, unconditional `\emergencystretch`, smaller body type, altered
+geometry, or hand-inserted line breaks. The automated comparison cannot decide
+whether small shared overfull boxes are visually harmless, so validate
+extractable PDF text and visually inspect marked/response pages. Never
 publish compiler intermediates, flattened TeX, location registries, caches, test
 PDFs, or private paths.
+
+Automatic revision provenance uses three non-overlapping conventions: ordinary
+author additions detected by latexdiff are blue with a wave underline,
+deletions are red with strikeout, and reviewer-linked `\review{}` additions are
+green with a straight underline. `\user{}` is backward-compatible only and has
+the same ordinary-addition semantics. Structural wrappers stay transparent,
+while mathematics is rendered
+through a dedicated zero-width overlay path and separated from line-decoration
+scanners. Do not wrap arbitrary latexdiff or reviewer blocks as one `ulem`,
+`soul`, or `xeCJKfntef` argument; that can turn mixed CJK/math content into
+unbreakable boxes and alter the clean manuscript's geometry.

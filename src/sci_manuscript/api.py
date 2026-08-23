@@ -15,6 +15,7 @@ from .compile import (
     ensure_cjk_environment,
     probe_cjk_environment,
     stage_cjk_fonts,
+    validate_revision_layout,
 )
 from .diff import MarkedResult, build_marked_manuscript
 from .metadata import (
@@ -508,8 +509,18 @@ def _prepare_submission(
     clean = build_clean_manuscript(config, round_number, run_dir, engine)
     marked: MarkedResult | None = None
     response_pdf: Path | None = None
+    layout_report: Path | None = None
     if round_number > 0:
         marked = build_marked_manuscript(config, round_number, run_dir, engine)
+        layout_report = validate_revision_layout(
+            (run_dir / "clean_build" / "manuscript.compiler.log").read_text(
+                encoding="utf-8"
+            ),
+            (run_dir / "marked_build" / "manuscript_marked.compiler.log").read_text(
+                encoding="utf-8"
+            ),
+            run_dir / "revision_layout_qa.txt",
+        )
         response_pdf = build_response(
             config,
             round_number,
@@ -553,10 +564,17 @@ def _prepare_submission(
     shutil.copytree(stage, package)
     artifacts = [Artifact("Clean manuscript", clean)]
     if marked is not None and response_pdf is not None:
+        if layout_report is None:
+            raise WorkflowError("Revision layout QA report was not generated.")
+        published_layout_report = (
+            config.round_dir(round_number) / "output" / "revision_layout_qa.txt"
+        )
+        shutil.copy2(layout_report, published_layout_report)
         artifacts.extend(
             [
                 Artifact("Marked manuscript", marked.pdf),
                 Artifact("Response letter", response_pdf),
+                Artifact("Revision layout QA", published_layout_report),
             ]
         )
     for label, name in (

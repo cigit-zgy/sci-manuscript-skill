@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +36,112 @@ class CjkProbeResult:
 
     ready: bool
     detail: str
+
+
+@dataclass(frozen=True)
+class OverfullBox:
+    """One unique overfull box reported by a LaTeX compiler."""
+
+    axis: str
+    excess_pt: float
+    source: str
+    line_start: int
+    line_end: int
+
+
+OVERFULL_BOX = re.compile(
+    r"(?:warning:\s+)?(?P<source>[^:\n]+):(?P<source_line>\d+):\s+"
+    r"Overfull \\(?P<axis>[hv])box \((?P<excess>\d+(?:\.\d+)?)pt too "
+    r"(?:wide|high)\).*?at lines? (?P<start>\d+)(?:--(?P<end>\d+))?",
+    re.I,
+)
+UNDERFULL_BOX = re.compile(r"Underfull \\[hv]box", re.I)
+
+
+def parse_overfull_boxes(output: str) -> tuple[OverfullBox, ...]:
+    """Parse and de-duplicate Tectonic/LaTeX overfull-box diagnostics."""
+    issues: list[OverfullBox] = []
+    seen: set[tuple[str, float, str, int, int]] = set()
+    for match in OVERFULL_BOX.finditer(output):
+        start = int(match.group("start"))
+        issue = OverfullBox(
+            axis=match.group("axis").lower(),
+            excess_pt=float(match.group("excess")),
+            source=match.group("source").strip(),
+            line_start=start,
+            line_end=int(match.group("end") or start),
+        )
+        key = (
+            issue.axis,
+            round(issue.excess_pt, 5),
+            issue.source,
+            issue.line_start,
+            issue.line_end,
+        )
+        if key not in seen:
+            seen.add(key)
+            issues.append(issue)
+    return tuple(issues)
+
+
+def _overflow_signature(issue: OverfullBox) -> tuple[str, float]:
+    return issue.axis, round(issue.excess_pt, 2)
+
+
+def validate_revision_layout(
+    clean_output: str,
+    marked_output: str,
+    report_path: Path,
+) -> Path:
+    """Compare clean/marked logs and reject every marked-specific overflow."""
+    clean = parse_overfull_boxes(clean_output)
+    marked = parse_overfull_boxes(marked_output)
+    remaining = Counter(_overflow_signature(issue) for issue in clean)
+    marked_specific: list[OverfullBox] = []
+    for issue in marked:
+        signature = _overflow_signature(issue)
+        if remaining[signature] > 0:
+            remaining[signature] -= 1
+        else:
+            marked_specific.append(issue)
+
+    def render(label: str, issues: tuple[OverfullBox, ...]) -> list[str]:
+        lines = [f"{label}: {len(issues)}"]
+        lines.extend(
+            f"- {issue.axis}box {issue.excess_pt:.5f} pt; "
+            f"{issue.source}:{issue.line_start}--{issue.line_end}"
+            for issue in issues
+        )
+        return lines
+
+    lines = [
+        "Revision layout QA",
+        "",
+        *render("Clean overfull boxes", clean),
+        "",
+        *render("Marked overfull boxes", marked),
+        "",
+        *render("Marked-specific overfull boxes", tuple(marked_specific)),
+        "",
+        f"Clean underfull diagnostics: {len(UNDERFULL_BOX.findall(clean_output))}",
+        f"Marked underfull diagnostics: {len(UNDERFULL_BOX.findall(marked_output))}",
+        "",
+        "Result: " + ("FAIL" if marked_specific else "PASS"),
+        "Visual PDF inspection remains required before submission.",
+    ]
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if marked_specific:
+        details = ", ".join(
+            f"{issue.axis}box {issue.excess_pt:.2f} pt at "
+            f"{issue.source}:{issue.line_start}--{issue.line_end}"
+            for issue in marked_specific
+        )
+        raise WorkflowError(
+            "Marked manuscript has overflow not present in the clean build: "
+            f"{details}. See {report_path}."
+        )
+    return report_path
 
 
 def _cjk_font_directories() -> tuple[Path, ...]:

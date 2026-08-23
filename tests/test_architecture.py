@@ -42,9 +42,30 @@ def test_runtime_resources_are_package_data() -> None:
         "journal_templates/acs/achemso.cls",
         "journal_templates/acs/achemso.dtx",
         "journal_templates/chinese/kxtbcas.cls",
+        "journal_templates/chinese/kxtbcas-numeric.bst",
     )
     for relative in required:
         assert (root / relative).is_file(), relative
+
+
+def test_revision_provenance_palette_contract_is_documented() -> None:
+    style = (
+        ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.tex"
+    ).read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    for token in (
+        r"\definecolor{RevisionAddedColor}{RGB}{0,92,153}",
+        r"\definecolor{RevisionDeletedColor}{RGB}{220,45,45}",
+        r"\definecolor{RevisionReviewColor}{RGB}{0,135,90}",
+        r"\CJKunderwave",
+        r"\CJKsout",
+        r"\CJKunderline",
+    ):
+        assert token in style
+    assert "blue wave underline" in readme
+    assert "green straight underline" in readme
+    assert "three non-overlapping conventions" in skill
 
 
 def test_no_legacy_public_architecture_strings() -> None:

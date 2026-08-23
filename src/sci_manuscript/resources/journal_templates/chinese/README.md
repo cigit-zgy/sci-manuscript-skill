@@ -26,3 +26,8 @@ its public distribution with this project for the v3.0.0 release. See
 
 The class requires an XeLaTeX-compatible engine and Chinese fonts. Verify the
 current journal instructions and the target build environment before use.
+
+`kxtbcas-numeric.bst` is the bundled author-format layer for Scientific
+Bulletin-style numeric references: family name first, given-name initials
+without full stops, three authors followed by `et al.`, and no ISSN output.
+Journal abbreviations still depend on correct exported bibliography metadata.

@@ -11,7 +11,13 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
-from sci_manuscript.compile import CjkProbeResult, CompileResult
+from sci_manuscript.compile import (
+    CjkProbeResult,
+    CompileResult,
+    parse_overfull_boxes,
+    validate_revision_layout,
+)
+from sci_manuscript.diff import _separate_inline_math_from_diff_markup
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     MetadataError,
@@ -156,7 +162,7 @@ def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
     assert r"\input{sections/01_manuscript}" in manuscript
     assert r"\usepackage{indentfirst}" in manuscript
     assert r"\setlength{\parindent}" not in manuscript
-    assert r"\bibliographystyle{unsrtnat}" in manuscript
+    assert r"\bibliographystyle{kxtbcas-numeric}" in manuscript
     assert r"\bibliography{references}" in manuscript
     assert r"\clearpage" not in manuscript
     assert "kxtbsummary" not in manuscript
@@ -566,6 +572,49 @@ def test_empty_versioned_review_location_registry_is_valid(tmp_path: Path) -> No
     )
     (tmp_path / "manuscript_marked.aux").write_text("", encoding="utf-8")
     assert _calculate_locations(tmp_path) == {}
+
+
+def test_revision_layout_qa_rejects_marked_specific_overflow(
+    tmp_path: Path,
+) -> None:
+    common = (
+        "warning: manuscript.tex:13: Overfull \\hbox (2.57132pt too wide) "
+        "in paragraph at lines 13--13\n"
+    )
+    marked = common.replace("manuscript.tex", "manuscript_marked.tex") + (
+        "warning: manuscript_marked.tex:164: Overfull \\hbox "
+        "(226.45685pt too wide) in paragraph at lines 160--164\n"
+    )
+    assert len(parse_overfull_boxes(marked + marked)) == 2
+    report = tmp_path / "revision_layout_qa.txt"
+    with pytest.raises(WorkflowError, match="226.46 pt"):
+        validate_revision_layout(common, marked, report)
+    assert "Marked-specific overfull boxes: 1" in report.read_text(encoding="utf-8")
+
+
+def test_revision_layout_qa_accepts_only_clean_baseline_overflow(
+    tmp_path: Path,
+) -> None:
+    clean = (
+        "warning: manuscript.tex:13: Overfull \\hbox (2.57132pt too wide) "
+        "in paragraph at lines 13--13\n"
+    )
+    marked = clean.replace("manuscript.tex", "manuscript_marked.tex")
+    report = tmp_path / "revision_layout_qa.txt"
+    assert validate_revision_layout(clean, marked, report) == report
+    assert "Result: PASS" in report.read_text(encoding="utf-8")
+
+
+def test_diff_markup_separates_inline_math_from_line_decoration() -> None:
+    source = (
+        r"\DIFadd{中文 $A \longrightarrow B$ 文本} "
+        r"\DIFdel{old \(x+y\) text}"
+    )
+    rewritten = _separate_inline_math_from_diff_markup(source)
+    assert rewritten == (
+        r"\DIFadd{中文 }\DIFaddMath{$A \longrightarrow B$}\DIFadd{ 文本} "
+        r"\DIFdel{old }\DIFdelMath{\(x+y\)}\DIFdel{ text}"
+    )
 
 
 @pytest.mark.integration

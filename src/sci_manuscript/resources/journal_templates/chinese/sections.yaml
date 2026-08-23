@@ -1,6 +1,6 @@
 bibliography:
   package: "% Bibliography support is supplied by kxtbcas."
-  style: unsrtnat
+  style: kxtbcas-numeric
 
 frontmatter:
   file: 00_frontmatter.tex
