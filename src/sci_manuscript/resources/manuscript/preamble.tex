@@ -36,6 +36,23 @@
 \ifXeTeX
   \usepackage{fontspec}
   %%CJK_PACKAGE%%
+  % The Chinese publisher class prefers local SimSun or native macOS CJK fonts.
+  % Runtime staging also supplies Fandol; select it only when those preferred
+  % choices are unavailable so CI and headless Linux builds remain portable.
+  \ifcsname kxtbsetcjkfontfiles\endcsname
+    \IfFileExists{SimSun.ttf}{}{%
+      \IfFontExistsTF{Songti SC}{}{%
+        \IfFontExistsTF{STSong}{}{%
+          \IfFileExists{FandolSong-Regular.otf}{%
+            \kxtbsetcjkfontfiles
+              {FandolSong-Regular.otf}
+              {FandolSong-Bold.otf}
+              {FandolSong-Regular.otf}%
+          }{}%
+        }%
+      }%
+    }%
+  \fi
 \else
   \usepackage[T1]{fontenc}
   \usepackage[utf8]{inputenc}
