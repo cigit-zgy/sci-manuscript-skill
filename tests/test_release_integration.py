@@ -11,7 +11,11 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, doctor, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
-from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, REVISION_RUNTIME
+from sci_manuscript.diff import (
+    CJK_DIFF_BOUNDARY,
+    REVIEW_REGISTRY_HEADER,
+    REVISION_RUNTIME,
+)
 from sci_manuscript.workspace import (
     ensure_submission_workspace,
     load_project,
@@ -611,7 +615,7 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     ).read_text(encoding="utf-8")
     assert r"\DIFdel{" in marked_source
     assert r"\DIFaddReview{" in marked_source
-    assert "sciCJKDiffBoundary" not in marked_source
+    assert CJK_DIFF_BOUNDARY not in marked_source
     assert (retained_runs[0] / "response_source" / "response_letter.tex").is_file()
     assert (retained_runs[0] / "cover_source" / "cover_letter.tex").is_file()
     assert not (revision / "response" / "response_letter.tex").exists()
@@ -683,6 +687,6 @@ def test_chinese_review_scope_marks_only_changed_abstract_text_and_build_keeps_m
     assert r"\sciReviewStart{1-1}" in marked_source
     assert "第一句保持不变。" in marked_source
     assert r"\DIFaddReview{第一句保持不变。" not in marked_source
-    assert "sciCJKDiffBoundary" not in marked_source
+    assert CJK_DIFF_BOUNDARY not in marked_source
     _assert_provenance_colors(marked, tmp_path / "rendered_abstract_review")
     shutil.rmtree(manuscript / "tmp")
