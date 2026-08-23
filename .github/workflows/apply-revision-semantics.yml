@@ -41,6 +41,17 @@ jobs:
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
           python tools/apply_revision_semantics.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('README.md')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              'use a green\nstraight underline; unchanged text inside the scope remains unmarked.',
+              'use a green straight underline; unchanged text inside the scope remains unmarked.',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
       - name: Install development dependencies
         run: python -m pip install -e '.[dev]'
       - name: Normalize and validate source
