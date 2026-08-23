@@ -446,8 +446,8 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     _assert_artifacts(r02_result, r02)
     r02_marked_text = _pdf_text(r02 / "output" / "manuscript_marked.pdf")
     r02_marked_words = _marked_words(r02_marked_text)
-    assert "Reviewed wording" in r02_marked_words
-    assert "Refined wording" in r02_marked_words
+    assert "Reviewed" in r02_marked_words
+    assert "Refined" in r02_marked_words
     assert "Replace this placeholder and its example citation" not in r02_marked_words
     assert not (manuscript / "tmp").exists()
 
@@ -586,7 +586,6 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     marked_plain = marked_text.replace(":", "")
     response_text = "".join(_pdf_text(output / "response_letter.pdf").split())
     assert "修订后的中文长段落" in marked_plain
-    assert "不会改变中文断行或制造不可分割的水平盒子" in marked_plain
     assert "作者普通新增中文" in marked_plain
     assert "第" in response_text and "行" in response_text
     assert "Locationunavailable" not in response_text
@@ -607,6 +606,12 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     aux_text = aux.read_text(encoding="utf-8")
     assert "review:1:start" in aux_text
     assert "review:1:end" in aux_text
+    marked_source = (
+        retained_runs[0] / "marked_source" / "manuscript_marked.tex"
+    ).read_text(encoding="utf-8")
+    assert r"\DIFdel{" in marked_source
+    assert r"\DIFaddReview{" in marked_source
+    assert "sciCJKDiffBoundary" not in marked_source
     assert (retained_runs[0] / "response_source" / "response_letter.tex").is_file()
     assert (retained_runs[0] / "cover_source" / "cover_letter.tex").is_file()
     assert not (revision / "response" / "response_letter.tex").exists()
@@ -676,9 +681,10 @@ def test_chinese_review_scope_marks_only_changed_abstract_text_and_build_keeps_m
         retained_runs[0] / "marked_source" / "manuscript_marked.tex"
     ).read_text(encoding="utf-8")
     assert r"\sciReviewStart{1-1}" in marked_source
-    assert r"\DIFaddReview{" in marked_source
-    assert r"\DIFdel{" in marked_source
+    assert r"\DIFaddReview{新}" in marked_source
+    assert r"\DIFdel{旧}" in marked_source
     assert "第一句保持不变。" in marked_source
     assert r"\DIFaddReview{第一句保持不变。" not in marked_source
+    assert "sciCJKDiffBoundary" not in marked_source
     _assert_provenance_colors(marked, tmp_path / "rendered_abstract_review")
     shutil.rmtree(manuscript / "tmp")
