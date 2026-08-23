@@ -32,7 +32,7 @@ not write reviewer-response prose on the user's behalf.
 | Check environment | Run `sci-manuscript doctor`; read [environment.md](references/environment.md) only for a blocker |
 | Start a paper | Collect project, journal, publisher, language, article type, author roles, and optional bibliography; if no author library is configured, route to `sci-manuscript authors configure PATH`, then run `init` |
 | Build | Run `build`; r00 retains clean output, while revision rounds retain both clean and adjacent marked PDFs; do not change TeX or create a revision |
-| Start revision | Read the response/revision parts of [workflow.md](references/workflow.md); run `revision` only after explicit confirmation |
+| Start revision | Read the response/revision parts of [workflow.md](references/workflow.md) and the normative [revision semantics](references/revision_semantics.md); run `revision` only after explicit confirmation |
 | Prepare submission | Confirm all user responses are complete; run `submission`, which must pass clean/marked layout QA |
 | Roll back or reindex | Explain the archive/digest transaction, obtain confirmation, then run the exact command |
 | Synchronize bibliography | Use only a user-specified BibTeX export with `sync-bib` |
@@ -53,12 +53,21 @@ publisher resource only to diagnose that exact publisher build.
 - `manuscript.tex` is a user-owned composition root. Builds read it but never
   overwrite it.
 - `\review{ID}{text}` is the only manual reviewer-provenance scope for new
-  work. The wrapper itself is visually transparent: adjacent `latexdiff`
-  determines the actual changed spans, only additions inside that scope are
-  rendered as reviewer-linked green changes, and unchanged text inside the
-  scope remains ordinary manuscript text. Deletions remain red everywhere;
-  additions outside the scope remain author-blue. Legacy `\user{text}`
+  work. It is metadata, not visual markup. The wrapper is removed before
+  structural comparison and stored as a sidecar character interval map. Only
+  actual additions that fall inside those intervals become reviewer-green;
+  unchanged text remains ordinary manuscript text. Deletions remain red;
+  additions outside reviewer intervals remain author-blue. Legacy `\user{text}`
   remains readable but should not be added.
+- Revision comparison follows the four-layer contract in
+  `references/revision_semantics.md`: provenance extraction, provenance-free
+  structural diff, conservative refinement, then semantic rendering.
+- Character refinement is permitted only for TeX-structure-free prose with
+  `SequenceMatcher` similarity at least `0.70` and a maximum replacement size
+  of `2000` characters. Otherwise the replacement remains atomic.
+- Display mathematics uses whole-equation structural comparison. Text line
+  decorations never scan mathematical content; math changes use semantic color
+  only.
 - Successful operations remove lazy `tmp/`; failed runs may retain diagnostics.
 - Editable `response/responses.tex` and `submission/cover_letter_body.tex`
   sources are created once and not replaced by later builds. Complete
@@ -102,20 +111,16 @@ overflow absent from clean; the durable result is
 global `\sloppy`, unconditional `\emergencystretch`, smaller body type, altered
 geometry, or hand-inserted line breaks. The automated comparison cannot decide
 whether small shared overfull boxes are visually harmless, so validate
-extractable PDF text and visually inspect marked/response pages. Never
-publish compiler intermediates, flattened TeX, location registries, caches, test
-PDFs, or private paths.
+extractable PDF text and visually inspect marked/response pages. Never publish
+compiler intermediates, flattened TeX, location registries, caches, test PDFs,
+or private paths.
 
-Automatic revision provenance uses three non-overlapping conventions: ordinary
-author additions detected by latexdiff are blue with a wave underline,
-deletions are red with strikeout, and actual latexdiff additions occurring
-inside reviewer-linked `\review{}` scopes are green with a straight underline.
-Text that is unchanged relative to the direct parent remains unmarked even when
-it is enclosed by `\review{}`. In Chinese marked manuscripts, all three line
-decorations continue through CJK punctuation instead of skipping punctuation.
-`\user{}` is backward-compatible only and has the same ordinary-addition
-semantics. Structural wrappers stay transparent, while mathematics is rendered
-through a dedicated zero-width overlay path and separated from line-decoration
-scanners. Do not wrap arbitrary latexdiff or reviewer blocks as one `ulem`,
-`soul`, or `xeCJKfntef` argument; that can turn mixed CJK/math content into
-unbreakable boxes and alter the clean manuscript's geometry.
+Automatic revision provenance has three mutually exclusive visible states:
+ordinary author additions are blue with a wave underline, deletions are red
+with strikeout, and reviewer/editor-linked additions are green with a straight
+underline. Unchanged text is never colored because of `\review{}` alone. In
+Chinese marked manuscripts, text decorations continue through CJK punctuation.
+Mathematics follows the same semantic colors but is excluded from text
+line-decoration scanners; display equations are compared atomically. Reviewer
+line locations are generated in a separate transparent compilation and cannot
+change marked rendering.
