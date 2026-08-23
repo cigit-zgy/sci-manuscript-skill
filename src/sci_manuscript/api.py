@@ -267,16 +267,20 @@ class ManuscriptProject:
         engine: str | None = None,
         keep_temp: bool = False,
     ) -> LifecycleResult:
-        """Compile one clean manuscript without changing its source."""
+        """Compile clean output and retain the adjacent marked PDF for revisions."""
         latest = load_project(self.root)
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
         with temporary_run(self.root, keep_temp) as run_dir:
             clean = build_clean_manuscript(config, selected, run_dir, engine)
+            artifacts = [Artifact("Clean manuscript", clean)]
+            if selected > 0:
+                marked = build_marked_manuscript(config, selected, run_dir, engine)
+                artifacts.append(Artifact("Marked manuscript", marked.pdf))
         return LifecycleResult(
             "build",
             revision_directory_name(selected),
-            (Artifact("Clean manuscript", clean),),
+            tuple(artifacts),
         )
 
     def start_revision(

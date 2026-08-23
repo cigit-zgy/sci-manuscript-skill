@@ -612,3 +612,73 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     assert not (revision / "response" / "response_letter.tex").exists()
     assert not (revision / "submission" / "cover_letter.tex").exists()
     shutil.rmtree(manuscript / "tmp")
+
+
+def test_chinese_review_scope_marks_only_changed_abstract_text_and_build_keeps_marked(
+    tmp_path: Path,
+) -> None:
+    """A review wrapper is provenance scope; unchanged abstract text stays unmarked."""
+    _require_toolchain()
+    project_dir = tmp_path / "Chinese reviewer diff project"
+    initialize_manuscript(
+        project_dir,
+        title="审稿修改语义测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_two",),
+        authors_path=_author_library(tmp_path / "review_authors.yaml"),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    initial = manuscript / "initial_submission"
+    frontmatter = initial / "sections" / "00_frontmatter.tex"
+    frontmatter.write_text(
+        r"""\cnabstract{第一句保持不变。第二句使用旧表述。}
+\cnkeywords{结构化对象；初稿}
+\enabstract{The first sentence is unchanged. The second sentence uses old wording.}
+\enkeywords{structured object; original}
+""",
+        encoding="utf-8",
+    )
+    body = initial / "sections" / "01_manuscript.tex"
+    body.write_text("原有正文。\n", encoding="utf-8")
+    project = ManuscriptProject(manuscript)
+    project.start_revision(
+        reviews=_review_file(tmp_path / "reviews_abstract.md", 1), confirmed=True
+    )
+    revision = manuscript / "revision_01"
+    (revision / "sections" / "00_frontmatter.tex").write_text(
+        r"""\cnabstract{\review{1-1}{第一句保持不变。第二句使用新表述。}}
+\cnkeywords{结构化对象；初稿}
+\enabstract{The first sentence is unchanged. The second sentence uses old wording.}
+\enkeywords{structured object; original}
+""",
+        encoding="utf-8",
+    )
+    (revision / "sections" / "01_manuscript.tex").write_text(
+        "原有正文。\n作者自行增加一句。\n",
+        encoding="utf-8",
+    )
+
+    result = project.build(engine="tectonic", keep_temp=True)
+    assert {artifact.label for artifact in result.artifacts} == {
+        "Clean manuscript",
+        "Marked manuscript",
+    }
+    marked = revision / "output" / "manuscript_marked.pdf"
+    assert marked.is_file()
+    retained_runs = list((manuscript / "tmp").glob("run_*"))
+    assert len(retained_runs) == 1
+    marked_source = (
+        retained_runs[0] / "marked_source" / "manuscript_marked.tex"
+    ).read_text(encoding="utf-8")
+    assert r"\sciReviewStart{1-1}" in marked_source
+    assert r"\DIFaddReview{" in marked_source
+    assert r"\DIFdel{" in marked_source
+    assert "第一句保持不变。" in marked_source
+    assert r"\DIFaddReview{第一句保持不变。" not in marked_source
+    _assert_provenance_colors(marked, tmp_path / "rendered_abstract_review")
+    shutil.rmtree(manuscript / "tmp")

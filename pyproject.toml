@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sci-manuscript-skill"
-version = "1.0.0"
+version = "1.1.0"
 description = "Reproducible LaTeX scientific manuscript lifecycle management."
 readme = "README.md"
 requires-python = ">=3.11"

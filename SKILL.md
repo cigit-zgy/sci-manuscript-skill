@@ -31,7 +31,7 @@ not write reviewer-response prose on the user's behalf.
 | --- | --- |
 | Check environment | Run `sci-manuscript doctor`; read [environment.md](references/environment.md) only for a blocker |
 | Start a paper | Collect project, journal, publisher, language, article type, author roles, and optional bibliography; if no author library is configured, route to `sci-manuscript authors configure PATH`, then run `init` |
-| Build | Run `build`; do not change TeX or create a revision |
+| Build | Run `build`; r00 retains clean output, while revision rounds retain both clean and adjacent marked PDFs; do not change TeX or create a revision |
 | Start revision | Read the response/revision parts of [workflow.md](references/workflow.md); run `revision` only after explicit confirmation |
 | Prepare submission | Confirm all user responses are complete; run `submission`, which must pass clean/marked layout QA |
 | Roll back or reindex | Explain the archive/digest transaction, obtain confirmation, then run the exact command |
@@ -52,9 +52,13 @@ publisher resource only to diagnose that exact publisher build.
   custom publisher creates `references/journal_template/`.
 - `manuscript.tex` is a user-owned composition root. Builds read it but never
   overwrite it.
-- `\review{ID}{text}` is the only manual provenance wrapper for new work.
-  Ordinary additions and deletions are detected by adjacent `latexdiff`;
-  legacy `\user{text}` remains readable but should not be added.
+- `\review{ID}{text}` is the only manual reviewer-provenance scope for new
+  work. The wrapper itself is visually transparent: adjacent `latexdiff`
+  determines the actual changed spans, only additions inside that scope are
+  rendered as reviewer-linked green changes, and unchanged text inside the
+  scope remains ordinary manuscript text. Deletions remain red everywhere;
+  additions outside the scope remain author-blue. Legacy `\user{text}`
+  remains readable but should not be added.
 - Successful operations remove lazy `tmp/`; failed runs may retain diagnostics.
 - Editable `response/responses.tex` and `submission/cover_letter_body.tex`
   sources are created once and not replaced by later builds. Complete
@@ -104,8 +108,10 @@ PDFs, or private paths.
 
 Automatic revision provenance uses three non-overlapping conventions: ordinary
 author additions detected by latexdiff are blue with a wave underline,
-deletions are red with strikeout, and reviewer-linked `\review{}` additions are
-green with a straight underline. In Chinese marked manuscripts, all three line
+deletions are red with strikeout, and actual latexdiff additions occurring
+inside reviewer-linked `\review{}` scopes are green with a straight underline.
+Text that is unchanged relative to the direct parent remains unmarked even when
+it is enclosed by `\review{}`. In Chinese marked manuscripts, all three line
 decorations continue through CJK punctuation instead of skipping punctuation.
 `\user{}` is backward-compatible only and has the same ordinary-addition
 semantics. Structural wrappers stay transparent, while mathematics is rendered

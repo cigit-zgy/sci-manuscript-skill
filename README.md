@@ -11,7 +11,7 @@ packages. It never writes scientific prose or decides how to answer reviewers.
 The images below are equal-size renders from the anonymous test lifecycle, not
 mockups. The marked-manuscript contract is: ordinary author additions detected
 by latexdiff use a blue wave underline, deletions use red strikeout, and
-reviewer-linked text uses a green straight underline.
+only actual additions inside reviewer-linked `\review{}` scopes use a green straight underline; unchanged text inside the scope remains unmarked.
 
 | Marked manuscript | Response letter with location |
 | --- | --- |
@@ -122,7 +122,7 @@ flowchart TD
 | `authors configure/list/show` | Manage reusable user-level author profiles |
 | `init` | Create and compile `PROJECT/manuscript/initial_submission` |
 | `status` | Show latest round, parent, metadata, and final artifacts |
-| `build` | Compile one clean manuscript without changing sources |
+| `build` | Compile clean output; revision rounds also retain the adjacent marked PDF |
 | `revision` | Confirm and create exactly the next adjacent revision |
 | `rollback` | Archive an untouched newest revision; refuse edited sources |
 | `reindex` | Transactionally close revision-number gaps |
@@ -150,7 +150,7 @@ initialize_manuscript(
 
 project = ManuscriptProject("/path/to/existing-project")
 status = project.status()
-clean = project.build()
+build = project.build()
 revision = project.start_revision(reviews="reviews.md", confirmed=True)
 package = project.prepare_submission()
 ```

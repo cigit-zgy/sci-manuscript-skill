@@ -58,7 +58,7 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--engine", choices=("auto", "tectonic", "latex"), default="auto")
     for command, help_text in (
         ("status", "Show project status."),
-        ("build", "Compile a clean manuscript."),
+        ("build", "Compile clean output and a marked PDF for revisions."),
         ("submission", "Build submission artifacts."),
     ):
         child = commands.add_parser(command, help=help_text)

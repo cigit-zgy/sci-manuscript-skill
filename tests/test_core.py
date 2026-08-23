@@ -640,3 +640,42 @@ def test_init_api_returns_structured_result(tmp_path: Path) -> None:
         manuscript / "initial_submission", scientific_only=True
     )
     assert not (manuscript / "tmp").exists()
+
+
+def test_review_scope_marks_only_actual_latexdiff_additions() -> None:
+    from sci_manuscript.diff import (
+        INTERNAL_REVIEW_END,
+        INTERNAL_REVIEW_START,
+        _denest_provenance,
+        _expand_provenance_wrappers,
+        _mark_reviewer_additions,
+    )
+
+    expanded = _expand_provenance_wrappers(
+        r"\review{1-1,2-1}{Unchanged wording and revised wording.}"
+    )
+    assert expanded == (
+        rf"{INTERNAL_REVIEW_START}{{1-1,2-1}}"
+        rf"Unchanged wording and revised wording."
+        rf"{INTERNAL_REVIEW_END}{{1-1,2-1}}"
+    )
+
+    latexdiff = (
+        rf"\DIFadd{{{INTERNAL_REVIEW_START}{{1-1}}}}"
+        r"Unchanged wording \DIFdel{old}\DIFadd{new} wording."
+        rf"\DIFadd{{{INTERNAL_REVIEW_END}{{1-1}}}}"
+        r" Outside \DIFadd{author addition}."
+    )
+    classified = _mark_reviewer_additions(_denest_provenance(latexdiff))
+    assert r"Unchanged wording " in classified
+    assert r"\DIFdel{old}" in classified
+    assert r"\DIFaddReview{new}" in classified
+    assert r"\DIFadd{author addition}" in classified
+    assert r"\DIFaddReview{Unchanged wording" not in classified
+
+
+def test_nested_review_scope_is_rejected() -> None:
+    from sci_manuscript.diff import _expand_provenance_wrappers
+
+    with pytest.raises(WorkflowError, match="Nested"):
+        _expand_provenance_wrappers(r"\review{1-1}{outer \review{2-1}{inner}}")
