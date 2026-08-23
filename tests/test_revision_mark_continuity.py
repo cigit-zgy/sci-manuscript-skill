@@ -112,8 +112,8 @@ STAR U: \CJKunderline*[format=\color{RevisionGreen},textformat=\color{black}]{�
 OLD U: \CJKunderline[format=\color{RevisionGreen},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
 STAR W: \CJKunderwave*[format=\color{RevisionBlue},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
 OLD W: \CJKunderwave[format=\color{RevisionBlue},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
-STAR S: \CJKsout*[format=\color{RevisionRed},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
-OLD S: \CJKsout[format=\color{RevisionRed},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
+STAR S: \CJKsout*[format=\color{RevisionRed},textformat=\color{RevisionRed}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
+OLD S: \CJKsout[format=\color{RevisionRed},textformat=\color{RevisionRed}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
 \end{document}
 """,
         encoding="utf-8",
