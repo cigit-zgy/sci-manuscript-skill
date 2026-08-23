@@ -365,6 +365,25 @@ def _refine_replacement(
     return "".join(pieces)
 
 
+def _replacement_shape(
+    segments: list[_DiffSegment],
+    index: int,
+) -> tuple[int, str] | None:
+    """Return the addition index and ignorable separator for one replacement."""
+    if segments[index].kind != "del" or index + 1 >= len(segments):
+        return None
+    if segments[index + 1].kind == "add":
+        return index + 1, ""
+    if (
+        index + 2 < len(segments)
+        and segments[index + 1].kind == "plain"
+        and segments[index + 2].kind == "add"
+        and _separator_is_diff_only(segments[index + 1].content)
+    ):
+        return index + 2, segments[index + 1].content
+    return None
+
+
 def _classify_region(
     text: str,
     provenance: ProvenanceSource,
@@ -376,14 +395,10 @@ def _classify_region(
     index = 0
     while index < len(segments):
         segment = segments[index]
-        if (
-            segment.kind == "del"
-            and index + 2 < len(segments)
-            and segments[index + 1].kind == "plain"
-            and segments[index + 2].kind == "add"
-            and _separator_is_diff_only(segments[index + 1].content)
-        ):
-            addition = segments[index + 2]
+        replacement = _replacement_shape(segments, index)
+        if replacement is not None:
+            addition_index, separator = replacement
+            addition = segments[addition_index]
             start, end = locator.locate(addition.content)
             full_document = addition.macro.endswith("FL")
             if _safe_character_refinement(segment.content, addition.content):
@@ -398,7 +413,7 @@ def _classify_region(
                 )
             else:
                 output.append(f"{segment.macro}{{{segment.content}}}")
-                output.append(segments[index + 1].content)
+                output.append(separator)
                 output.append(
                     _render_addition(
                         provenance,
@@ -407,7 +422,7 @@ def _classify_region(
                         full_document=full_document,
                     )
                 )
-            index += 3
+            index = addition_index + 1
             continue
 
         if segment.kind == "add":
