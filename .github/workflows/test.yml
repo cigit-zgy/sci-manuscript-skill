@@ -9,77 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  patch-cjk-diff:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: fix/reviewer-diff-semantics
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Apply reviewer-aware CJK tokenization patch once
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('src/sci_manuscript/diff.py')
-          text = path.read_text(encoding='utf-8')
-          if 'CJK_DIFF_BOUNDARY = "\\u200b"' not in text:
-              anchor = '''CHINESE_TEXT_COMMANDS = (\n    "cnabstract",\n    "cnkeywords",\n    "enabstract",\n    "enkeywords",\n    "firstauthorcn",\n    "firstauthoren",\n    "funding",\n    "entitle",\n)\n\n'''
-              replacement = anchor + '''# Zero-width token used only while diffing CJK prose. It is removed before\n# the marked source is compiled, so it cannot alter manuscript rendering.\nCJK_DIFF_BOUNDARY = "\\u200b"\n\n'''
-              if anchor not in text:
-                  raise SystemExit('CJK constant anchor not found')
-              text = text.replace(anchor, replacement, 1)
-
-              function_anchor = '''def _is_escaped(text: str, index: int) -> bool:\n    count = 0\n    cursor = index - 1\n    while cursor >= 0 and text[cursor] == "\\\\":\n        count += 1\n        cursor -= 1\n    return count % 2 == 1\n\n\n'''
-              function_replacement = function_anchor + '''def _is_cjk_diff_char(char: str) -> bool:\n    """Return whether one character should be isolated for CJK text diffing."""\n    codepoint = ord(char)\n    return (\n        0x3400 <= codepoint <= 0x4DBF\n        or 0x4E00 <= codepoint <= 0x9FFF\n        or 0xF900 <= codepoint <= 0xFAFF\n        or 0x20000 <= codepoint <= 0x2FA1F\n        or 0x3000 <= codepoint <= 0x303F\n        or 0xFF00 <= codepoint <= 0xFFEF\n    )\n\n\ndef _tokenize_cjk_for_diff(text: str) -> str:\n    """Insert removable zero-width boundaries so latexdiff can align CJK text."""\n    if not text:\n        return text\n    tex_structure = set("{}\\\\$%&#_^~")\n    output = [text[0]]\n    for previous, current in zip(text, text[1:], strict=True):\n        if (\n            not previous.isspace()\n            and not current.isspace()\n            and previous not in tex_structure\n            and current not in tex_structure\n            and (_is_cjk_diff_char(previous) or _is_cjk_diff_char(current))\n        ):\n            output.append(CJK_DIFF_BOUNDARY)\n        output.append(current)\n    return "".join(output)\n\n\ndef _remove_cjk_diff_boundaries(text: str) -> str:\n    """Remove every temporary CJK diff boundary before marked compilation."""\n    return text.replace(CJK_DIFF_BOUNDARY, "")\n\n\n'''
-              if function_anchor not in text:
-                  raise SystemExit('CJK function anchor not found')
-              text = text.replace(function_anchor, function_replacement, 1)
-
-              source_anchor = '''    old_text = strip_provenance_wrappers(\n        _flatten_tex(previous / "manuscript.tex", roots)\n    )\n    new_text = _expand_provenance_wrappers(\n        _flatten_tex(current / "manuscript.tex", roots)\n    )\n    old_source = source_dir / "old.tex"\n'''
-              source_replacement = '''    old_text = strip_provenance_wrappers(\n        _flatten_tex(previous / "manuscript.tex", roots)\n    )\n    new_text = _expand_provenance_wrappers(\n        _flatten_tex(current / "manuscript.tex", roots)\n    )\n    if config.language == "zh":\n        old_text = _tokenize_cjk_for_diff(old_text)\n        new_text = _tokenize_cjk_for_diff(new_text)\n    old_source = source_dir / "old.tex"\n'''
-              if source_anchor not in text:
-                  raise SystemExit('marked source anchor not found')
-              text = text.replace(source_anchor, source_replacement, 1)
-
-              result_anchor = '''    denested = _denest_provenance(result.stdout)\n    classified = _mark_reviewer_additions(denested)\n'''
-              result_replacement = '''    denested = _denest_provenance(result.stdout)\n    if config.language == "zh":\n        denested = _remove_cjk_diff_boundaries(denested)\n    classified = _mark_reviewer_additions(denested)\n'''
-              if result_anchor not in text:
-                  raise SystemExit('latexdiff result anchor not found')
-              text = text.replace(result_anchor, result_replacement, 1)
-              path.write_text(text, encoding='utf-8')
-
-              test_path = Path('tests/test_release_integration.py')
-              tests = test_path.read_text(encoding='utf-8')
-              tests = tests.replace(
-                  'from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, REVISION_RUNTIME\n',
-                  'from sci_manuscript.diff import (\n    CJK_DIFF_BOUNDARY,\n    REVIEW_REGISTRY_HEADER,\n    REVISION_RUNTIME,\n)\n',
-                  1,
-              )
-              tests = tests.replace(
-                  '    assert "sciCJKDiffBoundary" not in marked_source\n',
-                  '    assert CJK_DIFF_BOUNDARY not in marked_source\n',
-              )
-              test_path.write_text(tests, encoding='utf-8')
-
-          Path('.github/workflows/patch-cjk-diff-tokenization.yml').unlink(missing_ok=True)
-          PY
-          python -m compileall -q src tests
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m 'Tokenize CJK text before reviewer-aware latexdiff'
-            git push origin HEAD:fix/reviewer-diff-semantics
-          fi
-
   quality:
-    needs: patch-cjk-diff
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +33,6 @@ jobs:
           /tmp/sci-wheel/bin/sci-manuscript authors --help
 
   integration-release:
-    needs: patch-cjk-diff
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
