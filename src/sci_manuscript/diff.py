@@ -279,9 +279,7 @@ def _separator_is_diff_only(text: str) -> bool:
     return not stripped.strip()
 
 
-def _character_refinement_matcher(
-    old: str, new: str
-) -> SequenceMatcher[str] | None:
+def _character_refinement_matcher(old: str, new: str) -> SequenceMatcher[str] | None:
     """Return a matcher only for bounded, structurally safe, similar prose."""
     unsafe = set(r"\{}$%&#_^~")
     if any(char in unsafe for char in old + new):
@@ -409,9 +407,7 @@ def _classify_region(
             addition = segments[addition_index]
             start, end = locator.locate(addition.content)
             full_document = addition.macro.endswith("FL")
-            matcher = _character_refinement_matcher(
-                segment.content, addition.content
-            )
+            matcher = _character_refinement_matcher(segment.content, addition.content)
             if matcher is not None:
                 output.append(
                     _refine_replacement(
