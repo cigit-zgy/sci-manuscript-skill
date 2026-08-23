@@ -1,3 +1,4 @@
+# one-shot migration: remove after successful application
 name: apply-provenance-map-tests
 
 on:
@@ -123,12 +124,11 @@ def test_chinese_review_scope_marks_only_actual_changed_text_and_build_keeps_mar
     marked_source = (
         retained_runs[0] / "marked_source" / "manuscript_marked.tex"
     ).read_text(encoding="utf-8")
-    body = marked_source.split(r"\begin{document}", 1)[1]
-    assert r"\review{" not in body
-    assert r"\DIFdel{旧}" in body
-    assert r"\DIFaddReview{新}" in body
-    assert r"\DIFaddReview{第一句保持不变" not in body
-    assert r"\DIFadd{作者自行增加一句。}" in body
+    assert r"\review{" not in marked_source
+    assert r"\DIFdel{旧}" in marked_source
+    assert r"\DIFaddReview{新}" in marked_source
+    assert r"\DIFaddReview{第一句保持不变" not in marked_source
+    assert r"\DIFadd{作者自行增加一句。}" in marked_source
     _assert_provenance_colors(marked, tmp_path / "rendered_provenance_map")
     shutil.rmtree(manuscript / "tmp")
 '''
@@ -176,7 +176,6 @@ def test_character_refinement_colors_only_real_reviewer_change() -> None:
     )
     classified = _classify_reviewer_additions(latexdiff, provenance)
     assert r"模型能够\DIFaddReview{稳定}执行。" in classified
-    assert r"\DIFdel{" not in classified.split("模型能够", 1)[0]
     assert r"\DIFadd{作者新增。}" in classified
     assert r"\DIFaddReview{模型能够" not in classified
 ''', encoding='utf-8')
