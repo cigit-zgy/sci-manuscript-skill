@@ -26,9 +26,7 @@ from .workspace import ProjectConfig, WorkflowError
 
 ReviewScope = tuple[str, int, int]
 CJK_DIFF_BOUNDARY = r"\sciCJKDiffBoundary"
-_CJK_DIFF_BOUNDARY_PATTERN = re.compile(
-    re.escape(CJK_DIFF_BOUNDARY) + r"\s*\{\s*\}"
-)
+_CJK_DIFF_BOUNDARY_PATTERN = re.compile(re.escape(CJK_DIFF_BOUNDARY) + r"\s*\{\s*\}")
 
 
 def _strip_and_collect_provenance(
