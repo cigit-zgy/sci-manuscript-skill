@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -79,9 +80,7 @@ def _maximum_internal_gap(
     selected_rows = set(rows)
     columns = sorted({x for x, y in coordinates if y in selected_rows})
     assert columns
-    return max(
-        (right - left - 1 for left, right in zip(columns, columns[1:])), default=0
-    )
+    return max((right - left - 1 for left, right in pairwise(columns)), default=0)
 
 
 def test_starred_cjk_decorators_are_visually_continuous_across_punctuation(
