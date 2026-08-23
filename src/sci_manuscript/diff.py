@@ -717,6 +717,7 @@ def build_marked_manuscript(
         shutil.which("latexdiff") or "latexdiff",
         "--encoding=utf8",
         "--packages=none",
+        "--math-markup=WHOLE",
         f"--preamble={style}",
         "--disable-citation-markup",
         "--ignore-warnings",
