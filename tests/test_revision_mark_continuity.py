@@ -79,7 +79,9 @@ def _maximum_internal_gap(
     selected_rows = set(rows)
     columns = sorted({x for x, y in coordinates if y in selected_rows})
     assert columns
-    return max((right - left - 1 for left, right in zip(columns, columns[1:])), default=0)
+    return max(
+        (right - left - 1 for left, right in zip(columns, columns[1:])), default=0
+    )
 
 
 def test_starred_cjk_decorators_are_visually_continuous_across_punctuation(
@@ -158,4 +160,6 @@ OLD S: \CJKsout[format=\color{RevisionRed},textformat=\color{black}]{甲，乙�
         starred_gap = _maximum_internal_gap(coordinates, clusters[0])
         legacy_gap = _maximum_internal_gap(coordinates, clusters[1])
         assert starred_gap <= 8, f"{name}: starred mark contains {starred_gap}px gap"
-        assert legacy_gap >= 20, f"{name}: regression fixture no longer detects old gaps"
+        assert legacy_gap >= 20, (
+            f"{name}: regression fixture no longer detects old gaps"
+        )
