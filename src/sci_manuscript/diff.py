@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import re
 import shutil
+from itertools import pairwise
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -242,7 +243,7 @@ def _tokenize_cjk_for_diff(text: str) -> str:
         return text
     tex_structure = set("{}\\$%&#_^~")
     output = [text[0]]
-    for previous, current in zip(text, text[1:]):
+    for previous, current in pairwise(text):
         if (
             not previous.isspace()
             and not current.isspace()
