@@ -1,9 +1,9 @@
 name: apply-refinement-threshold
 
 on:
-  push:
+  pull_request:
     branches:
-      - refactor/revision-provenance-map-v2
+      - main
     paths:
       - .github/workflows/apply-refinement-threshold.yml
 
