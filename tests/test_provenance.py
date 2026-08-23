@@ -1,10 +1,12 @@
-"""Unit tests for reviewer provenance sidecar classification."""
+"""Unit tests for reviewer provenance and revision-refinement semantics."""
 
 from __future__ import annotations
 
 import pytest
 
 from sci_manuscript.diff import (
+    CHARACTER_REFINEMENT_THRESHOLD,
+    MAX_CHARACTER_REFINEMENT_CHARS,
     _classify_reviewer_additions,
     _safe_character_refinement,
 )
@@ -79,11 +81,27 @@ def test_unrelated_replacement_is_not_fragmented_by_character_matches() -> None:
     assert r"\DIFaddReview{Reviewed wording.}" in classified
 
 
+def test_character_refinement_policy_values_are_release_contract() -> None:
+    assert CHARACTER_REFINEMENT_THRESHOLD == 0.70
+    assert MAX_CHARACTER_REFINEMENT_CHARS == 2000
+
+
 def test_character_refinement_uses_seventy_percent_threshold() -> None:
     assert _safe_character_refinement("模型能够执行计算", "模型能够稳定执行计算")
     assert not _safe_character_refinement(
         "候选对象转化为规范结构化对象",
         "通过程序验证并经人工核查的候选对象进入正式结构化对象层",
+    )
+
+
+def test_character_refinement_rejects_tex_structural_content() -> None:
+    assert not _safe_character_refinement(
+        r"模型使用 $x$ 进行计算",
+        r"模型使用 $y$ 进行计算",
+    )
+    assert not _safe_character_refinement(
+        r"\textbf{旧结构}",
+        r"\textbf{新结构}",
     )
 
 
