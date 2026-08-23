@@ -43,3 +43,5 @@ jobs:
           git add -A
           git commit -m 'Align reviewer scopes across adjacent revisions'
           git push origin HEAD:fix/reviewer-diff-semantics
+
+# Triggered after helper creation so GitHub registers the workflow before execution.
