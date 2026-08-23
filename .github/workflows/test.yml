@@ -9,36 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  patch-cjk-tokenizer:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: fix/reviewer-diff-semantics
-          fetch-depth: 0
-      - name: Fix adjacent-character iteration once
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('src/sci_manuscript/diff.py')
-          text = path.read_text(encoding='utf-8')
-          old = 'for previous, current in zip(text, text[1:], strict=True):'
-          new = 'for previous, current in zip(text, text[1:]):'
-          if old in text:
-              path.write_text(text.replace(old, new, 1), encoding='utf-8')
-          PY
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/sci_manuscript/diff.py
-          if ! git diff --cached --quiet; then
-            git commit -m 'Fix CJK adjacent-character tokenizer iteration'
-            git push origin HEAD:fix/reviewer-diff-semantics
-          fi
-
   quality:
-    needs: patch-cjk-tokenizer
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +33,6 @@ jobs:
           /tmp/sci-wheel/bin/sci-manuscript authors --help
 
   integration-release:
-    needs: patch-cjk-tokenizer
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
