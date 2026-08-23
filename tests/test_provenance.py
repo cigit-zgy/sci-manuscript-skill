@@ -10,14 +10,12 @@ from sci_manuscript.workspace import WorkflowError
 
 
 def test_review_wrapper_is_removed_but_interval_is_retained() -> None:
-    source = extract_provenance(
-        r"Before \review{1-1,2-1}{模型能够稳定执行。} After"
-    )
+    source = extract_provenance(r"Before \review{1-1,2-1}{模型能够稳定执行。} After")
     assert source.text == "Before 模型能够稳定执行。 After"
     assert len(source.review_spans) == 1
     span = source.review_spans[0]
     assert span.review_ids == ("1-1", "2-1")
-    assert source.text[span.start:span.end] == "模型能够稳定执行。"
+    assert source.text[span.start : span.end] == "模型能够稳定执行。"
     assert split_by_review_provenance(source, span.start, span.end) == (
         (span.start, span.end, ("1-1", "2-1")),
     )
