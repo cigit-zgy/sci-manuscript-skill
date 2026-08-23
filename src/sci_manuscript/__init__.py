@@ -13,6 +13,9 @@ from .api import (
     initialize_manuscript,
 )
 from .errors import ManuscriptError
+from .review_semantics import install as _install_review_semantics
+
+_install_review_semantics()
 
 try:
     __version__ = version("sci-manuscript-skill")
