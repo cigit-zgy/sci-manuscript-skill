@@ -105,9 +105,10 @@ PDFs, or private paths.
 Automatic revision provenance uses three non-overlapping conventions: ordinary
 author additions detected by latexdiff are blue with a wave underline,
 deletions are red with strikeout, and reviewer-linked `\review{}` additions are
-green with a straight underline. `\user{}` is backward-compatible only and has
-the same ordinary-addition semantics. Structural wrappers stay transparent,
-while mathematics is rendered
+green with a straight underline. In Chinese marked manuscripts, all three line
+decorations continue through CJK punctuation instead of skipping punctuation.
+`\user{}` is backward-compatible only and has the same ordinary-addition
+semantics. Structural wrappers stay transparent, while mathematics is rendered
 through a dedicated zero-width overlay path and separated from line-decoration
 scanners. Do not wrap arbitrary latexdiff or reviewer blocks as one `ulem`,
 `soul`, or `xeCJKfntef` argument; that can turn mixed CJK/math content into
