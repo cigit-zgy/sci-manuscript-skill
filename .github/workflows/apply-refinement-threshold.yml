@@ -1,0 +1,65 @@
+name: apply-refinement-threshold
+
+on:
+  push:
+    branches:
+      - refactor/revision-provenance-map-v2
+    paths:
+      - .github/workflows/apply-refinement-threshold.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/revision-provenance-map-v2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Apply similarity guard and regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/sci_manuscript/diff.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''def _safe_character_refinement(old: str, new: str) -> bool:\n    """Restrict character-level refinement to prose, never TeX structure."""\n    unsafe = set(r"\\{}$%&#_^~")\n    return not any(char in unsafe for char in old + new)\n'''
+          new = '''def _safe_character_refinement(old: str, new: str) -> bool:\n    """Refine only structurally safe, genuinely similar prose replacements."""\n    unsafe = set(r"\\{}$%&#_^~")\n    if any(char in unsafe for char in old + new):\n        return False\n    return SequenceMatcher(a=old, b=new, autojunk=False).ratio() >= 0.60\n'''
+          if text.count(old) != 1:
+              raise SystemExit('safe refinement function did not match exactly once')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+
+          tests = Path('tests/test_provenance.py')
+          test_text = tests.read_text(encoding='utf-8')
+          test_text += r'''
+
+
+def test_unrelated_replacement_is_not_fragmented_by_character_matches() -> None:
+    provenance = extract_provenance(
+        r"\begin{document}\review{1-1}{Reviewed wording.}\end{document}"
+    )
+    latexdiff = (
+        r"\begin{document}"
+        r"\DIFdel{Replace this placeholder and its }"
+        r"\DIFadd{Reviewed wording.}"
+        r"\end{document}"
+    )
+    classified = _classify_reviewer_additions(latexdiff, provenance)
+    assert r"\DIFdel{Replace this placeholder and its }" in classified
+    assert r"\DIFaddReview{Reviewed wording.}" in classified
+    assert "Reviewed wording." in classified
+'''
+          tests.write_text(test_text, encoding='utf-8')
+          PY
+          python -m compileall -q src tests
+          rm .github/workflows/apply-refinement-threshold.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/sci_manuscript/diff.py tests/test_provenance.py .github/workflows/apply-refinement-threshold.yml
+          git commit -m 'Guard character refinement by similarity'
+          git push origin HEAD:refactor/revision-provenance-map-v2
