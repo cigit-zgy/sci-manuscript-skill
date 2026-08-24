@@ -241,6 +241,9 @@
 \newcommand{\cnkeywords}[1]{\gdef\kxtb@cnkeywords{#1}}
 \newcommand{\enabstract}[1]{\gdef\kxtb@enabstract{#1}}
 \newcommand{\enkeywords}[1]{\gdef\kxtb@enkeywords{#1}}
+\RenewDocumentEnvironment{abstract}{+b}{\gdef\kxtb@cnabstract{#1}}{}
+\NewDocumentEnvironment{englishabstract}{+b}{\gdef\kxtb@enabstract{#1}}{}
+\newcommand{\keywords}[1]{\gdef\kxtb@cnkeywords{#1}}
 \newcommand{\doi}[1]{\gdef\kxtb@doi{#1}}
 \newcommand{\citationline}[1]{\gdef\kxtb@citationline{#1}}
 \newcommand{\received}[1]{\gdef\kxtb@received{#1}}

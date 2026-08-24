@@ -221,9 +221,13 @@ Figure~\ref{fig:test} and citation~\cite{template2026} are included.
 \enauthor{Test Author$^{1,*}$}
 \affiliation{$^{1}$示例研究机构}
 \enaffiliation{$^{1}$Example Research Institute}
-\cnabstract{本文仅用于模板编译验证。}
-\cnkeywords{模板; 验证}
-\enabstract{Template compilation test.}
+\begin{abstract}
+本文仅用于模板编译验证。
+\end{abstract}
+\keywords{模板; 验证}
+\begin{englishabstract}
+Template compilation test.
+\end{englishabstract}
 \enkeywords{template; validation}
 \corrauthorcn{Test Author, test@example.org}
 \begin{document}

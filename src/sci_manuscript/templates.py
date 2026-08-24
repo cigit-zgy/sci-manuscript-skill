@@ -150,10 +150,21 @@ def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
     defaults = resources_root() / "manuscript" / "sections" / "default"
     source_plan = ([frontmatter] if frontmatter is not None else []) + plan
     for item in source_plan:
+        values = {"SECTION_TITLE": item["title"]}
+        if frontmatter is not None and item is frontmatter:
+            legacy_title = config.metadata.title
+            values.update(
+                {
+                    "TITLE_ZH": config.metadata.title_zh
+                    or (legacy_title if config.metadata.language == "zh" else ""),
+                    "TITLE_EN": config.metadata.title_en
+                    or (legacy_title if config.metadata.language == "en" else ""),
+                }
+            )
         render_template(
             defaults / item["source"],
             version / "sections" / item["file"],
-            {"SECTION_TITLE": item["title"]},
+            values,
         )
 
 

@@ -34,18 +34,12 @@ def _bilingual_metadata() -> ManuscriptMetadata:
         corresponding_authors=("liu_hong",),
         other_authors=(),
         submission=SubmissionSettings(False, False, False),
-        author_order=("zhao_guangyao", "liu_hong"),
-        title_zh="面向智能体操作的结构化对象层",
-        title_en="A structured object layer for AI-agent operation",
-        abstract_zh="中文摘要。",
-        abstract_en="English abstract.",
-        keywords_zh="污水处理；智能体",
-        keywords_en="wastewater treatment; AI agent",
-        funding="国家自然科学基金项目（52500063）",
+        funding=("国家自然科学基金项目（52500063）",),
+        author_biographies=("zhao_guangyao", "liu_hong"),
     )
 
 
-def test_new_bilingual_meta_schema_loads_order_and_corresponding(
+def test_workflow_meta_schema_loads_roles_and_frontmatter_selection(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "meta.yaml"
@@ -55,24 +49,18 @@ def test_new_bilingual_meta_schema_loads_order_and_corresponding(
   name: initial_submission
   parent:
 manuscript:
-  title:
-    zh: 中文标题
-    en: English title
-  abstract:
-    zh: 中文摘要。
-    en: English abstract.
-  keywords:
-    zh: 关键词一；关键词二
-    en: keyword one; keyword two
-  funding: 基金项目
   language: zh
   article_type: 观点
 journal:
   name: 科学通报
   publisher: chinese
 authors:
-  order: [zhao_guangyao, liu_hong]
+  first: [zhao_guangyao]
   corresponding: [liu_hong]
+  other: []
+frontmatter:
+  funding: [基金项目]
+  author_biographies: [zhao_guangyao, liu_hong]
 submission:
   cover_letter: false
   highlights: false
@@ -84,14 +72,12 @@ correspondence: {}
 
     metadata = load_meta(path)
 
-    assert metadata.title == "中文标题"
-    assert metadata.title_zh == "中文标题"
-    assert metadata.title_en == "English title"
-    assert metadata.abstract_zh == "中文摘要。"
-    assert metadata.abstract_en == "English abstract."
+    assert metadata.title == ""
     assert metadata.author_ids == ("zhao_guangyao", "liu_hong")
     assert metadata.first_authors == ("zhao_guangyao",)
     assert metadata.corresponding_authors == ("liu_hong",)
+    assert metadata.funding == ("基金项目",)
+    assert metadata.author_biographies == ("zhao_guangyao", "liu_hong")
 
 
 def test_bilingual_metadata_and_author_bios_render_for_chinese_publisher() -> None:
@@ -102,12 +88,10 @@ def test_bilingual_metadata_and_author_bios_render_for_chinese_publisher() -> No
         resolve_authors(metadata, library),
     )
 
-    assert r"\title{面向智能体操作的结构化对象层}" in rendered
-    assert r"\entitle{A structured object layer for AI-agent operation}" in rendered
-    assert r"\cnabstract{中文摘要。}" in rendered
-    assert r"\enabstract{English abstract.}" in rendered
-    assert r"\cnkeywords{污水处理；智能体}" in rendered
-    assert r"\enkeywords{wastewater treatment; AI agent}" in rendered
+    assert r"\title{" not in rendered
+    assert r"\entitle{" not in rendered
+    assert r"\cnabstract{" not in rendered
+    assert r"\enabstract{" not in rendered
     assert r"\funding{国家自然科学基金项目（52500063）}" in rendered
     assert (
         r"\firstauthorcn{赵光耀（1991--），男，博士，助理研究员，"
@@ -124,14 +108,14 @@ def test_save_meta_preserves_comments_with_bilingual_schema(tmp_path: Path) -> N
     path = tmp_path / "meta.yaml"
     save_meta(path, _bilingual_metadata())
     text = path.read_text(encoding="utf-8")
-    text = text.replace("    en:", "    # User English-title note.\n    en:", 1)
+    text = text.replace("  funding:", "  # User funding note.\n  funding:", 1)
     path.write_text(text, encoding="utf-8")
 
     save_meta(path, _bilingual_metadata())
 
     updated = path.read_text(encoding="utf-8")
-    assert "# User English-title note." in updated
-    assert "order:" in updated
+    assert "# User funding note." in updated
+    assert "first:" in updated
     assert "corresponding:" in updated
 
 
@@ -167,9 +151,10 @@ def test_minimal_init_creates_annotated_draft_without_compiling(
     manuscript = project / "manuscript"
     meta = manuscript / "initial_submission" / "meta.yaml"
     assert meta.is_file()
-    assert "title:" in meta.read_text(encoding="utf-8")
-    assert "abstract:" in meta.read_text(encoding="utf-8")
-    assert "order:" in meta.read_text(encoding="utf-8")
+    assert "\n  title:" not in meta.read_text(encoding="utf-8")
+    assert "\n  abstract:" not in meta.read_text(encoding="utf-8")
+    assert "first:" in meta.read_text(encoding="utf-8")
+    assert "author_biographies:" in meta.read_text(encoding="utf-8")
     assert not (manuscript / "initial_submission" / "manuscript.tex").exists()
     assert not (manuscript / "references" / "authors.yaml").exists()
     assert "Please edit meta.yaml before build." in capsys.readouterr().out
@@ -180,24 +165,18 @@ def test_minimal_init_creates_annotated_draft_without_compiling(
   name: initial_submission
   parent:
 manuscript:
-  title:
-    zh: 中文标题
-    en: English title
-  abstract:
-    zh: 中文摘要。
-    en: English abstract.
-  keywords:
-    zh: 关键词
-    en: keyword
-  funding:
   language: zh
   article_type: 观点
 journal:
   name: 科学通报
   publisher: chinese
 authors:
-  order: [zhao_guangyao, liu_hong]
+  first: [zhao_guangyao]
   corresponding: [liu_hong]
+  other: []
+frontmatter:
+  funding: []
+  author_biographies: [zhao_guangyao, liu_hong]
 submission:
   cover_letter: false
   highlights: false
@@ -225,7 +204,9 @@ correspondence: {}
 
     frontmatter = manuscript / "initial_submission" / "sections" / "00_frontmatter.tex"
     assert frontmatter.is_file()
-    assert not any(
-        command in frontmatter.read_text(encoding="utf-8")
-        for command in (r"\entitle", r"\cnabstract", r"\firstauthorcn")
-    )
+    frontmatter_text = frontmatter.read_text(encoding="utf-8")
+    assert r"\title{" in frontmatter_text
+    assert r"\entitle{" in frontmatter_text
+    assert r"\begin{abstract}" in frontmatter_text
+    assert r"\begin{englishabstract}" in frontmatter_text
+    assert r"\firstauthorcn" not in frontmatter_text

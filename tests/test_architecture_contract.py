@@ -94,9 +94,9 @@ def test_meta_round_trip_preserves_user_comments(tmp_path: Path) -> None:
     config = _project(tmp_path)
     path = config.round_dir(0) / "meta.yaml"
     generated = path.read_text(encoding="utf-8")
-    assert "# Manuscript title" in generated
+    assert "# Funding acknowledgements" in generated
     customized = generated.replace(
-        "  title:", "  # Keep this user planning note.\n  title:", 1
+        "  funding:", "  # Keep this user planning note.\n  funding:", 1
     )
     path.write_text(customized, encoding="utf-8")
 

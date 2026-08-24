@@ -191,6 +191,10 @@ def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
     frontmatter = (sections / "00_frontmatter.tex").read_text(encoding="utf-8")
     for command in (
         r"\title{",
+        r"\entitle{",
+    ):
+        assert command in frontmatter
+    for command in (
         r"\author{",
         r"\enauthor{",
         r"\affiliation{",

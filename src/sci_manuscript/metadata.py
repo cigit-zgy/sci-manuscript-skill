@@ -81,7 +81,7 @@ class CorrespondenceSettings:
 
 @dataclass(frozen=True)
 class ManuscriptMetadata:
-    """The complete editable configuration for one manuscript version."""
+    """Workflow configuration for one manuscript version."""
 
     title: str
     article_type: str
@@ -102,7 +102,8 @@ class ManuscriptMetadata:
     abstract_en: str = ""
     keywords_zh: str = ""
     keywords_en: str = ""
-    funding: str = ""
+    funding: tuple[str, ...] = ()
+    author_biographies: tuple[str, ...] = ()
 
     @property
     def author_ids(self) -> tuple[str, ...]:
@@ -214,6 +215,20 @@ def _author_group(value: Any, location: str, *, required: bool) -> tuple[str, ..
     return ids
 
 
+def _text_group(value: Any, location: str) -> tuple[str, ...]:
+    """Return one duplicate-free list of non-empty text values."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise MetadataError(f"{location} must be a list.")
+    items = tuple(
+        _text(item, f"{location}[{index}]") for index, item in enumerate(value)
+    )
+    if len(items) != len(set(items)):
+        raise MetadataError(f"{location} must not contain duplicate values.")
+    return items
+
+
 def _localized_text(
     value: Any,
     location: str,
@@ -266,6 +281,7 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         "manuscript",
         "journal",
         "authors",
+        "frontmatter",
         "submission",
         "correspondence",
     }
@@ -278,6 +294,15 @@ def load_meta(path: Path) -> ManuscriptMetadata:
     manuscript = _mapping(data.get("manuscript"), "manuscript")
     journal = _mapping(data.get("journal"), "journal")
     authors = _mapping(data.get("authors"), "authors")
+    frontmatter = _mapping(data.get("frontmatter", {}), "frontmatter")
+    unexpected_frontmatter = set(frontmatter) - {
+        "funding",
+        "author_biographies",
+    }
+    if unexpected_frontmatter:
+        raise MetadataError(
+            "Unsupported frontmatter keys: " + ", ".join(sorted(unexpected_frontmatter))
+        )
     current = _round(revision.get("round"), "revision.round")
     assert current is not None
     expected_name = revision_directory_name(current)
@@ -298,30 +323,79 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         raise MetadataError(
             f"journal.publisher must be one of: {', '.join(PUBLISHERS)}."
         )
-    title, title_zh, title_en = _localized_text(
-        manuscript.get("title"),
-        "manuscript.title",
-        language=language,
-        optional=False,
+    title = ""
+    title_zh = ""
+    title_en = ""
+    abstract_zh = ""
+    abstract_en = ""
+    keywords_zh = ""
+    keywords_en = ""
+    if "title" in manuscript:
+        title, title_zh, title_en = _localized_text(
+            manuscript.get("title"),
+            "manuscript.title",
+            language=language,
+            optional=False,
+        )
+    if "abstract" in manuscript:
+        _, abstract_zh, abstract_en = _localized_text(
+            manuscript.get("abstract"),
+            "manuscript.abstract",
+            language=language,
+            optional=True,
+        )
+    if "keywords" in manuscript:
+        _, keywords_zh, keywords_en = _localized_text(
+            manuscript.get("keywords"),
+            "manuscript.keywords",
+            language=language,
+            optional=True,
+        )
+    legacy_funding = _text(
+        manuscript.get("funding"), "manuscript.funding", optional=True
     )
-    _, abstract_zh, abstract_en = _localized_text(
-        manuscript.get("abstract", ""),
-        "manuscript.abstract",
-        language=language,
-        optional=True,
+    funding = _text_group(frontmatter.get("funding"), "frontmatter.funding")
+    if not funding and legacy_funding:
+        funding = (legacy_funding,)
+    author_biographies = _author_group(
+        frontmatter.get("author_biographies", []),
+        "frontmatter.author_biographies",
+        required=False,
     )
-    _, keywords_zh, keywords_en = _localized_text(
-        manuscript.get("keywords", ""),
-        "manuscript.keywords",
-        language=language,
-        optional=True,
-    )
-    funding = _text(manuscript.get("funding"), "manuscript.funding", optional=True)
-    if "order" in authors or "corresponding" in authors:
+    author_order: tuple[str, ...]
+    first_authors: tuple[str, ...]
+    corresponding_authors: tuple[str, ...]
+    other_authors: tuple[str, ...]
+    if "first" in authors or "other" in authors:
+        unexpected_authors = set(authors) - {"first", "corresponding", "other"}
+        if unexpected_authors:
+            raise MetadataError(
+                "Canonical authors schema contains unsupported keys: "
+                + ", ".join(sorted(unexpected_authors))
+            )
+        author_order = ()
+        first_authors = _author_group(
+            authors.get("first"), "authors.first", required=True
+        )
+        corresponding_authors = _author_group(
+            authors.get("corresponding"),
+            "authors.corresponding",
+            required=True,
+        )
+        other_authors = _author_group(
+            authors.get("other", []), "authors.other", required=False
+        )
+        duplicate_roles = set(first_authors) & set(other_authors)
+        if duplicate_roles:
+            raise MetadataError(
+                "authors.first and authors.other must not overlap: "
+                + ", ".join(sorted(duplicate_roles))
+            )
+    elif "order" in authors:
         unexpected_authors = set(authors) - {"order", "corresponding"}
         if unexpected_authors:
             raise MetadataError(
-                "New authors schema cannot mix legacy keys: "
+                "Released authors schema cannot mix keys: "
                 + ", ".join(sorted(unexpected_authors))
             )
         author_order = _author_group(
@@ -367,6 +441,16 @@ def load_meta(path: Path) -> ManuscriptMetadata:
             authors.get("other_author", []),
             "authors.other_author",
             required=False,
+        )
+    unknown_biographies = set(author_biographies) - {
+        *first_authors,
+        *other_authors,
+        *corresponding_authors,
+    }
+    if unknown_biographies:
+        raise MetadataError(
+            "frontmatter.author_biographies must reference selected authors: "
+            + ", ".join(sorted(unknown_biographies))
         )
     raw_submission = data.get("submission")
     if raw_submission is None:
@@ -447,30 +531,16 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         keywords_zh=keywords_zh,
         keywords_en=keywords_en,
         funding=funding,
+        author_biographies=author_biographies,
     )
 
 
 def _metadata_data(metadata: ManuscriptMetadata) -> dict[str, Any]:
     """Return the canonical editable metadata mapping."""
     manuscript: dict[str, Any] = {
-        "title": metadata.title,
         "language": metadata.language,
         "article_type": metadata.article_type,
     }
-    if metadata.title_zh or metadata.title_en:
-        manuscript["title"] = {
-            "zh": metadata.title_zh or None,
-            "en": metadata.title_en or None,
-        }
-        manuscript["abstract"] = {
-            "zh": metadata.abstract_zh or None,
-            "en": metadata.abstract_en or None,
-        }
-        manuscript["keywords"] = {
-            "zh": metadata.keywords_zh or None,
-            "en": metadata.keywords_en or None,
-        }
-        manuscript["funding"] = metadata.funding or None
     authors: dict[str, Any]
     if metadata.author_order:
         authors = {
@@ -479,9 +549,9 @@ def _metadata_data(metadata: ManuscriptMetadata) -> dict[str, Any]:
         }
     else:
         authors = {
-            "first_author": list(metadata.first_authors),
-            "corresponding_author": list(metadata.corresponding_authors),
-            "other_author": list(metadata.other_authors),
+            "first": list(metadata.first_authors),
+            "corresponding": list(metadata.corresponding_authors),
+            "other": list(metadata.other_authors),
         }
     return {
         "revision": {
@@ -499,6 +569,10 @@ def _metadata_data(metadata: ManuscriptMetadata) -> dict[str, Any]:
             "publisher": metadata.publisher,
         },
         "authors": authors,
+        "frontmatter": {
+            "funding": list(metadata.funding),
+            "author_biographies": list(metadata.author_biographies),
+        },
         "submission": {
             "cover_letter": metadata.submission.cover_letter,
             "highlights": metadata.submission.highlights,
@@ -541,19 +615,6 @@ def _add_meta_comments(data: CommentedMap) -> None:
     )
     manuscript = data["manuscript"]
     manuscript.yaml_set_comment_before_after_key(
-        "title", before="Manuscript title in zh and en when both are available."
-    )
-    if "abstract" in manuscript:
-        manuscript.yaml_set_comment_before_after_key(
-            "abstract", before="Bilingual abstract rendered into publisher frontmatter."
-        )
-        manuscript.yaml_set_comment_before_after_key(
-            "keywords", before="Bilingual keyword strings in publisher punctuation."
-        )
-        manuscript.yaml_set_comment_before_after_key(
-            "funding", before="Funding acknowledgement rendered by the publisher class."
-        )
-    manuscript.yaml_set_comment_before_after_key(
         "language", before="Manuscript language: en or zh."
     )
     manuscript.yaml_set_comment_before_after_key(
@@ -578,15 +639,23 @@ def _add_meta_comments(data: CommentedMap) -> None:
         )
     else:
         authors.yaml_set_comment_before_after_key(
-            "first_author", before="Author IDs come from references/authors.yaml."
+            "first", before="First-author IDs from the active authors.yaml."
         )
         authors.yaml_set_comment_before_after_key(
-            "corresponding_author",
+            "corresponding",
             before="Corresponding-author IDs; email is required in authors.yaml.",
         )
         authors.yaml_set_comment_before_after_key(
-            "other_author", before="Remaining author IDs in publication order."
+            "other", before="Remaining author IDs in publication order."
         )
+    frontmatter = data["frontmatter"]
+    frontmatter.yaml_set_comment_before_after_key(
+        "funding", before="Funding acknowledgements rendered by the publisher class."
+    )
+    frontmatter.yaml_set_comment_before_after_key(
+        "author_biographies",
+        before="Author IDs whose bilingual biographies appear in frontmatter.",
+    )
 
 
 def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
@@ -626,20 +695,6 @@ revision:
   name: initial_submission
   parent: null
 manuscript:
-  # Bilingual manuscript title.
-  title:
-    zh:
-    en:
-  # Bilingual abstract rendered into publisher frontmatter.
-  abstract:
-    zh:
-    en:
-  # Bilingual keywords using the target journal's punctuation.
-  keywords:
-    zh:
-    en:
-  # Funding acknowledgement; leave null when not applicable.
-  funding:
   # Required: en or zh.
   language:
   # Required journal article type.
@@ -650,10 +705,17 @@ journal:
   # Required packaged publisher key: chinese, elsevier, nature, or acs.
   publisher:
 authors:
-  # Publication order; the first ID is the first author.
-  order: []
-  # Corresponding-author IDs; every ID must also occur in order.
+  # First-author IDs from the active authors.yaml.
+  first: []
+  # Corresponding-author IDs; IDs may also occur under first or other.
   corresponding: []
+  # Remaining author IDs in publication order.
+  other: []
+frontmatter:
+  # Funding acknowledgements; leave the list empty when not applicable.
+  funding: []
+  # Author IDs whose bilingual biographies should appear in frontmatter.
+  author_biographies: []
 submission:
   cover_letter: true
   highlights: true
@@ -862,8 +924,6 @@ def render_publisher_metadata(
                 name = _latex_escape(_affiliation_text(affiliations[key], "en"))
                 lines.append(f"\\{command}[{name}]{{{name}}}")
     elif metadata.publisher == "chinese":
-        title_zh = _latex_escape(metadata.localized_title("zh"))
-        title_en = _latex_escape(metadata.localized_title("en"))
         labels_en = ", ".join(
             _author_label(item, selection, "en") for item in selection.authors
         )
@@ -888,18 +948,23 @@ def render_publisher_metadata(
             name = author.name_zh if language == "zh" else author.name_en
             return f"{_latex_escape(name)}, {_latex_escape(author.email)}"
 
-        first_zh = "; ".join(biography(item, "zh") for item in selection.first_authors)
-        first_en = "; ".join(biography(item, "en") for item in selection.first_authors)
-        corr_zh = "; ".join(
-            biography(item, "zh") for item in selection.corresponding_authors
+        selected_biographies = set(metadata.author_biographies)
+        first_biographies = tuple(
+            item
+            for item in selection.first_authors
+            if item.author_id in selected_biographies
         )
-        corr_en = "; ".join(
-            biography(item, "en") for item in selection.corresponding_authors
+        corresponding_biographies = tuple(
+            item
+            for item in selection.corresponding_authors
+            if item.author_id in selected_biographies
         )
+        first_zh = "; ".join(biography(item, "zh") for item in first_biographies)
+        first_en = "; ".join(biography(item, "en") for item in first_biographies)
+        corr_zh = "; ".join(biography(item, "zh") for item in corresponding_biographies)
+        corr_en = "; ".join(biography(item, "en") for item in corresponding_biographies)
         lines.extend(
             [
-                f"\\title{{{title_zh}}}",
-                f"\\entitle{{{title_en}}}",
                 f"\\author{{{labels_zh}}}",
                 f"\\enauthor{{{labels_en}}}",
                 f"\\affiliation{{{affiliation_zh}}}",
@@ -910,15 +975,10 @@ def render_publisher_metadata(
                 f"\\corrauthoren{{{corr_en}}}",
             ]
         )
-        for command, value in (
-            ("cnabstract", metadata.abstract_zh),
-            ("cnkeywords", metadata.keywords_zh),
-            ("enabstract", metadata.abstract_en),
-            ("enkeywords", metadata.keywords_en),
-            ("funding", metadata.funding),
-        ):
-            if value:
-                lines.append(f"\\{command}{{{_latex_escape(value)}}}")
+        if metadata.funding:
+            separator = "；" if metadata.language == "zh" else "; "  # noqa: RUF001
+            funding = separator.join(_latex_escape(item) for item in metadata.funding)
+            lines.append(f"\\funding{{{funding}}}")
     return "\n".join((*lines, ""))
 
 
