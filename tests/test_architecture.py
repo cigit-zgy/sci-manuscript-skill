@@ -48,12 +48,15 @@ def test_runtime_resources_are_package_data() -> None:
         assert (root / relative).is_file(), relative
 
 
-def test_revision_provenance_palette_contract_is_documented() -> None:
+def test_revision_semantics_contract_is_documented() -> None:
     style = (
         ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.tex"
     ).read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    semantics = (ROOT / "references" / "revision_semantics.md").read_text(
+        encoding="utf-8"
+    )
     for token in (
         r"\definecolor{RevisionAddedColor}{RGB}{0,92,153}",
         r"\definecolor{RevisionDeletedColor}{RGB}{220,45,45}",
@@ -65,7 +68,11 @@ def test_revision_provenance_palette_contract_is_documented() -> None:
         assert token in style
     assert "blue wave underline" in readme
     assert "green straight underline" in readme
-    assert "three non-overlapping conventions" in skill
+    assert "four independent stages" in skill
+    assert "similarity(old, new) >= 0.70" in semantics
+    assert "max(len(old), len(new)) <= 2000" in semantics
+    assert "--math-markup=WHOLE" in semantics
+    assert "Rendering is mutually exclusive" in semantics
 
 
 def test_no_legacy_public_architecture_strings() -> None:
