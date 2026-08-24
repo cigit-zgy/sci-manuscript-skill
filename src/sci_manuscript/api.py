@@ -28,7 +28,13 @@ from .metadata import (
     resolve_authors,
     resolve_signing_author,
 )
-from .response import build_response, init_response, parse_reviews
+from .response import (
+    ReviewAuditResult,
+    audit_reviews,
+    build_response,
+    init_response,
+    parse_reviews,
+)
 from .workspace import (
     ProjectConfig,
     WorkflowError,
@@ -68,6 +74,7 @@ class LifecycleResult:
     operation: str
     version: str
     artifacts: tuple[Artifact, ...]
+    review_audit: ReviewAuditResult | None = None
 
 
 @dataclass(frozen=True)
@@ -267,20 +274,23 @@ class ManuscriptProject:
         engine: str | None = None,
         keep_temp: bool = False,
     ) -> LifecycleResult:
-        """Compile clean output and retain the adjacent marked PDF for revisions."""
+        """Compile clean and marked outputs and audit revision completeness."""
         latest = load_project(self.root)
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
+        audit: ReviewAuditResult | None = None
         with temporary_run(self.root, keep_temp) as run_dir:
             clean = build_clean_manuscript(config, selected, run_dir, engine)
             artifacts = [Artifact("Clean manuscript", clean)]
             if selected > 0:
                 marked = build_marked_manuscript(config, selected, run_dir, engine)
                 artifacts.append(Artifact("Marked manuscript", marked.pdf))
+                audit = audit_reviews(config, selected, record_index=True)
         return LifecycleResult(
             "build",
             revision_directory_name(selected),
             tuple(artifacts),
+            audit,
         )
 
     def start_revision(
@@ -302,6 +312,14 @@ class ManuscriptProject:
         with temporary_run(self.root, keep_temp) as run_dir:
             child = start_revision(latest, target_round, run_dir, reviews_path)
             try:
+                comment_path = target / "response" / "reviewer_comments.md"
+                if reviews_path is None:
+                    template = (
+                        resources_root()
+                        / "reviewer_comments"
+                        / f"reviewer_comments_{child.language}.md"
+                    )
+                    shutil.copy2(template, comment_path)
                 response_source = init_response(child, target_round)
                 creation = finalize_revision_creation(child)
             except Exception:
@@ -312,6 +330,7 @@ class ManuscriptProject:
             "revision",
             revision_directory_name(target_round),
             (
+                Artifact("Reviewer comments", comment_path),
                 Artifact("Response source", response_source),
                 Artifact("Revision creation record", creation),
             ),
@@ -360,10 +379,13 @@ class ManuscriptProject:
         allow_placeholders: bool = False,
         keep_temp: bool = False,
     ) -> LifecycleResult:
-        """Build all final artifacts and the version-local submission package."""
+        """Build all final artifacts and run a non-blocking review audit."""
         latest = load_project(self.root)
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
+        audit = (
+            audit_reviews(config, selected, record_index=True) if selected > 0 else None
+        )
         with temporary_run(self.root, keep_temp) as run_dir:
             artifacts = _prepare_submission(
                 config,
@@ -371,9 +393,13 @@ class ManuscriptProject:
                 run_dir,
                 engine,
                 allow_placeholders,
+                audit,
             )
         return LifecycleResult(
-            "submission", revision_directory_name(selected), tuple(artifacts)
+            "submission",
+            revision_directory_name(selected),
+            tuple(artifacts),
+            audit,
         )
 
     def build_all(
@@ -411,12 +437,7 @@ def _compile_submission_source(
             sibling.is_file()
             and sibling != source
             and sibling.suffix.lower()
-            in {
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".pdf",
-            }
+            in {".png", ".jpg", ".jpeg", ".pdf"}
         ):
             shutil.copy2(sibling, stage / sibling.name)
     generate_metadata(config.project, config.round_dir(config.current_round), stage)
@@ -455,7 +476,7 @@ def _compile_cover_letter(
         ) from exc
     if template.count("%%COVER_BODY%%") != 1:
         raise WorkflowError(
-            f"Cover-letter template must contain one %%COVER_BODY%% token: "
+            "Cover-letter template must contain one %%COVER_BODY%% token: "
             f"{template_path}"
         )
     staged_source = stage / "cover_letter.tex"
@@ -476,12 +497,21 @@ def _compile_cover_letter(
     return target
 
 
+def _review_comments_available(config: ProjectConfig, round_number: int) -> bool:
+    path = config.round_dir(round_number) / "response" / "reviewer_comments.md"
+    try:
+        return any(block.comments for block in parse_reviews(path))
+    except WorkflowError:
+        return False
+
+
 def _prepare_submission(
     config: ProjectConfig,
     round_number: int,
     run_dir: Path,
     engine: str | None,
     allow_placeholders: bool,
+    audit: ReviewAuditResult | None,
 ) -> list[Artifact]:
     submission = ensure_submission_workspace(config, round_number)
     selection = resolve_authors(
@@ -525,14 +555,15 @@ def _prepare_submission(
             ),
             run_dir / "revision_layout_qa.txt",
         )
-        response_pdf = build_response(
-            config,
-            round_number,
-            marked.locations,
-            run_dir,
-            engine,
-            allow_placeholders,
-        )
+        if _review_comments_available(config, round_number):
+            response_pdf = build_response(
+                config,
+                round_number,
+                marked.locations,
+                run_dir,
+                engine,
+                allow_placeholders,
+            )
     stage = run_dir / "package_stage"
     stage.mkdir(parents=True, exist_ok=True)
     settings = config.metadata.submission
@@ -558,16 +589,22 @@ def _prepare_submission(
                 engine,
             )
     shutil.copy2(clean, stage / "manuscript.pdf")
-    if marked is not None and response_pdf is not None:
+    if marked is not None:
         shutil.copy2(marked.pdf, stage / "marked_manuscript.pdf")
+    if response_pdf is not None:
         shutil.copy2(response_pdf, stage / "response_letter.pdf")
-    shutil.copy2(submission / "checklist.md", stage / "checklist.md")
+    checklist = stage / "checklist.md"
+    shutil.copy2(submission / "checklist.md", checklist)
+    if audit is not None:
+        state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
+        with checklist.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n- Review completeness: **{state}**.\n")
     package = submission / "package"
     if package.exists():
         shutil.rmtree(package)
     shutil.copytree(stage, package)
     artifacts = [Artifact("Clean manuscript", clean)]
-    if marked is not None and response_pdf is not None:
+    if marked is not None:
         if layout_report is None:
             raise WorkflowError("Revision layout QA report was not generated.")
         published_layout_report = (
@@ -577,10 +614,11 @@ def _prepare_submission(
         artifacts.extend(
             [
                 Artifact("Marked manuscript", marked.pdf),
-                Artifact("Response letter", response_pdf),
                 Artifact("Revision layout QA", published_layout_report),
             ]
         )
+    if response_pdf is not None:
+        artifacts.append(Artifact("Response letter", response_pdf))
     for label, name in (
         ("Cover letter", "cover_letter.pdf"),
         ("Highlights", "highlights.pdf"),
