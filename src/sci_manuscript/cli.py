@@ -154,6 +154,19 @@ def _print_lifecycle(result: LifecycleResult, project: Path) -> None:
         print("Generated:")
         for artifact in result.artifacts:
             print(f"  {artifact.label}: {_relative(project, artifact.path)}")
+    audit = result.review_audit
+    if audit is None:
+        return
+    print("Review audit:")
+    for entry in audit.entries:
+        print(f"  {entry.review_id:<8} {entry.state}")
+    for issue in audit.issues:
+        label = issue.review_id or "review"
+        print(f"  WARNING {label}: {issue.message}")
+        for path in issue.paths:
+            print(f"    Path: {path}")
+    state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
+    print(f"Review audit result: {state} ({audit.complete}/{audit.total} complete)")
 
 
 def _print_status(result: StatusResult) -> None:
