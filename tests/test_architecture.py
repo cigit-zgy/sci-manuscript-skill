@@ -68,7 +68,7 @@ def test_revision_semantics_contract_is_documented() -> None:
         assert token in style
     assert "blue wave underline" in readme
     assert "green straight underline" in readme
-    assert "four independent stages" in skill
+    assert "four-layer contract" in skill
     assert "similarity(old, new) >= 0.70" in semantics
     assert "max(len(old), len(new)) <= 2000" in semantics
     assert "--math-markup=WHOLE" in semantics
