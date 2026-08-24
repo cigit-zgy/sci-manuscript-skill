@@ -60,16 +60,12 @@ def ensure_submission_workspace(config: ProjectConfig, round_number: int) -> Pat
     settings = config.metadata.submission
     resources = resources_root() / "submission"
     cover_source = target / "cover_letter.tex"
-    legacy_cover_source = target / "cover_letter_body.tex"
     if settings.cover_letter and not cover_source.exists():
-        if legacy_cover_source.is_file():
-            shutil.copy2(legacy_cover_source, cover_source)
-        else:
-            render_template(
-                resources / f"cover_letter_body_{config.language}.tex",
-                cover_source,
-                values,
-            )
+        render_template(
+            resources / f"cover_letter_body_{config.language}.tex",
+            cover_source,
+            values,
+        )
     if settings.highlights and not (target / "highlights.tex").exists():
         render_template(resources / "highlights.tex", target / "highlights.tex", values)
     checklist = target / "checklist.md"
@@ -177,11 +173,9 @@ def prepare_submission_artifacts(
     round_number: int,
     run_dir: Path,
     engine: str | None,
-    allow_placeholders: bool,
     audit: ReviewAuditResult | None,
 ) -> list[SubmissionArtifact]:
     """Build trusted submission artifacts and assemble the final package."""
-    del allow_placeholders  # Retained for the released public API compatibility.
     submission = ensure_submission_workspace(config, round_number)
     selection = resolve_authors(
         config.metadata,
@@ -234,7 +228,6 @@ def prepare_submission_artifacts(
                 marked.locations,
                 run_dir,
                 engine,
-                True,
             )
     stage = run_dir / "package_stage"
     stage.mkdir(parents=True, exist_ok=True)
@@ -273,9 +266,6 @@ def prepare_submission_artifacts(
         state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
         checklist_text += f"\n\n- Review completeness: **{state}**."
     checklist.write_text(checklist_text + "\n", encoding="utf-8")
-    legacy_package = submission / "package"
-    if legacy_package.exists():
-        shutil.rmtree(legacy_package)
     for name in GENERATED_SUBMISSION_FILES:
         generated = submission / name
         if generated.is_file():
@@ -290,11 +280,6 @@ def prepare_submission_artifacts(
     if marked is not None:
         if layout_report is None:
             raise WorkflowError("Revision layout QA report was not generated.")
-        legacy_layout_report = (
-            config.output_dir(round_number) / "revision_layout_qa.txt"
-        )
-        if legacy_layout_report.is_file():
-            legacy_layout_report.unlink()
         artifacts.append(SubmissionArtifact("Marked manuscript", marked.pdf))
     if response_pdf is not None:
         artifacts.append(SubmissionArtifact("Response letter", response_pdf))

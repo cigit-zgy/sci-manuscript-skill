@@ -54,8 +54,8 @@ sci-manuscript init --project /path/to/project
 
 The command creates a fully commented `initial_submission/meta.yaml` and prints
 `Please edit meta.yaml before build.` It does not compile, select authors, or
-invent manuscript metadata. The released parameter-rich initialization form
-remains available for automation and backward compatibility.
+invent manuscript metadata. Explicit command-line fields remain available for
+automated initialization.
 
 Build:
 
@@ -82,7 +82,7 @@ manuscript/
 Users edit:
 
 - `meta.yaml`
-- optional project `references/authors.yaml` overrides for legacy/custom workspaces
+- optional project `references/authors.yaml` overrides
 - manuscript sections
 - figures and tables
 - reviewer responses
@@ -96,7 +96,7 @@ The Skill manages internally:
 
 The bundled `resources/authors.yaml` is the default reusable person-level
 library and is not copied by metadata-first initialization. A pre-existing
-project author library remains supported. Packaged resources are resolved
+project author library is resolved first. Packaged resources are resolved
 during compilation and do not need to be copied into user projects.
 
 ## Workflow
@@ -133,12 +133,14 @@ the light-gray strikeout.
 
 ## Configuration
 
-`meta.yaml` stores manuscript metadata:
+`meta.yaml` stores workflow metadata:
 
-- bilingual title, abstract, and keywords;
 - funding, language, and article type;
 - journal and publisher;
 - publication-order author IDs and corresponding-author IDs.
+
+`sections/00_frontmatter.tex` stores the user-owned manuscript title;
+publisher-appropriate section sources store abstract and keyword text.
 
 The active author library stores only person-level names, email, affiliations,
 and bilingual biography strings. Names, affiliations, email, and biographies

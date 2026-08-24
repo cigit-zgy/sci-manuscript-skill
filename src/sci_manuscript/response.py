@@ -15,11 +15,8 @@ from .review import (
     ReviewComment,
     audit_reviews,
     parse_response_entries,
-    parse_responses,
     parse_reviews,
-    pending_response_ids,
     review_ids_from_sources,
-    validate_response_links,
 )
 from .review_ids import is_review_id, validate_review_id_list
 from .templates import resources_root
@@ -33,13 +30,11 @@ __all__ = [
     "ReviewComment",
     "audit_reviews",
     "build_response",
+    "ensure_response_source",
     "init_response",
     "is_review_id",
     "parse_response_entries",
-    "parse_responses",
     "parse_reviews",
-    "pending_response_ids",
-    "validate_response_links",
     "validate_review_id_list",
 ]
 
@@ -82,7 +77,7 @@ def _response_template(language: str) -> str:
     return template
 
 
-def init_response(config: ProjectConfig, round_number: int) -> Path:
+def init_response(config: ProjectConfig, round_number: int) -> Path | None:
     """Create the editable response source with language-specific comments."""
     if round_number < 1:
         raise WorkflowError("r00 does not have a reviewer response.")
@@ -95,53 +90,39 @@ def init_response(config: ProjectConfig, round_number: int) -> Path:
         instructions = """% 回复审稿意见文件。
 %
 % 使用说明：
-% 1. 每条回复应对应 reviewer_comments.md 中的一条具体意见。
-% 2. 请按照审稿意见编号填写对应回复。
-% 3. manuscript 中的 \\review{} 用于关联审稿意见与实际修改位置。
-% 4. LaTeX 注释不会显示在最终 PDF 中。
+% 1. 请在每个 \\Response{} 中填写对应意见的回复内容。
+% 2. manuscript 中使用 \\review{} 标记与该意见对应的实际修改内容。
+% 3. 修改位置由系统自动计算，无需手动填写行号。
+% 4. 如果某条意见只需回复而不修改正文，可仅填写回复内容。
+% 5. 这些 LaTeX 注释不会显示在最终 PDF 中。
 %
 % 示例：
-%
 % \\Response{1-1}{
 % 感谢审稿人的意见。我们已根据建议进行了修改。
-% }
-%
-% 编辑意见回复（如有）：
-%
-% \\Response{E-1}{
 % }
 """  # noqa: RUF001
     else:
         instructions = """% Reviewer-response source.
 %
 % Instructions:
-% 1. Match every response to one specific comment in reviewer_comments.md.
-% 2. Fill each response under its corresponding review-comment number.
-% 3. Use \\review{} in the manuscript to link a comment to its revision location.
-% 4. These LaTeX comments are not rendered in the final PDF.
+% 1. Enter the reply body in each \\Response{} entry.
+% 2. Use \\review{} in the manuscript for the corresponding revision content.
+% 3. Revision line numbers are calculated automatically; do not enter them here.
+% 4. For a response-only comment, enter the reply without adding \\review{}.
+% 5. These LaTeX comments are not rendered in the final PDF.
 %
 % Example:
-%
 % \\Response{1-1}{
 % Thank you for the comment. We revised the manuscript accordingly.
-% }
-%
-% Editor response (if applicable):
-%
-% \\Response{E-1}{
 % }
 """
     sections: list[str] = []
     for block in blocks:
         review_ids = [comment.review_id for comment in block.comments]
-        if not review_ids and block.prefix not in {"E", "AE"}:
-            review_ids = [f"{block.prefix}-1"]
         if not review_ids:
             continue
         if config.language == "zh":
-            title = {"E": "编辑", "AE": "副编辑"}.get(
-                block.prefix, f"审稿人 #{block.prefix}"
-            )
+            title = "编辑" if block.prefix == "E" else f"审稿人 #{block.prefix}"
         else:
             title = block.title
         entries = "\n\n".join(
@@ -149,10 +130,20 @@ def init_response(config: ProjectConfig, round_number: int) -> Path:
         )
         sections.append(f"% {title}\n\n{entries}")
     body = "\n\n".join(sections)
+    if not body:
+        return None
     target.write_text(
         instructions + (("\n" + body + "\n") if body else ""), encoding="utf-8"
     )
     return target
+
+
+def ensure_response_source(config: ProjectConfig, round_number: int) -> Path | None:
+    """Create responses.tex once actual detailed comments are available."""
+    target = config.response_dir(round_number) / "responses.tex"
+    if target.is_file():
+        return target
+    return init_response(config, round_number)
 
 
 def _body_tex(
@@ -163,18 +154,16 @@ def _body_tex(
 ) -> str:
     lines: list[str] = []
     for block in blocks:
-        if not block.comments and not block.general_paragraphs:
+        if not block.comments and not block.summary:
             continue
         title = block.title
         if language == "zh":
-            title = {"E": "编辑", "AE": "副编辑"}.get(
-                block.prefix, f"审稿人 #{block.prefix}"
-            )
+            title = "编辑" if block.prefix == "E" else f"审稿人 #{block.prefix}"
         general_title = "总体意见" if language == "zh" else "General comment"
         lines.extend([f"\\ResponseSection{{{_escape_latex(title)}}}", ""])
-        if block.general_paragraphs:
+        if block.summary:
             lines.extend([f"\\begin{{generalcomment}}[{general_title}]"])
-            lines.extend(_comment_tex(block.general_paragraphs))
+            lines.extend(_comment_tex(block.summary))
             lines.extend(["\\end{generalcomment}", ""])
         for comment in block.comments:
             lines.extend(
@@ -204,9 +193,8 @@ def build_response(
     locations: dict[str, str],
     run_dir: Path,
     engine_override: str | None = None,
-    allow_placeholders: bool = False,
 ) -> Path:
-    """Compile a response copy with strict low-level validation by default."""
+    """Compile a response copy with automatic marked-manuscript locations."""
     response_dir = config.response_dir(round_number)
     blocks = parse_reviews(response_dir / "reviewer_comments.md")
     expected_ids = tuple(
@@ -217,21 +205,14 @@ def build_response(
             f"No reviewer comments are available: {response_dir / 'reviewer_comments.md'}"
         )
     observed = parse_response_entries(response_dir / "responses.tex")
-    pending = set(pending_response_ids(observed))
-    responses = {
-        review_id: "" if review_id in pending else observed.get(review_id, "")
-        for review_id in expected_ids
-    }
+    responses = {review_id: observed.get(review_id, "") for review_id in expected_ids}
     revised_ids = review_ids_from_sources(config, round_number).intersection(
         expected_ids
     )
     missing_locations = sorted(
-        review_id
-        for review_id in revised_ids
-        if review_id not in locations
-        or locations[review_id] in {"Location unavailable", "位置不可用"}
+        review_id for review_id in revised_ids if review_id not in locations
     )
-    if missing_locations and not allow_placeholders:
+    if missing_locations:
         raise WorkflowError(
             "Marked manuscript locations are missing for: "
             + ", ".join(missing_locations)
@@ -249,10 +230,12 @@ def build_response(
         review_id = match.group(1)
         if not is_review_id(review_id):
             raise WorkflowError(f"Invalid response location ID: {review_id}")
-        unavailable = (
-            "位置不可用" if config.language == "zh" else "Location unavailable"
-        )
-        return locations.get(review_id, unavailable)
+        try:
+            return locations[review_id]
+        except KeyError as exc:
+            raise WorkflowError(
+                f"Marked manuscript location is missing for: {review_id}"
+            ) from exc
 
     staged_source = stage / "response_letter.tex"
     staged_source.write_text(LOCATION_USE.sub(replace_location, text), encoding="utf-8")

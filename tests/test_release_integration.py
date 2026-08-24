@@ -11,7 +11,8 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, doctor, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
-from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, REVISION_RUNTIME
+from sci_manuscript.diff import REVISION_RUNTIME
+from sci_manuscript.locations import REVIEW_REGISTRY_HEADER
 from sci_manuscript.submission import ensure_submission_workspace
 from sci_manuscript.workspace import (
     load_project,
@@ -64,28 +65,36 @@ def _review_file(path: Path, round_number: int) -> Path:
     if round_number == 1:
         text = """# Editor
 
-## E-1 | response_only
+## Main comment
 
-Please clarify the scope.
+## Specific comments
+
+1. Please clarify the scope.
 
 # Reviewer #1
 
-## 1-1 | manuscript_revised
+## Main comment
 
-Please revise the example sentence.
+## Specific comments
+
+1. Please revise the example sentence.
 
 # Reviewer #2
 
-## 2-1 | manuscript_revised
+## Main comment
 
-Please make the same sentence more precise.
+## Specific comments
+
+1. Please make the same sentence more precise.
 """
     else:
         text = """# Reviewer #1
 
-## 1-1 | manuscript_revised
+## Main comment
 
-Please refine the explicitly approved example once more.
+## Specific comments
+
+1. Please refine the explicitly approved example once more.
 """
     path.write_text(text, encoding="utf-8")
     return path
@@ -385,6 +394,7 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
         (
             "elsevier",
             {
+                "00_frontmatter.tex",
                 "00_abstract.tex",
                 "01_introduction.tex",
                 "02_methods.tex",
@@ -396,6 +406,7 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
         (
             "nature",
             {
+                "00_frontmatter.tex",
                 "00_abstract.tex",
                 "01_introduction.tex",
                 "02_results.tex",
@@ -406,6 +417,7 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
         (
             "acs",
             {
+                "00_frontmatter.tex",
                 "00_abstract.tex",
                 "01_introduction.tex",
                 "02_experimental.tex",
@@ -415,7 +427,7 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
         ),
     ),
 )
-def test_non_chinese_initial_workflows_remain_unchanged(
+def test_non_chinese_initial_workflows_own_title_in_frontmatter(
     tmp_path: Path,
     publisher: str,
     expected_sections: set[str],
@@ -439,9 +451,10 @@ def test_non_chinese_initial_workflows_remain_unchanged(
     assert {path.name for path in (initial / "sections").iterdir()} == expected_sections
     source = (initial / "manuscript.tex").read_text(encoding="utf-8")
     assert "FRONTMATTER_INPUT" not in source
-    assert "00_frontmatter" not in source
+    assert r"\input{sections/00_frontmatter}" in source
     result = ManuscriptProject(manuscript).build(engine="tectonic")
-    assert _pdf_text(result.artifacts[0].path).strip()
+    pdf_text = _pdf_text(result.artifacts[0].path)
+    assert f"{publisher.title()} Initial Workflow" in pdf_text
 
 
 def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
@@ -479,12 +492,9 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     _complete_responses(r01 / "response" / "responses.tex", ("E-1", "1-1", "2-1"))
     cover_source = _complete_cover(manuscript, 1)
     before = source_digest(r01, scientific_only=True)
-    legacy_layout_report = r01 / "output" / "revision_layout_qa.txt"
-    legacy_layout_report.write_text("legacy generated report\n", encoding="utf-8")
-    r01_result = project.build_all(engine="tectonic", keep_temp=True)
+    r01_result = project.prepare_submission(engine="tectonic", keep_temp=True)
     assert source_digest(r01, scientific_only=True) == before
     _assert_artifacts(r01_result, r01)
-    assert not legacy_layout_report.exists()
     marked = r01 / "output" / "manuscript_marked.pdf"
     response = r01 / "output" / "response_letter.pdf"
     marked_text = _pdf_text(marked)
@@ -523,7 +533,7 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     _complete_responses(r02 / "response" / "responses.tex", ("1-1",))
     _complete_cover(manuscript, 2)
     before = source_digest(r02, scientific_only=True)
-    r02_result = project.build_all(engine="tectonic", keep_temp=True)
+    r02_result = project.prepare_submission(engine="tectonic", keep_temp=True)
     assert source_digest(r02, scientific_only=True) == before
     _assert_artifacts(r02_result, r02)
     r02_marked_text = _pdf_text(r02 / "output" / "manuscript_marked.pdf")
@@ -575,7 +585,7 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     response_source = revision / "response" / "responses.tex"
     _complete_responses(response_source, ("E-1", "1-1", "2-1"))
     _complete_cover(manuscript, 1)
-    result = project.build_all(engine="tectonic", keep_temp=True)
+    result = project.prepare_submission(engine="tectonic", keep_temp=True)
     _assert_artifacts(result, revision)
     cover_text = "".join(
         _pdf_text(revision / "submission" / "cover_letter.pdf").split()
@@ -634,8 +644,9 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     reviews = tmp_path / "registry_reviews.md"
     reviews.write_text(
         "# Reviewer #1\n\n"
-        "## 1-1 | manuscript_revised\n\n"
-        "Please revise the manuscript text.\n",
+        "## Main comment\n\n"
+        "## Specific comments\n\n"
+        "1. Please revise the manuscript text.\n",
         encoding="utf-8",
     )
     manuscript = project_dir / "manuscript"
@@ -667,7 +678,7 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     _complete_responses(revision / "response" / "responses.tex", ("1-1",))
     _complete_cover(manuscript, 1)
 
-    result = project.build_all(engine="tectonic", keep_temp=True)
+    result = project.prepare_submission(engine="tectonic", keep_temp=True)
 
     _assert_artifacts(result, revision)
     output = revision / "output"
@@ -701,8 +712,9 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     assert r"\DIFdel" in marked_source
     assert r"\DIFaddReview" in marked_source
     ordered_fragments = ("修订后的", "中文", "长", "段落")
-    positions = [marked_source.index(fragment) for fragment in ordered_fragments]
-    assert positions == sorted(positions)
+    cursor = 0
+    for fragment in ordered_fragments:
+        cursor = marked_source.index(fragment, cursor) + len(fragment)
     assert r"\DIFaddReview{修订后的}" in marked_source
     assert r"\DIFaddReview{长}" in marked_source
     assert r"\DIFaddReview{中文}" not in marked_source
@@ -755,7 +767,8 @@ Stable anchor.
     _replace_once(initial, "Replace this placeholder with the manuscript body.", old)
     reviews = tmp_path / "math_reviews.md"
     reviews.write_text(
-        "# Reviewer #1\n\n## 1-1 | manuscript_revised\n\nRevise the formulas.\n",
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Revise the formulas.\n",
         encoding="utf-8",
     )
     project = ManuscriptProject(manuscript)

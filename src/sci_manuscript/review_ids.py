@@ -6,7 +6,7 @@ import re
 
 from .errors import WorkflowError
 
-REVIEW_ID = re.compile(r"^(?:E|AE|[1-9]\d*)-[1-9]\d*$")
+REVIEW_ID = re.compile(r"^(?:E|[1-9]\d*)-[1-9]\d*$")
 
 
 def is_review_id(value: str) -> bool:
@@ -19,8 +19,7 @@ def validate_review_id_list(value: str) -> tuple[str, ...]:
     ids = tuple(item.strip() for item in value.split(","))
     if not ids or any(not is_review_id(item) for item in ids):
         raise WorkflowError(
-            f"Invalid review ID list {value!r}; use E-1, AE-1, 1-1, "
-            "or comma-separated IDs."
+            f"Invalid review ID list {value!r}; use E-1, 1-1, or comma-separated IDs."
         )
     if len(ids) != len(set(ids)):
         raise WorkflowError(f"Review ID list contains duplicates: {value!r}")

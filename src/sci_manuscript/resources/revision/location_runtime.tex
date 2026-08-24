@@ -15,8 +15,6 @@
   \expandafter\linelabel\expandafter{\ReviewExpandedLabel}%
 }
 \providecommand{\review}[2]{#2}
-\providecommand{\user}[1]{#1}
-\providecommand{\selfadd}[1]{#1}
 \AtBeginDocument{%
   \renewcommand{\review}[2]{%
     \stepcounter{reviewblock}%
@@ -27,6 +25,4 @@
     \ReviewLineLabel{review:\ReviewBlockID:end}%
     \immediate\write\ReviewLocationFile{#1|\ReviewBlockID}%
   }%
-  \renewcommand{\user}[1]{#1}%
-  \renewcommand{\selfadd}[1]{#1}%
 }

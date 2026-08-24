@@ -50,8 +50,7 @@ def extract_provenance(text: str) -> ProvenanceSource:
     """Remove provenance wrappers and retain reviewer spans as a sidecar map.
 
     ``\\review{ids}{body}`` contributes ``body`` verbatim to the clean source and
-    records the resulting character interval. ``\\user`` and legacy
-    ``\\selfadd`` remain transparent. Nested reviewer scopes are rejected.
+    records the resulting character interval. Nested reviewer scopes are rejected.
     """
 
     def parse(fragment: str, *, inside_review: bool = False) -> ProvenanceSource:
@@ -92,23 +91,6 @@ def extract_provenance(text: str) -> ProvenanceSource:
                     for span in parsed.review_spans
                 )
                 spans.append(ReviewSpan(ids, start, length))
-                cursor = end
-                continue
-
-            transparent = None
-            for name in ("user", "selfadd"):
-                if command_at(fragment, cursor, name):
-                    transparent = name
-                    break
-            if transparent is not None:
-                body, end = _provenance_field(fragment, cursor + len(transparent) + 1)
-                parsed = parse(body, inside_review=inside_review)
-                start = length
-                append(parsed.text)
-                spans.extend(
-                    ReviewSpan(span.review_ids, span.start + start, span.end + start)
-                    for span in parsed.review_spans
-                )
                 cursor = end
                 continue
 

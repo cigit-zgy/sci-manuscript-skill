@@ -47,16 +47,18 @@ publisher resource only to diagnose that exact publisher build.
 - Revision ancestry is adjacent and fixed-width:
   `initial_submission (r00) -> revision_01 (r01) -> revision_02 (r02)`.
 - `manuscript/references/` contains `references.bib` and `revision_style.tex`.
-  A legacy or explicit project `authors.yaml` remains supported there; otherwise
+  An explicit project `authors.yaml` is resolved there first; otherwise
   builds resolve the configured or bundled Skill-level author library. Revision
   directories never contain `references/`.
 - Built-in publisher resources are package data, not copied user files. Only a
   custom publisher creates `references/journal_template/`.
-- `meta.yaml` owns bilingual manuscript title, abstract, keywords, funding,
-  language, article type, journal, publisher, author order, and corresponding
-  roles. The author library owns names, email, affiliations, and bilingual
-  biography strings. Runtime `publisher_metadata.tex` combines both under
-  `tmp/<run>/` and is never published into a manuscript round.
+- `sections/00_frontmatter.tex` owns manuscript title; publisher-appropriate
+  section sources own abstract and keyword text. `meta.yaml` owns funding,
+  language, article type,
+  journal, publisher, author order, and corresponding roles. The author library
+  owns names, email, affiliations, and bilingual biography strings. Runtime
+  metadata combines these sources under `tmp/<run>/` and is never published
+  into a manuscript round.
 - `manuscript.tex` is a user-owned composition root. Builds read it but never
   overwrite it.
 - `revision` creates `response/reviewer_comments.md` automatically from the
@@ -69,8 +71,7 @@ publisher resource only to diagnose that exact publisher build.
   structural comparison and stored as a sidecar character interval map. Only
   actual additions that fall inside those intervals become reviewer-red;
   unchanged text remains ordinary manuscript text. Deletions remain light gray;
-  additions outside reviewer intervals remain author-blue. Legacy `\user{text}`
-  remains readable but should not be added.
+  additions outside reviewer intervals remain author-blue.
 - Revision comparison follows the four-layer contract in
   `references/revision_semantics.md`: provenance extraction, provenance-free
   structural diff, conservative refinement, then semantic rendering.
@@ -83,14 +84,15 @@ publisher resource only to diagnose that exact publisher build.
 - Every revision `build` and `submission` audits
   `reviewer_comments.md <-> responses.tex <-> \review{...}`. Missing responses,
   orphan responses, orphan provenance references, empty comments, invalid input,
-  and review-ID drift are warnings. Rendering continues. Every warning reports
-  concrete source paths; `submission/checklist.md` records review
-  completeness as `COMPLETE` or `INCOMPLETE`.
+  and review-ID drift are non-blocking completeness issues. Rendering continues.
+  Ordinary missing/empty/orphan entries are listed by ID without internal paths;
+  malformed source reports its absolute path. `submission/checklist.md` records
+  review completeness as `COMPLETE` or `INCOMPLETE`.
 - `output/` contains final user PDFs, `state/` contains persistent machine state,
   and lazy `tmp/` contains reproducible run diagnostics. Successful operations
   remove `tmp/` unless diagnostics are explicitly retained.
-- Editable `response/responses.tex` and `submission/cover_letter.tex`
-  sources are created once and not replaced by later builds. Complete
+- Editable `response/responses.tex` is generated from the actual detailed
+  comments, and `submission/cover_letter.tex` is created once. Complete
   correspondence documents are assembled from installed templates only in
   `tmp/`.
 - Author-library priority is explicit `--authors`, configured user library,
@@ -106,9 +108,8 @@ publisher resource only to diagnose that exact publisher build.
   They are staged only under `tmp/<run>/`; user rounds never contain
   `preamble/`, `manuscript_preamble/`, `journal_templates/`, publisher
   `.cls`/`.bst`, `workflow.tex`, or `sections.yaml`.
-- Submission artifacts are published directly under `submission/`, never under
-  a generated `submission/package/` directory. Editable submission sources and
-  their final PDFs share that user-facing directory.
+- Submission artifacts, editable sources, and their final PDFs share the flat
+  user-facing `submission/` directory.
 
 ## Entrypoints
 
@@ -135,13 +136,14 @@ that option is omitted.
 
 Report the exact current round and parent, final project-relative artifacts,
 review-audit result, source-integrity result, and whether `tmp/` was removed.
-When the audit is incomplete, report each unresolved ID and the exact paths
-printed by the CLI. Do not hide those warnings simply because PDFs compiled.
+When the audit is incomplete, report each unresolved ID. Include an absolute
+path only when the CLI identifies malformed source. Do not hide incomplete
+responses simply because PDFs compiled.
 
 For every revision, `submission` builds clean and direct-parent marked PDFs from
 the same source and shared bibliography. A response PDF is assembled when
-review comments are available; incomplete responses remain visible placeholders
-and the audit stays `INCOMPLETE`. The workflow parses clean and marked compiler
+review comments are available; incomplete responses keep the audit `INCOMPLETE`
+while manuscript rendering continues. The workflow parses clean and marked compiler
 logs, compares overfull boxes, and fails if marked introduces an overflow absent
 from clean; the per-run result remains in
 `tmp/<run>/revision_layout_qa.txt` only when diagnostics are retained or the run

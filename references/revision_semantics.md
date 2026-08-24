@@ -22,8 +22,6 @@ unchanged between `P` and `C` remains unmarked even when it lies inside a
 reviewer interval. Nested reviewer scopes are invalid; multiple reviewer IDs
 belong in one wrapper.
 
-Legacy `\user{...}` remains transparent and does not create reviewer provenance.
-
 ## 2. Structural-diff layer
 
 Only provenance-free `P` and `C` are sent to adjacent `latexdiff`. Reviewer IDs

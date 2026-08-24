@@ -29,6 +29,7 @@ from .authors import (
     user_config_directory,
 )
 from .errors import MetadataError
+from .tex import command_at, extract_braced, is_escaped
 
 __all__ = [
     "CONFIG_DIRECTORY_ENV",
@@ -115,7 +116,7 @@ class ManuscriptMetadata:
         return tuple(dict.fromkeys(ordered))
 
     def localized_title(self, language: str) -> str:
-        """Return the requested title with the legacy scalar as fallback."""
+        """Return the requested title with the initialization scalar as default."""
         preferred = self.title_zh if language == "zh" else self.title_en
         alternate = self.title_en if language == "zh" else self.title_zh
         return preferred or self.title or alternate
@@ -348,12 +349,7 @@ def load_meta(path: Path) -> ManuscriptMetadata:
             language=language,
             optional=True,
         )
-    legacy_funding = _text(
-        manuscript.get("funding"), "manuscript.funding", optional=True
-    )
     funding = _text_group(frontmatter.get("funding"), "frontmatter.funding")
-    if not funding and legacy_funding:
-        funding = (legacy_funding,)
     author_biographies = _author_group(
         frontmatter.get("author_biographies", []),
         "frontmatter.author_biographies",
@@ -677,6 +673,64 @@ def _latex_escape(value: str) -> str:
     return "".join(replacements.get(character, character) for character in value)
 
 
+def _frontmatter_field(text: str, command: str) -> str:
+    """Return one plain title field from a canonical frontmatter command."""
+    cursor = 0
+    while cursor < len(text):
+        if text[cursor] == "%" and not is_escaped(text, cursor):
+            newline = text.find("\n", cursor)
+            cursor = len(text) if newline == -1 else newline + 1
+            continue
+        if command_at(text, cursor, command):
+            try:
+                raw, _ = extract_braced(text, cursor + len(command) + 1)
+            except ValueError as exc:
+                raise MetadataError(
+                    f"Unbalanced \\{command} field in manuscript frontmatter."
+                ) from exc
+            clean_lines: list[str] = []
+            for line in raw.splitlines():
+                comment = next(
+                    (
+                        index
+                        for index, character in enumerate(line)
+                        if character == "%" and not is_escaped(line, index)
+                    ),
+                    len(line),
+                )
+                clean_lines.append(line[:comment].strip())
+            return " ".join(part for part in clean_lines if part)
+        cursor += 1
+    return ""
+
+
+def _metadata_with_frontmatter_title(
+    metadata: ManuscriptMetadata,
+    round_dir: Path,
+) -> ManuscriptMetadata:
+    """Load user-owned title fields from the round frontmatter source."""
+    source = round_dir / "sections" / "00_frontmatter.tex"
+    if not source.is_file():
+        return metadata
+    try:
+        text = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise MetadataError(f"Cannot read manuscript frontmatter: {source}") from exc
+    title_zh = _frontmatter_field(text, "title") if metadata.language == "zh" else ""
+    title_en = (
+        _frontmatter_field(text, "entitle")
+        if metadata.language == "zh"
+        else _frontmatter_field(text, "title")
+    )
+    title = title_zh if metadata.language == "zh" else title_en
+    return replace(
+        metadata,
+        title=title or metadata.title,
+        title_zh=title_zh or metadata.title_zh,
+        title_en=title_en or metadata.title_en,
+    )
+
+
 def _author_label(
     author: AuthorRecord,
     selection: AuthorSelection,
@@ -797,10 +851,8 @@ def render_publisher_metadata(
     """Render declarations required by the selected publisher class."""
     corresponding = set(selection.corresponding_authors)
     affiliations = {item.affiliation_id: item for item in selection.affiliations}
-    title = _latex_escape(metadata.localized_title(metadata.language))
     lines = ["% Generated publisher metadata. Do not edit."]
     if metadata.publisher == "elsevier":
-        lines.append(f"\\title{{{title}}}")
         for author in selection.authors:
             labels = ",".join(
                 str(selection.affiliation_numbers[key]) for key in author.affiliations
@@ -819,7 +871,6 @@ def render_publisher_metadata(
                 f"\\address[{label}]{{{_latex_escape(_affiliation_text(item, 'en'))}}}"
             )
     elif metadata.publisher == "nature":
-        lines.append(f"\\title[{title}]{{{title}}}")
         for author in selection.authors:
             labels = ",".join(
                 str(selection.affiliation_numbers[key]) for key in author.affiliations
@@ -835,7 +886,6 @@ def render_publisher_metadata(
                 f"{{\\orgname{{{_latex_escape(_affiliation_text(item, 'en'))}}}}}"
             )
     elif metadata.publisher == "acs":
-        lines.append(f"\\title{{{title}}}")
         for author in selection.authors:
             lines.append(f"\\author{{{_latex_escape(author.name_en)}}}")
             if author in corresponding:
@@ -909,7 +959,10 @@ def generate_metadata(
     target_dir: Path,
 ) -> AuthorSelection:
     """Generate ephemeral LaTeX metadata inside an isolated build directory."""
-    metadata = load_meta(round_dir / "meta.yaml")
+    metadata = _metadata_with_frontmatter_title(
+        load_meta(round_dir / "meta.yaml"),
+        round_dir,
+    )
     library = load_author_library(
         resolve_workspace_author_library_path(manuscript_root)
     )
@@ -922,8 +975,3 @@ def generate_metadata(
         render_publisher_metadata(metadata, selection), encoding="utf-8"
     )
     return selection
-
-
-# Internal migration aliases; the public format is ``meta.yaml``.
-load_manuscript = load_meta
-save_manuscript = save_meta

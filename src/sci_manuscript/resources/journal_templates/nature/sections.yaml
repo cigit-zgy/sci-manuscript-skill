@@ -2,6 +2,10 @@ bibliography:
   package: "% Bibliography support is supplied by sn-jnl."
   style: sn-nature
 
+frontmatter:
+  file: 00_frontmatter.tex
+  source: 00_frontmatter_en.tex
+
 sections:
   - file: 00_abstract.tex
     source: 00_abstract.tex

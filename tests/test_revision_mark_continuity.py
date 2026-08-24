@@ -84,11 +84,18 @@ def _maximum_internal_gap(
 def test_starred_cjk_deletion_is_visually_continuous_across_punctuation(
     tmp_path: Path,
 ) -> None:
-    """Rendered starred marks must bridge punctuation that legacy forms skip."""
+    """Rendered deletion strikeout must remain continuous across punctuation."""
     tectonic = _require_tool("tectonic")
     pdftoppm = _require_tool("pdftoppm")
     staged = stage_cjk_fonts(tmp_path)
-    assert staged, "Fandol fonts must be staged by the integration environment"
+    if staged:
+        font_configuration = r"\setCJKmainfont[Path=./]{FandolSong-Regular.otf}"
+    else:
+        font_configuration = (
+            r"\IfFontExistsTF{Songti SC}{\setCJKmainfont{Songti SC}}"
+            r"{\IfFontExistsTF{STSong}{\setCJKmainfont{STSong}}"
+            r"{\setCJKmainfont{FandolSong-Regular}}}"
+        )
 
     source = tmp_path / "continuity.tex"
     source.write_text(
@@ -98,16 +105,21 @@ def test_starred_cjk_deletion_is_visually_continuous_across_punctuation(
 \usepackage{xeCJK}
 \usepackage{xeCJKfntef}
 \usepackage{xcolor}
-\setCJKmainfont[Path=./]{FandolSong-Regular.otf}
+%FONT_CONFIGURATION%
 \pagestyle{empty}
 \setlength{\parindent}{0pt}
 \definecolor{RevisionProbe}{RGB}{230,180,0}
 \begin{document}
 \fontsize{16}{24}\selectfont
-STAR S: \CJKsout*[format=\color{RevisionProbe},textformat=\color{RevisionProbe}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
-OLD S: \CJKsout[format=\color{RevisionProbe},textformat=\color{RevisionProbe}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
+\CJKsout*[format=\color{RevisionProbe},textformat=\color{RevisionProbe}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
 \end{document}
 """,
+        encoding="utf-8",
+    )
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "%FONT_CONFIGURATION%", font_configuration
+        ),
         encoding="utf-8",
     )
     output = tmp_path / "build"
@@ -147,10 +159,6 @@ OLD S: \CJKsout[format=\color{RevisionProbe},textformat=\color{RevisionProbe}]{�
     for name, target in TARGETS.items():
         coordinates = _target_coordinates(width, height, pixels, target)
         clusters = _y_clusters(coordinates)
-        assert len(clusters) == 2, f"{name}: expected starred and legacy mark rows"
-        starred_gap = _maximum_internal_gap(coordinates, clusters[0])
-        legacy_gap = _maximum_internal_gap(coordinates, clusters[1])
-        assert starred_gap <= 8, f"{name}: starred mark contains {starred_gap}px gap"
-        assert legacy_gap >= 20, (
-            f"{name}: regression fixture no longer detects old gaps"
-        )
+        assert len(clusters) == 1, f"{name}: expected one deletion-mark row"
+        gap = _maximum_internal_gap(coordinates, clusters[0])
+        assert gap <= 8, f"{name}: deletion mark contains {gap}px gap"

@@ -35,10 +35,10 @@ sci-manuscript init --project /absolute/path/to/project
 It creates a commented `initial_submission/meta.yaml`, prints `Please edit
 meta.yaml before build.`, and does not compile or infer scientific/identity
 data. After the user supplies journal, publisher, language, article type,
-bilingual title/abstract/keywords, funding, author order, and corresponding
-roles, the first build materializes publisher-appropriate manuscript sources.
-The released parameter-rich form remains available for automation and backward
-compatibility.
+funding, author order, and corresponding roles, the first build materializes
+publisher-appropriate manuscript sources. The user then maintains title,
+abstract, and keyword text in `sections/00_frontmatter.tex`.
+Explicit command-line fields remain available for automated initialization.
 
 The author-library priority for existing and explicit workspaces is a project
 `references/authors.yaml`, then the configured user library, then the bundled
@@ -105,8 +105,8 @@ sci-manuscript submission --project /absolute/path/to/project
 
 The clean PDF is `initial_submission/output/manuscript.pdf`. Submission sources
 are created on demand under `initial_submission/submission/`; final submission
-files are published directly in that directory without a nested `package/` and
-without exposing compiler intermediates. `cover_letter.tex`, `highlights.tex`,
+files are published directly in that flat directory without exposing compiler
+intermediates. `cover_letter.tex`, `highlights.tex`,
 the graphical-abstract directory, and `checklist.md` are user-editable;
 generated PDFs share the same submission directory.
 
@@ -153,14 +153,12 @@ General assessment from Reviewer 1.
 ```
 
 The parser derives `E-1`, `1-1`, `1-2`, and subsequent IDs from section identity
-and non-empty list order. A paragraph placed between a reviewer heading and the
-first numbered item is treated as that reviewer's general assessment. Legacy
-files using explicit `## 1-1 | ...` headings remain readable for migration, but
-new revision templates use only the numbered-list form.
+and non-empty list order. Summary text must appear under `Main comment` or
+`主意见`; numbered details must appear under `Specific comments` or `具体意见`.
+The summary receives no response ID and is excluded from per-comment audit.
 
 Use `\review{1-1}{revised text}` only for reviewer-linked manuscript changes.
 Write ordinary author additions directly; adjacent `latexdiff` detects them.
-Legacy `\user{additional text}` remains readable but should not be added.
 
 `\review` is provenance metadata only. It does not make its whole body red.
 Before diffing, wrappers are removed and their current-source character ranges
@@ -168,10 +166,12 @@ are retained in a sidecar map. Actual additions are classified against that map
 after structural comparison. Therefore unchanged reviewer-scoped text remains
 unmarked.
 
-`response/responses.tex` stores editable response prose. It contains empty
-`\Response{ID}{...}` entries and concise commented examples; no special pending
-macro is required. Review completeness is derived at build time rather than
-encoded in either user-editable file.
+`response/responses.tex` stores editable response prose. The Skill generates one
+empty `\Response{ID}{...}` entry for each actual detailed comment, including
+editor comments, and no entry for summaries. When revision creation receives a
+populated `--reviews` file, generation is immediate; otherwise the first build
+after comments are entered creates the file. Users fill only response bodies and
+never enter line-number fields. Review completeness is derived at build time.
 
 ### Review audit
 
@@ -193,8 +193,9 @@ The audit computes these states:
 It separately reports missing, empty, and orphan response entries, as well as
 empty or invalid comment files, orphan `\review` IDs, and review-ID drift after
 list reordering. These are
-non-blocking review-completeness warnings: clean and marked rendering continues.
-Each warning prints the concrete path or paths that require attention.
+non-blocking review-completeness issues: clean and marked rendering continues.
+Missing, empty, and orphan responses are printed concisely by ID. Only malformed
+comment or response source prints its absolute path.
 
 The first audit of populated comments records comment fingerprints in
 `state/revision_NN/review_index.yaml`. Later reordering that would remap the
@@ -207,18 +208,20 @@ sci-manuscript submission --project /absolute/path/to/project --round r01
 ```
 
 A revision build publishes clean and marked manuscript PDFs. Submission also
-publishes the available correspondence and package artifacts. Missing or empty
-responses keep the audit `INCOMPLETE` without introducing placeholder macros or
+publishes the available correspondence and submission artifacts. Missing or empty
+responses keep the audit `INCOMPLETE` without altering manuscript rendering or
 blocking manuscript rendering. A malformed response source instead produces
 `RESPONSES_INVALID` with its absolute
 path: clean and marked manuscripts still build, the checklist remains
 `INCOMPLETE`, and no untrusted response PDF is generated. If the comment template
-is still empty, the manuscript PDFs can still be built and the audit points
-directly to `reviewer_comments.md`.
+is still empty, the manuscript PDFs can still be built and the audit remains
+`INCOMPLETE`.
 
 Response locations are calculated in an independent transparent line-label
-compilation. Registries, flattened TeX, extracted text, and compiler files
-remain temporary.
+compilation from `\review{ID}{...}`. Duplicate, overlapping, and adjacent ranges
+are normalized; multiple remaining ranges are ordered and localized. A
+response-only comment has no location sentence. Registries, flattened TeX,
+extracted text, and compiler files remain temporary.
 
 ## Revision comparison contract
 

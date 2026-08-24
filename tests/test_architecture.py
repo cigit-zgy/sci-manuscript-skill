@@ -39,6 +39,7 @@ def test_runtime_resources_are_package_data() -> None:
         "manuscript_preamble/zh.tex",
         "manuscript_preamble/en.tex",
         "manuscript/sections/default/00_frontmatter_zh.tex",
+        "manuscript/sections/default/00_frontmatter_en.tex",
         "manuscript/sections/default/01_introduction.tex",
         "manuscript/sections/default/01_introduction_zh.tex",
         "correspondence_templates/response/response_en.tex",
@@ -86,7 +87,7 @@ def test_revision_semantics_contract_is_documented() -> None:
     assert "Rendering is mutually exclusive" in semantics
 
 
-def test_no_legacy_public_architecture_strings() -> None:
+def test_no_obsolete_public_architecture_strings() -> None:
     paths = [
         ROOT / "README.md",
         ROOT / "SKILL.md",
@@ -95,7 +96,6 @@ def test_no_legacy_public_architecture_strings() -> None:
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert "SCI_MANUSCRIPT_SKILL_ROOT" not in text
     assert "scripts/run.py" not in text
-    assert "\\selfadd" not in text
     assert "manuscript.yaml" not in text
 
 
@@ -150,10 +150,34 @@ def test_revision_state_and_template_invariants_are_not_duplicated() -> None:
         path.read_text(encoding="utf-8") for path in sorted(SOURCE.glob("*.py"))
     )
     assert "First specific comment." not in source_text
-    assert "# Reviewer #1\n## 1-1 | manuscript_revised" not in source_text
     assert '_REVISION_RUNTIME_TEMPLATE = r"""' not in source_text
     assert '_LOCATION_RUNTIME = r"""' not in source_text
     assert '_LOCATION_RUNTIME = rf"""' not in source_text
+
+
+def test_review_workflow_has_one_public_interface() -> None:
+    import inspect
+
+    from sci_manuscript.api import ManuscriptProject
+    from sci_manuscript.cli import _parser
+
+    removed_parameter = "allow_" + "placeholders"
+    assert (
+        removed_parameter
+        not in inspect.signature(ManuscriptProject.prepare_submission).parameters
+    )
+    assert not hasattr(ManuscriptProject, "build_" + "all")
+
+    option_strings: set[str] = set()
+    pending = [_parser()]
+    while pending:
+        parser = pending.pop()
+        for action in parser._actions:
+            option_strings.update(action.option_strings)
+            choices = getattr(action, "choices", None)
+            if isinstance(choices, dict):
+                pending.extend(choices.values())
+    assert "--allow-" + "placeholders" not in option_strings
 
 
 def test_current_docs_have_one_revision_rendering_contract() -> None:
@@ -165,16 +189,9 @@ def test_current_docs_have_one_revision_rendering_contract() -> None:
         ROOT / "references" / "workflow.md",
     )
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
-    obsolete = (
-        "math-markup=WHOLE",
-        "whole-equation structural comparison",
-        "green straight underline",
-        "Deletions remain red strikeout",
-        "blue wave underline",
-    )
-    for phrase in obsolete:
-        assert phrase not in text
     assert "--math-markup=FINE" in text
+    assert "Reviewer-linked additions | Red text" in text
+    assert "Deleted content | Light-gray strikeout" in text
 
 
 def test_runtime_module_import_graph_has_no_cycles() -> None:

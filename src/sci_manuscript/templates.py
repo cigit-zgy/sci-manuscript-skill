@@ -122,12 +122,13 @@ def _publisher_layout(
 def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
     """Create user-owned manuscript composition and section sources."""
     frontmatter, plan, _package, style = _publisher_layout(config)
-    abstract_input = ""
-    body_plan = plan
-    if frontmatter is None:
+    if Path(plan[0]["file"]).stem == "00_abstract":
         abstract = plan[0]
         abstract_input = f"\\input{{sections/{Path(abstract['file']).stem}}}"
         body_plan = plan[1:]
+    else:
+        abstract_input = ""
+        body_plan = plan
     section_inputs = "\n".join(
         f"\\input{{sections/{Path(item['file']).stem}}}" for item in body_plan
     )
@@ -152,13 +153,13 @@ def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
     for item in source_plan:
         values = {"SECTION_TITLE": item["title"]}
         if frontmatter is not None and item is frontmatter:
-            legacy_title = config.metadata.title
+            initial_title = config.metadata.title
             values.update(
                 {
                     "TITLE_ZH": config.metadata.title_zh
-                    or (legacy_title if config.metadata.language == "zh" else ""),
+                    or (initial_title if config.metadata.language == "zh" else ""),
                     "TITLE_EN": config.metadata.title_en
-                    or (legacy_title if config.metadata.language == "en" else ""),
+                    or (initial_title if config.metadata.language == "en" else ""),
                 }
             )
         render_template(

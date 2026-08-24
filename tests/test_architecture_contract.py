@@ -136,10 +136,10 @@ def test_submission_is_flat_and_output_contains_only_pdfs(
     (submission / "response_letter.pdf").write_bytes(b"stale")
     audit = ReviewAuditResult(tmp_path / "comments", tmp_path / "responses", (), ())
 
-    artifacts = prepare_submission_artifacts(config, 0, run_dir, None, False, audit)
+    artifacts = prepare_submission_artifacts(config, 0, run_dir, None, audit)
     second_run = tmp_path / "second_run"
     second_run.mkdir()
-    prepare_submission_artifacts(config, 0, second_run, None, False, audit)
+    prepare_submission_artifacts(config, 0, second_run, None, audit)
 
     assert not (submission / "package").exists()
     assert (submission / "manuscript.pdf").read_bytes() == b"clean"

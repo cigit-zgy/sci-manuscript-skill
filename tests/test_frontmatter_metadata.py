@@ -128,6 +128,12 @@ def test_publisher_metadata_is_generated_only_in_runtime_directory(
     round_dir.mkdir(parents=True)
     references.mkdir()
     save_meta(round_dir / "meta.yaml", _bilingual_metadata())
+    sections = round_dir / "sections"
+    sections.mkdir()
+    (sections / "00_frontmatter.tex").write_text(
+        "\\title{源文件中的中文标题}\n\\entitle{English Source Title}\n",
+        encoding="utf-8",
+    )
     (references / "authors.yaml").write_bytes(
         (resources_root() / "authors.yaml").read_bytes()
     )
@@ -136,6 +142,8 @@ def test_publisher_metadata_is_generated_only_in_runtime_directory(
     generate_metadata(root, round_dir, runtime)
 
     assert (runtime / "publisher_metadata.tex").is_file()
+    author_metadata = (runtime / "author_metadata.tex").read_text(encoding="utf-8")
+    assert r"\newcommand{\ManuscriptTitle}{源文件中的中文标题}" in author_metadata
     assert not (round_dir / "publisher_metadata.tex").exists()
 
 

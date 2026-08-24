@@ -22,7 +22,7 @@ from .metadata import (
     ManuscriptMetadata,
     SubmissionSettings,
 )
-from .response import init_response, parse_reviews
+from .response import ensure_response_source, init_response, parse_reviews
 from .review import ReviewAuditResult, audit_reviews
 from .submission import prepare_submission_artifacts
 from .templates import ensure_manuscript_sources
@@ -295,6 +295,7 @@ class ManuscriptProject:
             if selected > 0:
                 marked = build_marked_manuscript(config, selected, run_dir, engine)
                 artifacts.append(Artifact("Marked manuscript", marked.pdf))
+                ensure_response_source(config, selected)
                 audit = audit_reviews(config, selected, record_index=True)
         return LifecycleResult(
             "build",
@@ -329,14 +330,16 @@ class ManuscriptProject:
                 if target.exists():
                     shutil.rmtree(target)
                 raise
+        artifacts = [
+            Artifact("Reviewer comments", comment_path),
+        ]
+        if response_source is not None:
+            artifacts.append(Artifact("Response source", response_source))
+        artifacts.append(Artifact("Revision creation record", creation))
         return LifecycleResult(
             "revision",
             revision_directory_name(target_round),
-            (
-                Artifact("Reviewer comments", comment_path),
-                Artifact("Response source", response_source),
-                Artifact("Revision creation record", creation),
-            ),
+            tuple(artifacts),
         )
 
     def rollback(self, *, confirmed: bool = False) -> LifecycleResult:
@@ -379,7 +382,6 @@ class ManuscriptProject:
         round: str | int | None = None,
         *,
         engine: str | None = None,
-        allow_placeholders: bool = False,
         keep_temp: bool = False,
     ) -> LifecycleResult:
         """Build all final artifacts and run a non-blocking review audit."""
@@ -387,16 +389,17 @@ class ManuscriptProject:
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
         ensure_manuscript_sources(config, selected)
-        audit = (
-            audit_reviews(config, selected, record_index=True) if selected > 0 else None
-        )
+        if selected > 0:
+            ensure_response_source(config, selected)
+            audit = audit_reviews(config, selected, record_index=True)
+        else:
+            audit = None
         with temporary_run(self.root, keep_temp) as run_dir:
             submission_artifacts = prepare_submission_artifacts(
                 config,
                 selected,
                 run_dir,
                 engine,
-                allow_placeholders,
                 audit,
             )
         artifacts = [Artifact(item.label, item.path) for item in submission_artifacts]
@@ -405,20 +408,4 @@ class ManuscriptProject:
             revision_directory_name(selected),
             tuple(artifacts),
             audit,
-        )
-
-    def build_all(
-        self,
-        round: str | int | None = None,
-        *,
-        engine: str | None = None,
-        allow_placeholders: bool = False,
-        keep_temp: bool = False,
-    ) -> LifecycleResult:
-        """Compatibility alias for :meth:`prepare_submission`."""
-        return self.prepare_submission(
-            round,
-            engine=engine,
-            allow_placeholders=allow_placeholders,
-            keep_temp=keep_temp,
         )

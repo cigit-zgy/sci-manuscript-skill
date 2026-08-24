@@ -16,19 +16,12 @@ from .workspace import ProjectConfig
 
 REVIEWER_HEADING = re.compile(r"^#\s*(?:Reviewer|审稿人)\s*#?\s*([1-9]\d*)\s*$", re.I)
 EDITOR_HEADING = re.compile(r"^#\s*(?:Editor|编辑)\s*$", re.I)
-ASSOCIATE_EDITOR_HEADING = re.compile(r"^#\s*(?:Associate\s+Editor|副编辑)\s*$", re.I)
-EXPLICIT_COMMENT = re.compile(
-    r"^##\s*((?:E|AE|[1-9]\d*)-[1-9]\d*)\s*"
-    r"(?:\|\s*|\[)(response_only|manuscript_revised)\]?\s*$",
-    re.I,
-)
 NUMBERED_COMMENT = re.compile(r"^\s*([1-9]\d*)[.)]\s*(.*)$")
 USER_SECTION_HEADING = re.compile(
-    r"^##\s*(?:Main comment|Specific comments|主意见|具体意见)\s*$",
+    r"^##\s*(Main comment|Specific comments|主意见|具体意见)\s*$",
     re.I,
 )
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
-PENDING_RESPONSE = re.compile(r"\\ResponsePending\{([^}]+)\}")
 REVIEW_MACRO = re.compile(r"\\review\s*\{([^}]+)\}")
 RESPONSE_COMMAND = r"\Response"
 REVIEW_INDEX_NAME = "review_index.yaml"
@@ -39,7 +32,6 @@ class ReviewComment:
     """One reviewer or editor comment with an internally assigned ID."""
 
     review_id: str
-    status: str
     paragraphs: tuple[str, ...]
 
     @property
@@ -54,7 +46,7 @@ class ReviewBlock:
 
     title: str
     prefix: str
-    general_paragraphs: tuple[str, ...]
+    summary: tuple[str, ...]
     comments: tuple[ReviewComment, ...]
 
 
@@ -121,7 +113,7 @@ def _paragraphs(lines: list[str]) -> tuple[str, ...]:
 
 
 def parse_reviews(path: Path) -> tuple[ReviewBlock, ...]:
-    """Parse the user-facing numbered-list format and legacy explicit headings."""
+    """Parse the canonical editor/reviewer summary and numbered-comment format."""
     if not path.is_file():
         raise WorkflowError(f"Reviewer comments are missing: {path}")
     try:
@@ -132,81 +124,110 @@ def parse_reviews(path: Path) -> tuple[ReviewBlock, ...]:
     blocks: list[ReviewBlock] = []
     block_title: str | None = None
     prefix: str | None = None
-    general: list[str] = []
+    summary_lines: list[str] = []
     comments: list[ReviewComment] = []
     comment_lines: list[str] = []
     current_id: str | None = None
-    current_status = "auto"
+    section: str | None = None
+    saw_summary = False
+    saw_comments = False
 
     def finish_comment() -> None:
-        nonlocal comment_lines, current_id, current_status
+        nonlocal comment_lines, current_id
         if current_id is None:
             return
         paragraphs = _paragraphs(comment_lines)
         if paragraphs:
-            comments.append(ReviewComment(current_id, current_status, paragraphs))
+            comments.append(ReviewComment(current_id, paragraphs))
         comment_lines = []
         current_id = None
-        current_status = "auto"
 
     def finish_block() -> None:
-        nonlocal general, comments
+        nonlocal summary_lines, comments, section, saw_summary, saw_comments
         if block_title is None or prefix is None:
             return
         finish_comment()
+        if not saw_summary or not saw_comments:
+            raise WorkflowError(
+                f"{block_title} must contain Main comment and Specific comments "
+                f"sections: {path}"
+            )
         blocks.append(
-            ReviewBlock(block_title, prefix, _paragraphs(general), tuple(comments))
+            ReviewBlock(
+                block_title, prefix, _paragraphs(summary_lines), tuple(comments)
+            )
         )
-        general = []
+        summary_lines = []
         comments = []
+        section = None
+        saw_summary = False
+        saw_comments = False
 
     for raw in lines:
         stripped = raw.strip()
         editor = EDITOR_HEADING.fullmatch(stripped)
-        associate_editor = ASSOCIATE_EDITOR_HEADING.fullmatch(stripped)
         reviewer = REVIEWER_HEADING.fullmatch(stripped)
-        if editor or associate_editor or reviewer:
+        if editor or reviewer:
             finish_block()
             if editor:
                 block_title, prefix = "Editor", "E"
-            elif associate_editor:
-                block_title, prefix = "Associate Editor", "AE"
             else:
                 assert reviewer is not None
                 prefix = reviewer.group(1)
                 block_title = f"Reviewer #{prefix}"
             continue
+        if stripped.startswith("# "):
+            raise WorkflowError(f"Unknown review heading {stripped!r}: {path}")
         if block_title is None or prefix is None:
             if stripped:
                 raise WorkflowError(
                     f"Text appears before the first review heading: {path}"
                 )
             continue
-        if USER_SECTION_HEADING.fullmatch(stripped):
+        section_heading = USER_SECTION_HEADING.fullmatch(stripped)
+        if section_heading:
             finish_comment()
+            label = section_heading.group(1).lower()
+            if label in {"main comment", "主意见"}:
+                if saw_summary or saw_comments:
+                    raise WorkflowError(
+                        f"Main comment appears out of order under {block_title}: {path}"
+                    )
+                section = "summary"
+                saw_summary = True
+            else:
+                if not saw_summary or saw_comments:
+                    raise WorkflowError(
+                        f"Specific comments appears out of order under {block_title}: {path}"
+                    )
+                section = "comments"
+                saw_comments = True
             continue
-        explicit = EXPLICIT_COMMENT.fullmatch(stripped)
+        if stripped.startswith("##"):
+            raise WorkflowError(f"Unknown review subsection {stripped!r}: {path}")
         numbered = NUMBERED_COMMENT.fullmatch(raw) if not raw.startswith("#") else None
-        if explicit:
-            finish_comment()
-            current_id = explicit.group(1).upper()
-            current_status = explicit.group(2).lower()
-            if current_id.split("-", 1)[0] != prefix:
-                raise WorkflowError(
-                    f"Comment {current_id} does not belong under {block_title}: {path}"
-                )
-            continue
         if numbered:
+            if section != "comments":
+                raise WorkflowError(
+                    f"Numbered comments must appear under Specific comments: {path}"
+                )
             finish_comment()
             current_id = f"{prefix}-{len(comments) + 1}"
-            current_status = "auto"
             body = numbered.group(2).strip()
             comment_lines = [body] if body else []
             continue
-        if current_id is None:
-            general.append(raw)
-        else:
+        if not stripped:
+            if section == "summary":
+                summary_lines.append(raw)
+            elif current_id is not None:
+                comment_lines.append(raw)
+            continue
+        if section == "summary":
+            summary_lines.append(raw)
+        elif section == "comments" and current_id is not None:
             comment_lines.append(raw)
+        else:
+            raise WorkflowError(f"Unexpected review content {stripped!r}: {path}")
     finish_block()
     all_ids = [comment.review_id for block in blocks for comment in block.comments]
     if len(all_ids) != len(set(all_ids)):
@@ -256,37 +277,6 @@ def parse_response_entries(path: Path) -> dict[str, str]:
     return responses
 
 
-def parse_responses(path: Path, expected_ids: tuple[str, ...]) -> dict[str, str]:
-    r"""Parse strict ``\Response{ID}{body}`` entries with nested TeX braces."""
-    if not path.is_file():
-        raise WorkflowError(f"Response content is missing: {path}")
-    responses = parse_response_entries(path)
-    expected = set(expected_ids)
-    observed = set(responses)
-    unknown = sorted(observed - expected)
-    if unknown:
-        raise WorkflowError("Unknown response IDs: " + ", ".join(unknown))
-    missing = sorted(expected - observed)
-    if missing:
-        raise WorkflowError("Missing response IDs: " + ", ".join(missing))
-    return responses
-
-
-def pending_response_ids(responses: dict[str, str]) -> tuple[str, ...]:
-    """Return unfinished response IDs after validating their pending markers."""
-    pending: list[str] = []
-    for review_id, body in responses.items():
-        for value in PENDING_RESPONSE.findall(body):
-            if not is_review_id(value):
-                raise WorkflowError(f"Invalid pending response ID: {value}")
-            if value != review_id:
-                raise WorkflowError(
-                    f"Response {review_id} contains pending marker for {value}."
-                )
-            pending.append(review_id)
-    return tuple(pending)
-
-
 def _review_ids_with_paths(version: Path) -> dict[str, set[Path]]:
     result: dict[str, set[Path]] = {}
     paths = [version / "manuscript.tex", *sorted((version / "sections").rglob("*.tex"))]
@@ -305,11 +295,6 @@ def review_ids_from_sources(config: ProjectConfig, round_number: int) -> set[str
     return set(_review_ids_with_paths(config.round_dir(round_number)))
 
 
-def validate_response_links(config: ProjectConfig, round_number: int) -> None:
-    """Compatibility validator; review linkage is now reported by audit."""
-    audit_reviews(config, round_number)
-
-
 def _comment_fingerprint(comment: ReviewComment) -> str:
     normalized = " ".join(comment.text.split())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
@@ -317,8 +302,6 @@ def _comment_fingerprint(comment: ReviewComment) -> str:
 
 def _load_review_index(config: ProjectConfig, round_number: int) -> dict[str, str]:
     path = config.review_index_path(round_number)
-    if not path.is_file():
-        path = config.output_dir(round_number) / REVIEW_INDEX_NAME
     if not path.is_file():
         return {}
     try:
@@ -355,9 +338,6 @@ def _write_review_index(
     path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
-    legacy = config.output_dir(round_number) / REVIEW_INDEX_NAME
-    if legacy.is_file():
-        legacy.unlink()
 
 
 def audit_reviews(
@@ -389,10 +369,8 @@ def audit_reviews(
     }
     try:
         responses = parse_response_entries(response_path)
-        pending = set(pending_response_ids(responses))
     except WorkflowError as exc:
         responses = {}
-        pending = set()
         issues.append(
             ReviewAuditIssue(
                 "RESPONSES_INVALID",
@@ -417,7 +395,7 @@ def audit_reviews(
     for review_id in comments:
         response_exists = review_id in responses
         body = responses.get(review_id, "").strip()
-        has_response = bool(body) and review_id not in pending
+        has_response = bool(body)
         has_revision = review_id in provenance
         if has_response and has_revision:
             state = "manuscript_revised"

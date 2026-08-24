@@ -21,7 +21,7 @@ from sci_manuscript.metadata import (
 from sci_manuscript.templates import resources_root
 
 
-def _legacy_role_schema() -> str:
+def _obsolete_role_schema() -> str:
     first = "_".join(("first", "author"))
     corresponding = "_".join(("corresponding", "author"))
     other = "_".join(("other", "author"))
@@ -107,14 +107,14 @@ def test_canonical_meta_contains_workflow_fields_without_manuscript_text(
     "authors",
     (
         "  order: [zhao_guangyao, yin_fengjun, liu_hong]\n  corresponding: [liu_hong]",
-        _legacy_role_schema(),
+        _obsolete_role_schema(),
     ),
 )
 def test_noncanonical_authors_schemas_are_rejected(
     tmp_path: Path,
     authors: str,
 ) -> None:
-    path = tmp_path / "legacy.yaml"
+    path = tmp_path / "obsolete.yaml"
     _write_meta(path, authors)
 
     with pytest.raises(MetadataError, match="Canonical authors schema"):

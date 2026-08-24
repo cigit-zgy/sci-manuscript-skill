@@ -74,6 +74,20 @@ def _format_locations(ranges: list[tuple[int, int]], language: str) -> str:
     return f"Lines {joined}"
 
 
+def _normalize_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge duplicate, overlapping, and adjacent line ranges in source order."""
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if end < start:
+            start, end = end, start
+        if not merged or start > merged[-1][1] + 1:
+            merged.append((start, end))
+            continue
+        previous_start, previous_end = merged[-1]
+        merged[-1] = (previous_start, max(previous_end, end))
+    return merged
+
+
 def calculate_locations(
     build_dir: Path,
     stem: str = "manuscript_marked",
@@ -97,7 +111,8 @@ def calculate_locations(
             if location not in by_comment[review_id]:
                 by_comment[review_id].append(location)
     return {
-        key: _format_locations(value, language) for key, value in by_comment.items()
+        key: _format_locations(_normalize_ranges(value), language)
+        for key, value in by_comment.items()
     }
 
 

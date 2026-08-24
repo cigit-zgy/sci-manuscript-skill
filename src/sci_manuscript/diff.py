@@ -10,8 +10,7 @@ from pathlib import Path
 
 from .compile import compile_tex, run_command, stage_runtime_resources
 from .errors import WorkflowError
-from .locations import REVIEW_REGISTRY_HEADER as REVIEW_REGISTRY_HEADER
-from .locations import build_review_locations, calculate_locations
+from .locations import build_review_locations
 from .provenance import ProvenanceSource, extract_provenance, split_by_review_provenance
 from .templates import resources_root
 from .tex import extract_braced, is_escaped
@@ -538,9 +537,6 @@ def _refine_inline_math_replacements(text: str) -> str:
         output.extend((text[cursor:start], refined))
         cursor = add_end
     return "".join(output)
-
-
-_calculate_locations = calculate_locations
 
 
 def build_marked_manuscript(

@@ -32,9 +32,7 @@ from sci_manuscript.metadata import (
 )
 from sci_manuscript.response import (
     parse_response_entries,
-    parse_responses,
     parse_reviews,
-    pending_response_ids,
     validate_review_id_list,
 )
 from sci_manuscript.submission import ensure_submission_workspace
@@ -156,7 +154,11 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert not (initial / "manuscript.yaml").exists()
     assert "Document class" in (initial / "manuscript.tex").read_text()
     assert (initial / "sections" / "00_abstract.tex").is_file()
-    assert not (initial / "sections" / "00_frontmatter.tex").exists()
+    frontmatter = initial / "sections" / "00_frontmatter.tex"
+    assert frontmatter.is_file()
+    frontmatter_text = frontmatter.read_text(encoding="utf-8")
+    assert r"\title{" in frontmatter_text
+    assert "Anonymous Lifecycle Test" in frontmatter_text
     assert load_meta(initial / "meta.yaml").first_authors == ("author_one",)
     with pytest.raises(WorkflowError, match="overwrite"):
         initialize_project(config, _anonymous_author_library(tmp_path))
@@ -241,13 +243,10 @@ def test_chinese_publisher_uses_full_width_commas_between_authors(
     ) in rendered
 
 
-def test_revision_provenance_fallbacks_live_only_in_shared_preamble() -> None:
+def test_revision_provenance_definition_lives_only_in_shared_preamble() -> None:
     root = resources_root()
     preamble = (root / "manuscript_preamble" / "common.tex").read_text(encoding="utf-8")
-    definitions = (
-        r"\providecommand{\review}[2]{#2}",
-        r"\providecommand{\user}[1]{#1}",
-    )
+    definitions = (r"\providecommand{\review}[2]{#2}",)
     for definition in definitions:
         assert definition in preamble
     templates = root / "journal_templates"
@@ -303,7 +302,6 @@ def test_revision_contract_and_parent_integrity(tmp_path: Path) -> None:
     assert r01.round_dir(1).name == "revision_01"
     assert load_meta(r01.round_dir(1) / "meta.yaml").parent_round == 0
     assert r01.creation_record_path(1).is_file()
-    assert not (r01.round_dir(1) / "revision_creation.yaml").exists()
     assert not (r01.round_dir(1) / "references").exists()
     assert not any((r01.round_dir(1) / "output").iterdir())
     assert not any((r01.round_dir(1) / "submission").iterdir())
@@ -348,8 +346,6 @@ def test_reindex_success_preserves_scientific_bytes(tmp_path: Path) -> None:
     assert load_meta(r03.round_dir(1) / "meta.yaml").round_number == 1
     assert r03.creation_record_path(1).is_file()
     assert r03.creation_record_path(2).is_file()
-    assert not (r03.round_dir(1) / "revision_creation.yaml").exists()
-    assert not (r03.round_dir(2) / "revision_creation.yaml").exists()
     assert not r03.state_dir(3).exists()
     assert load_meta(r03.round_dir(2) / "meta.yaml").round_number == 2
     assert any((r03.project / "00_archive").iterdir())
@@ -376,12 +372,13 @@ def test_reindex_injected_failure_restores_original(tmp_path: Path) -> None:
         assert observed == before[number]
 
 
-def test_review_parser_ids_status_and_paragraphs(tmp_path: Path) -> None:
+def test_review_parser_ids_summary_and_paragraphs(tmp_path: Path) -> None:
     reviews = tmp_path / "reviews.md"
     reviews.write_text(
-        "# Editor\n\n## E-1 | response_only\n\nFirst paragraph.\n\n"
-        "Second paragraph with 10% and A_B.\n\n# Reviewer #1\n\n"
-        "## 1-1 | manuscript_revised\n\nRevise this.\n",
+        "# Editor\n\n## Main comment\n\nFirst paragraph.\n\n"
+        "Second paragraph with 10% and A_B.\n\n## Specific comments\n\n"
+        "1. Clarify scope.\n\n# Reviewer #1\n\n## Main comment\n\n"
+        "## Specific comments\n\n1. Revise this.\n",
         encoding="utf-8",
     )
     blocks = parse_reviews(reviews)
@@ -389,11 +386,10 @@ def test_review_parser_ids_status_and_paragraphs(tmp_path: Path) -> None:
         "E-1",
         "1-1",
     ]
-    assert blocks[0].comments[0].paragraphs == (
+    assert blocks[0].summary == (
         "First paragraph.",
         "Second paragraph with 10% and A_B.",
     )
-    assert blocks[0].comments[0].status == "response_only"
     assert validate_review_id_list("1-1,2-3") == ("1-1", "2-3")
     with pytest.raises(WorkflowError):
         validate_review_id_list("E-0")
@@ -404,8 +400,9 @@ def test_response_source_uses_authoritative_ids_and_preserves_user_edits(
 ) -> None:
     reviews = tmp_path / "reviews.md"
     reviews.write_text(
-        "# Editor\n\n## E-1 | response_only\n\nClarify scope.\n\n"
-        "# Reviewer #1\n\n## 1-1 | manuscript_revised\n\nRevise text.\n",
+        "# Editor\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Clarify scope.\n\n# Reviewer #1\n\n## Main comment\n\n"
+        "## Specific comments\n\n1. Revise text.\n",
         encoding="utf-8",
     )
     config = _revision(_workspace(tmp_path), reviews)
@@ -415,7 +412,6 @@ def test_response_source_uses_authoritative_ids_and_preserves_user_edits(
     assert "Clarify scope" not in text
     assert "Revise text" not in text
     assert "\\documentclass" not in text
-    assert "\\ResponsePending" not in text
     assert not (source.parent / "response_letter.tex").exists()
     source.write_text(text + "\n% user-owned edit\n", encoding="utf-8")
     from sci_manuscript.response import init_response
@@ -425,44 +421,40 @@ def test_response_source_uses_authoritative_ids_and_preserves_user_edits(
     assert source.read_text(encoding="utf-8").endswith("% user-owned edit\n")
 
 
-def test_responses_parser_supports_nested_latex_and_pending_markers(
+def test_response_parser_supports_nested_latex(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "responses.tex"
     source.write_text(
         "% editable response content\n"
         "\\Response{E-1}{First {nested \\textbf{response}}.}\n"
-        "\\Response{1-1}{\n\\ResponsePending{1-1}\n}\n",
+        "\\Response{1-1}{Second response.}\n",
         encoding="utf-8",
     )
-    responses = parse_responses(source, ("E-1", "1-1"))
+    responses = parse_response_entries(source)
     assert responses["E-1"] == "First {nested \\textbf{response}}."
-    assert pending_response_ids(responses) == ("1-1",)
+    assert responses["1-1"] == "Second response."
 
 
 @pytest.mark.parametrize(
-    ("text", "expected", "message"),
+    ("text", "message"),
     (
         (
             "\\Response{1-1}{A}\\Response{1-1}{B}",
-            ("1-1",),
             "Duplicate response ID",
         ),
-        ("\\Response{1-1}{A}", ("1-1", "2-1"), "Missing response IDs"),
-        ("\\Response{2-1}{A}", ("1-1",), "Unknown response IDs"),
-        ("\\Response{bad}{A}", ("1-1",), "Invalid response ID"),
+        ("\\Response{bad}{A}", "Invalid response ID"),
     ),
 )
 def test_responses_parser_rejects_invalid_contracts(
     tmp_path: Path,
     text: str,
-    expected: tuple[str, ...],
     message: str,
 ) -> None:
     source = tmp_path / "responses.tex"
     source.write_text(text, encoding="utf-8")
     with pytest.raises(WorkflowError, match=message):
-        parse_responses(source, expected)
+        parse_response_entries(source)
 
 
 def test_response_build_uses_current_package_template_without_editing_content(
@@ -473,7 +465,7 @@ def test_response_build_uses_current_package_template_without_editing_content(
 
     reviews = tmp_path / "response_only.md"
     reviews.write_text(
-        "# Editor\n\n## E-1 | response_only\n\nClarify scope.\n",
+        "# Editor\n\n## Main comment\n\n## Specific comments\n\n1. Clarify scope.\n",
         encoding="utf-8",
     )
     config = _revision(_workspace(tmp_path), reviews)
@@ -516,7 +508,7 @@ def test_response_build_uses_current_package_template_without_editing_content(
     assert (run_dir / "response_source" / "response_letter.tex").is_file()
 
 
-def test_response_build_accepts_missing_response_without_placeholder_macro(
+def test_response_build_accepts_empty_response_for_response_only_comment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -524,7 +516,8 @@ def test_response_build_accepts_missing_response_without_placeholder_macro(
 
     reviews = tmp_path / "unanswered.md"
     reviews.write_text(
-        "# Reviewer #1\n\n## 1-1 | response_only\n\nPlease clarify.\n",
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Please clarify.\n",
         encoding="utf-8",
     )
     config = _revision(_workspace(tmp_path), reviews)
@@ -539,7 +532,6 @@ def test_response_build_accepts_missing_response_without_placeholder_macro(
     ) -> CompileResult:
         assembled = source.read_text(encoding="utf-8")
         assert "Please clarify." in assembled
-        assert "\\ResponsePending" not in assembled
         build_dir.mkdir(parents=True)
         pdf = build_dir / "response_letter.pdf"
         pdf.write_bytes(b"%PDF-1.4\n")
@@ -556,7 +548,8 @@ def test_response_build_accepts_missing_response_without_placeholder_macro(
 def test_response_build_rejects_missing_marked_location(tmp_path: Path) -> None:
     reviews = tmp_path / "revised.md"
     reviews.write_text(
-        "# Reviewer #1\n\n## 1-1 | manuscript_revised\n\nRevise the manuscript.\n",
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Revise the manuscript.\n",
         encoding="utf-8",
     )
     config = _revision(_workspace(tmp_path), reviews)
@@ -573,13 +566,6 @@ def test_response_build_rejects_missing_marked_location(tmp_path: Path) -> None:
 
     with pytest.raises(WorkflowError, match="locations are missing for: 1-1"):
         response_module.build_response(config, 1, {}, tmp_path / "run")
-    with pytest.raises(WorkflowError, match="locations are missing for: 1-1"):
-        response_module.build_response(
-            config,
-            1,
-            {"1-1": "Location unavailable"},
-            tmp_path / "run_unavailable",
-        )
 
 
 def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
@@ -617,7 +603,7 @@ def test_submission_requires_signer_for_multiple_corresponding_authors(
 
 
 def test_multi_id_review_location_registry(tmp_path: Path) -> None:
-    from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, _calculate_locations
+    from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
 
     (tmp_path / "manuscript_marked.reviewloc").write_text(
         f"{REVIEW_REGISTRY_HEADER}\n1-1,2-3|1\nE-1|2\n", encoding="utf-8"
@@ -629,7 +615,7 @@ def test_multi_id_review_location_registry(tmp_path: Path) -> None:
         "\\newlabel{review:2:end}{{12}{1}}\n",
         encoding="utf-8",
     )
-    assert _calculate_locations(tmp_path) == {
+    assert calculate_locations(tmp_path) == {
         "1-1": "Lines 7--8",
         "2-3": "Lines 7--8",
         "E-1": "Line 12",
@@ -648,7 +634,7 @@ def test_review_locations_are_fully_localized(
     language: str,
     expected: str,
 ) -> None:
-    from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, _calculate_locations
+    from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
 
     (tmp_path / "manuscript_marked.reviewloc").write_text(
         f"{REVIEW_REGISTRY_HEADER}\n1-1|1\n1-1|2\n1-1|3\n",
@@ -663,7 +649,7 @@ def test_review_locations_are_fully_localized(
         "\\newlabel{review:3:end}{{21}{1}}\n",
         encoding="utf-8",
     )
-    location = _calculate_locations(tmp_path, language=language)["1-1"]
+    location = calculate_locations(tmp_path, language=language)["1-1"]
     assert location == expected
     if language == "zh":
         assert all(token not in location for token in ("Line", "Lines", "and"))
@@ -672,13 +658,13 @@ def test_review_locations_are_fully_localized(
 
 
 def test_empty_versioned_review_location_registry_is_valid(tmp_path: Path) -> None:
-    from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, _calculate_locations
+    from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
 
     (tmp_path / "manuscript_marked.reviewloc").write_text(
         f"{REVIEW_REGISTRY_HEADER}\n", encoding="utf-8"
     )
     (tmp_path / "manuscript_marked.aux").write_text("", encoding="utf-8")
-    assert _calculate_locations(tmp_path) == {}
+    assert calculate_locations(tmp_path) == {}
 
 
 def test_revision_layout_qa_rejects_marked_specific_overflow(

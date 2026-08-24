@@ -287,12 +287,12 @@ def initialize_draft_project(path: str | Path) -> Path:
 
 
 def strip_provenance_wrappers(text: str) -> str:
-    """Make inherited review/user wrappers transparent in a child revision."""
+    """Make inherited reviewer provenance transparent in a child revision."""
     output = text
     changed = True
     while changed:
         changed = False
-        for command, fields in ((r"\review", 2), (r"\user", 1), (r"\selfadd", 1)):
+        for command, fields in ((r"\review", 2),):
             cursor = 0
             pieces: list[str] = []
             while True:
@@ -419,10 +419,7 @@ def finalize_revision_creation(config: ProjectConfig) -> Path:
 
 
 def _load_creation(config: ProjectConfig, round_number: int) -> dict[str, str]:
-    version = config.round_dir(round_number)
     path = config.creation_record_path(round_number)
-    if not path.is_file():
-        path = version / "revision_creation.yaml"
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
@@ -529,9 +526,6 @@ def reindex_revisions(
         metadata = load_meta(target / "meta.yaml")
         save_meta(target / "meta.yaml", with_revision(metadata, new_number))
         _clear_generated(target)
-        creation = target / "revision_creation.yaml"
-        if creation.exists():
-            creation.unlink()
         state_target = state_stage / revision_directory_name(new_number)
         state_source = state_root / revision_directory_name(old_number)
         if state_source.is_dir():

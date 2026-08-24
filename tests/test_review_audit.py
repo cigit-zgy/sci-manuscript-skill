@@ -17,7 +17,7 @@ from sci_manuscript.metadata import (
     load_meta,
     save_meta,
 )
-from sci_manuscript.response import audit_reviews, parse_response_entries, parse_reviews
+from sci_manuscript.response import audit_reviews, parse_reviews
 from sci_manuscript.workspace import ProjectConfig, initialize_project
 
 
@@ -75,18 +75,11 @@ def test_revision_creates_user_facing_chinese_review_template(tmp_path: Path) ->
     for hidden_term in ("E-1", "1-1", "audit", "response linkage"):
         assert hidden_term not in text
     blocks = parse_reviews(comments)
-    assert all(not block.general_paragraphs for block in blocks)
+    assert all(not block.summary for block in blocks)
     assert all(not block.comments for block in blocks)
     assert result.artifacts[0].label == "Reviewer comments"
     assert result.artifacts[0].path == comments
-    response_help = (comments.parent / "responses.tex").read_text(encoding="utf-8")
-    assert "% 使用说明：" in response_help
-    assert "reviewer_comments.md" in response_help
-    assert parse_response_entries(comments.parent / "responses.tex") == {
-        "1-1": "",
-        "2-1": "",
-    }
-    assert "\\ResponsePending" not in response_help
+    assert not (comments.parent / "responses.tex").exists()
 
 
 def test_revision_creates_matching_english_review_template(tmp_path: Path) -> None:
@@ -104,16 +97,9 @@ def test_revision_creates_matching_english_review_template(tmp_path: Path) -> No
     for hidden_term in ("comment ID", "E-1", "1-1", "audit", "response linkage"):
         assert hidden_term not in text
     blocks = parse_reviews(comments)
-    assert all(not block.general_paragraphs for block in blocks)
+    assert all(not block.summary for block in blocks)
     assert all(not block.comments for block in blocks)
-    response_help = (comments.parent / "responses.tex").read_text(encoding="utf-8")
-    assert "% Instructions:" in response_help
-    assert "not rendered in the final PDF" in response_help
-    assert parse_response_entries(comments.parent / "responses.tex") == {
-        "1-1": "",
-        "2-1": "",
-    }
-    assert "\\ResponsePending" not in response_help
+    assert not (comments.parent / "responses.tex").exists()
 
 
 def test_numbered_list_parser_assigns_internal_ids_and_preserves_general_text(
@@ -124,11 +110,19 @@ def test_numbered_list_parser_assigns_internal_ids_and_preserves_general_text(
         """<!-- instructions are ignored -->
 # 编辑
 
+## 主意见
+
+## 具体意见
+
 1. 请说明研究范围。
 
 # 审稿人 #1
 
+## 主意见
+
 该研究具有一定价值，但需要进一步修改。
+
+## 具体意见
 
 1. 第一条意见第一行。
    第一条意见第二行。
@@ -136,6 +130,10 @@ def test_numbered_list_parser_assigns_internal_ids_and_preserves_general_text(
 2. 第二条意见。
 
 # 审稿人 #2
+
+## 主意见
+
+## 具体意见
 
 1.
 2.
@@ -148,7 +146,7 @@ def test_numbered_list_parser_assigns_internal_ids_and_preserves_general_text(
         "1-1",
         "1-2",
     ]
-    assert blocks[1].general_paragraphs == ("该研究具有一定价值，但需要进一步修改。",)
+    assert blocks[1].summary == ("该研究具有一定价值，但需要进一步修改。",)
     assert blocks[1].comments[0].paragraphs == (
         "第一条意见第一行。 第一条意见第二行。",
     )
@@ -187,21 +185,10 @@ Reviewer summary.
 
     blocks = parse_reviews(path)
 
-    assert blocks[0].general_paragraphs == ("编辑整体意见。",)
+    assert blocks[0].summary == ("编辑整体意见。",)
     assert [comment.review_id for comment in blocks[0].comments] == ["E-1", "E-2"]
-    assert blocks[1].general_paragraphs == ("Reviewer summary.",)
+    assert blocks[1].summary == ("Reviewer summary.",)
     assert [comment.review_id for comment in blocks[1].comments] == ["1-1", "1-2"]
-
-
-def test_legacy_explicit_review_format_remains_readable(tmp_path: Path) -> None:
-    path = tmp_path / "legacy.md"
-    path.write_text(
-        "# Reviewer #1\n\n## 1-1 | manuscript_revised\n\nLegacy comment.\n",
-        encoding="utf-8",
-    )
-    blocks = parse_reviews(path)
-    assert blocks[0].comments[0].review_id == "1-1"
-    assert blocks[0].comments[0].status == "manuscript_revised"
 
 
 def test_review_audit_computes_statuses_and_reports_all_paths(tmp_path: Path) -> None:
@@ -212,6 +199,10 @@ def test_review_audit_computes_statuses_and_reports_all_paths(tmp_path: Path) ->
     comments = version / "response" / "reviewer_comments.md"
     comments.write_text(
         """# Reviewer #1
+
+## Main comment
+
+## Specific comments
 
 1. First comment.
 2. Second comment.
@@ -275,22 +266,25 @@ def test_empty_comments_with_review_macro_produces_nonblocking_audit(
     assert audit.comment_path.name == "reviewer_comments.md"
 
 
-@pytest.mark.parametrize("pending_id", ("2-1", "invalid"))
-def test_malformed_pending_marker_produces_nonblocking_response_issue(
+@pytest.mark.parametrize(
+    "malformed_source",
+    ("\\Response{invalid}{Body.}\n", "\\Response{1-1}{Unbalanced.\n"),
+)
+def test_malformed_response_source_produces_nonblocking_response_issue(
     tmp_path: Path,
-    pending_id: str,
+    malformed_source: str,
 ) -> None:
     config = _project(tmp_path)
     ManuscriptProject(config.project).start_revision(confirmed=True)
     version = config.project / "revision_01"
     comments = version / "response" / "reviewer_comments.md"
     comments.write_text(
-        "# Reviewer #1\n\n1. First comment.\n",
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n1. First comment.\n",
         encoding="utf-8",
     )
     responses = version / "response" / "responses.tex"
     responses.write_text(
-        f"\\Response{{1-1}}{{\\ResponsePending{{{pending_id}}}}}\n",
+        malformed_source,
         encoding="utf-8",
     )
 
@@ -314,10 +308,13 @@ def test_submission_skips_untrusted_response_pdf_but_publishes_manuscripts(
     )
     save_meta(version / "meta.yaml", metadata)
     comments = version / "response" / "reviewer_comments.md"
-    comments.write_text("# Reviewer #1\n\n1. First comment.\n", encoding="utf-8")
+    comments.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n1. First comment.\n",
+        encoding="utf-8",
+    )
     responses = version / "response" / "responses.tex"
     responses.write_text(
-        "\\Response{1-1}{\\ResponsePending{2-1}}\n",
+        "\\Response{invalid}{Malformed response.}\n",
         encoding="utf-8",
     )
 
@@ -393,12 +390,14 @@ def test_review_id_drift_is_detected_after_first_recorded_mapping(
     version = config.project / "revision_01"
     comments = version / "response" / "reviewer_comments.md"
     comments.write_text(
-        "# Reviewer #1\n\n1. Alpha comment.\n2. Beta comment.\n",
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Alpha comment.\n2. Beta comment.\n",
         encoding="utf-8",
     )
     audit_reviews(ProjectConfig(config.project, config.metadata), 1, record_index=True)
     comments.write_text(
-        "# Reviewer #1\n\n1. Beta comment.\n2. Alpha comment.\n",
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Beta comment.\n2. Alpha comment.\n",
         encoding="utf-8",
     )
     audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
@@ -407,25 +406,7 @@ def test_review_id_drift_is_detected_after_first_recorded_mapping(
     assert not (version / "output" / "review_index.yaml").exists()
 
 
-def test_legacy_review_index_migrates_out_of_user_output(tmp_path: Path) -> None:
-    config = _project(tmp_path)
-    ManuscriptProject(config.project).start_revision(confirmed=True)
-    version = config.project / "revision_01"
-    comments = version / "response" / "reviewer_comments.md"
-    comments.write_text("# Reviewer #1\n\n1. Stable comment.\n", encoding="utf-8")
-    state_index = config.project / "state" / "revision_01" / "review_index.yaml"
-    audit_reviews(ProjectConfig(config.project, config.metadata), 1, record_index=True)
-    legacy_index = version / "output" / "review_index.yaml"
-    legacy_index.write_text(state_index.read_text(encoding="utf-8"), encoding="utf-8")
-    state_index.unlink()
-
-    audit_reviews(ProjectConfig(config.project, config.metadata), 1, record_index=True)
-
-    assert state_index.is_file()
-    assert not legacy_index.exists()
-
-
-def test_cli_review_warning_prints_concrete_file_paths(
+def test_cli_incomplete_responses_do_not_print_source_paths(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -433,20 +414,21 @@ def test_cli_review_warning_prints_concrete_file_paths(
     ManuscriptProject(config.project).start_revision(confirmed=True)
     version = config.project / "revision_01"
     comments = version / "response" / "reviewer_comments.md"
-    comments.write_text("# Reviewer #1\n\n1. First comment.\n", encoding="utf-8")
+    comments.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n1. First comment.\n",
+        encoding="utf-8",
+    )
     responses = version / "response" / "responses.tex"
     responses.write_text("\\Response{1-1}{}\n", encoding="utf-8")
     audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
     result = LifecycleResult("build", "revision_01", (), audit)
     _print_lifecycle(result, config.project)
     output = capsys.readouterr().out
-    assert "Review response audit:" in output
-    assert "Unreplied comments:" in output
-    assert "1-1 (EMPTY_RESPONSE)" in output
-    assert "Please complete these responses before submission." in output
+    assert "Review responses incomplete:" in output
+    assert "- 1-1: empty response" in output
     assert "Review audit result: INCOMPLETE" in output
-    assert "Path:" in output
-    assert str(comments) in output
+    assert "Path:" not in output
+    assert str(comments) not in output
 
 
 def test_missing_empty_and_orphan_responses_have_distinct_issue_codes(
@@ -457,7 +439,8 @@ def test_missing_empty_and_orphan_responses_have_distinct_issue_codes(
     version = config.project / "revision_01"
     comments = version / "response" / "reviewer_comments.md"
     comments.write_text(
-        "# Reviewer #1\n\n1. Missing.\n2. Empty.\n",
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Missing.\n2. Empty.\n",
         encoding="utf-8",
     )
     responses = version / "response" / "responses.tex"

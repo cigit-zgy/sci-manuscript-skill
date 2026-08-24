@@ -161,7 +161,7 @@ def resolve_author_library_path(explicit: str | Path | None = None) -> Path:
 
 
 def resolve_workspace_author_library_path(manuscript_root: Path) -> Path:
-    """Resolve a legacy project library before user-level and bundled data."""
+    """Resolve an explicit project library before user-level and bundled data."""
     project_library = manuscript_root / "references" / "authors.yaml"
     return (
         project_library if project_library.is_file() else resolve_author_library_path()

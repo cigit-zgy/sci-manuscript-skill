@@ -76,8 +76,6 @@ def _parser() -> argparse.ArgumentParser:
         if command != "status":
             child.add_argument("--round")
             child.add_argument("--engine", choices=("auto", "tectonic", "latex"))
-        if command == "submission":
-            child.add_argument("--allow-placeholders", action="store_true")
         if command == "build":
             child.add_argument("--keep-temp", action="store_true")
     revision = commands.add_parser("revision", help="Create the next revision.")
@@ -192,25 +190,30 @@ def _print_lifecycle(
     audit = result.review_audit
     if audit is None:
         return
-    print("Review response audit:")
-    for entry in audit.entries:
-        print(f"  {entry.review_id:<8} {entry.state}")
-    unreplied = tuple(
+    incomplete_responses = tuple(
         issue
         for issue in audit.issues
         if issue.review_id is not None
-        and issue.code in {"MISSING_RESPONSE", "EMPTY_RESPONSE"}
+        and issue.code in {"MISSING_RESPONSE", "EMPTY_RESPONSE", "ORPHAN_RESPONSE"}
     )
-    if unreplied:
-        print("Unreplied comments:")
-        for issue in unreplied:
-            print(f"- {issue.review_id} ({issue.code})")
-        print("Please complete these responses before submission.")
-    for issue in audit.issues:
+    if incomplete_responses:
+        print("Review responses incomplete:")
+        labels = {
+            "MISSING_RESPONSE": "missing response",
+            "EMPTY_RESPONSE": "empty response",
+            "ORPHAN_RESPONSE": "orphan response",
+        }
+        for issue in incomplete_responses:
+            print(f"- {issue.review_id}: {labels[issue.code]}")
+    other_issues = tuple(
+        issue for issue in audit.issues if issue not in incomplete_responses
+    )
+    for issue in other_issues:
         label = issue.review_id or "review"
-        print(f"  WARNING {issue.code} {label}: {issue.message}")
-        for path in issue.paths:
-            print(f"    Path: {path}")
+        print(f"{issue.code} {label}: {issue.message}")
+        if issue.code in {"COMMENTS_INVALID", "RESPONSES_INVALID"}:
+            for path in issue.paths:
+                print(f"Path: {path}")
     state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
     print(f"Review audit result: {state} ({audit.complete}/{audit.total} complete)")
 
@@ -340,7 +343,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             lifecycle_result = project.prepare_submission(
                 args.round,
                 engine=args.engine,
-                allow_placeholders=args.allow_placeholders,
             )
         elif args.command == "sync-bib":
             lifecycle_result = project.sync_bib(args.bib)
