@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sci_manuscript import ManuscriptProject
 from sci_manuscript.api import LifecycleResult
 from sci_manuscript.cli import _print_lifecycle
@@ -181,7 +183,9 @@ def test_review_audit_computes_statuses_and_reports_all_paths(tmp_path: Path) ->
         assert all(path.is_absolute() for path in issue.paths)
 
 
-def test_empty_comments_with_review_macro_produces_nonblocking_audit(tmp_path: Path) -> None:
+def test_empty_comments_with_review_macro_produces_nonblocking_audit(
+    tmp_path: Path,
+) -> None:
     config = _project(tmp_path)
     ManuscriptProject(config.project).start_revision(confirmed=True)
     version = config.project / "revision_01"
@@ -197,7 +201,9 @@ def test_empty_comments_with_review_macro_produces_nonblocking_audit(tmp_path: P
     assert audit.comment_path.name == "reviewer_comments.md"
 
 
-def test_review_id_drift_is_detected_after_first_recorded_mapping(tmp_path: Path) -> None:
+def test_review_id_drift_is_detected_after_first_recorded_mapping(
+    tmp_path: Path,
+) -> None:
     config = _project(tmp_path)
     ManuscriptProject(config.project).start_revision(confirmed=True)
     version = config.project / "revision_01"
@@ -217,7 +223,8 @@ def test_review_id_drift_is_detected_after_first_recorded_mapping(tmp_path: Path
 
 
 def test_cli_review_warning_prints_concrete_file_paths(
-    tmp_path: Path, capsys: object
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     config = _project(tmp_path)
     ManuscriptProject(config.project).start_revision(confirmed=True)
@@ -225,7 +232,7 @@ def test_cli_review_warning_prints_concrete_file_paths(
     audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
     result = LifecycleResult("build", "revision_01", (), audit)
     _print_lifecycle(result, config.project)
-    output = capsys.readouterr().out  # type: ignore[attr-defined]
+    output = capsys.readouterr().out
     assert "Review audit result: INCOMPLETE" in output
     assert "Path:" in output
     assert str(version / "response" / "reviewer_comments.md") in output
