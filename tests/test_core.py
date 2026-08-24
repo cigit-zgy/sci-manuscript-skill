@@ -17,7 +17,10 @@ from sci_manuscript.compile import (
     parse_overfull_boxes,
     validate_revision_layout,
 )
-from sci_manuscript.diff import _separate_inline_math_from_diff_markup
+from sci_manuscript.diff import (
+    _refine_inline_math_replacements,
+    _separate_inline_math_from_diff_markup,
+)
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     MetadataError,
@@ -33,10 +36,10 @@ from sci_manuscript.response import (
     pending_response_ids,
     validate_review_id_list,
 )
+from sci_manuscript.submission import ensure_submission_workspace
 from sci_manuscript.workspace import (
     ProjectConfig,
     WorkflowError,
-    ensure_submission_workspace,
     finalize_revision_creation,
     initialize_project,
     reindex_revisions,
@@ -130,6 +133,18 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert (root.parent / "unrelated.txt").read_text() == "preserve"
     assert not (root / "run.py").exists()
     assert not (root / "tmp").exists()
+    assert config.output_dir(0) == root / "initial_submission" / "output"
+    assert config.response_dir(1) == root / "revision_01" / "response"
+    assert config.submission_dir(1) == root / "revision_01" / "submission"
+    assert config.state_dir(1) == root / "state" / "revision_01"
+    assert config.review_index_path(1) == (
+        root / "state" / "revision_01" / "review_index.yaml"
+    )
+    assert config.creation_record_path(1) == (
+        root / "state" / "revision_01" / "creation.yaml"
+    )
+    assert config.tmp_root() == root / "tmp"
+    assert config.archive_root() == root / "00_archive"
     assert {path.name for path in (root / "references").iterdir()} == {
         "authors.yaml",
         "references.bib",
@@ -154,13 +169,15 @@ def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
     sections = initial / "sections"
     assert {path.name for path in sections.iterdir()} == {
         "00_frontmatter.tex",
-        "01_manuscript.tex",
+        "01_introduction.tex",
     }
     manuscript = (initial / "manuscript.tex").read_text(encoding="utf-8")
     frontmatter_input = r"\input{sections/00_frontmatter}"
     assert manuscript.index(frontmatter_input) < manuscript.index(r"\begin{document}")
-    assert r"\input{sections/01_manuscript}" in manuscript
-    assert r"\usepackage{indentfirst}" in manuscript
+    assert r"\input{sections/01_introduction}" in manuscript
+    assert r"\input{preamble/zh}" in manuscript
+    assert r"\usepackage{indentfirst}" not in manuscript
+    assert r"\makeatletter" not in manuscript
     assert r"\setlength{\parindent}" not in manuscript
     assert r"\bibliographystyle{kxtbcas-numeric}" in manuscript
     assert r"\bibliography{references}" in manuscript
@@ -218,7 +235,7 @@ def test_chinese_publisher_uses_full_width_commas_between_authors(
 
 def test_revision_provenance_fallbacks_live_only_in_shared_preamble() -> None:
     root = resources_root()
-    preamble = (root / "manuscript" / "preamble.tex").read_text(encoding="utf-8")
+    preamble = (root / "manuscript_preamble" / "common.tex").read_text(encoding="utf-8")
     definitions = (
         r"\providecommand{\review}[2]{#2}",
         r"\providecommand{\user}[1]{#1}",
@@ -277,7 +294,8 @@ def test_revision_contract_and_parent_integrity(tmp_path: Path) -> None:
     assert before == source_digest(r00.round_dir(0), scientific_only=True)
     assert r01.round_dir(1).name == "revision_01"
     assert load_meta(r01.round_dir(1) / "meta.yaml").parent_round == 0
-    assert (r01.round_dir(1) / "revision_creation.yaml").is_file()
+    assert r01.creation_record_path(1).is_file()
+    assert not (r01.round_dir(1) / "revision_creation.yaml").exists()
     assert not (r01.round_dir(1) / "references").exists()
     assert not any((r01.round_dir(1) / "output").iterdir())
     assert not any((r01.round_dir(1) / "submission").iterdir())
@@ -291,6 +309,10 @@ def test_rollback_success_and_refusal(tmp_path: Path) -> None:
     result = project.rollback(confirmed=True)
     assert result.version == "initial_submission"
     assert result.artifacts[0].path.is_dir()
+    assert not (project.root / "state" / "revision_01").exists()
+    assert (
+        result.artifacts[0].path.parent / "state" / "revision_01" / "creation.yaml"
+    ).is_file()
     r01 = _revision(ProjectConfig(project.root, _metadata()))
     section = r01.round_dir(1) / "sections" / "01_introduction.tex"
     section.write_text(section.read_text() + "\nUser edit.\n", encoding="utf-8")
@@ -316,6 +338,11 @@ def test_reindex_success_preserves_scientific_bytes(tmp_path: Path) -> None:
     assert source_digest(r03.round_dir(1), scientific_only=True) == before[2]
     assert source_digest(r03.round_dir(2), scientific_only=True) == before[3]
     assert load_meta(r03.round_dir(1) / "meta.yaml").round_number == 1
+    assert r03.creation_record_path(1).is_file()
+    assert r03.creation_record_path(2).is_file()
+    assert not (r03.round_dir(1) / "revision_creation.yaml").exists()
+    assert not (r03.round_dir(2) / "revision_creation.yaml").exists()
+    assert not r03.state_dir(3).exists()
     assert load_meta(r03.round_dir(2) / "meta.yaml").round_number == 2
     assert any((r03.project / "00_archive").iterdir())
 
@@ -524,11 +551,11 @@ def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
         ),
         _anonymous_author_library(tmp_path),
     )
-    source = ensure_submission_workspace(config, 0) / "cover_letter_body.tex"
+    source = ensure_submission_workspace(config, 0) / "cover_letter.tex"
     original = source.read_text(encoding="utf-8")
     assert "\\guidance{" in original
     assert "\\documentclass" not in original
-    assert not (source.parent / "cover_letter.tex").exists()
+    assert not (source.parent / "cover_letter_body.tex").exists()
     source.write_text(original + "\n% user-owned cover edit\n", encoding="utf-8")
     ensure_submission_workspace(config, 0)
     assert source.read_text(encoding="utf-8").endswith("% user-owned cover edit\n")
@@ -562,6 +589,41 @@ def test_multi_id_review_location_registry(tmp_path: Path) -> None:
         "2-3": "Lines 7--8",
         "E-1": "Line 12",
     }
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    (
+        ("en", "Lines 7--8, 12, and 19--21"),
+        ("zh", "第 7--8 行、第 12 行和第 19--21 行"),
+    ),
+)
+def test_review_locations_are_fully_localized(
+    tmp_path: Path,
+    language: str,
+    expected: str,
+) -> None:
+    from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, _calculate_locations
+
+    (tmp_path / "manuscript_marked.reviewloc").write_text(
+        f"{REVIEW_REGISTRY_HEADER}\n1-1|1\n1-1|2\n1-1|3\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "manuscript_marked.aux").write_text(
+        "\\newlabel{review:1:start}{{7}{1}}\n"
+        "\\newlabel{review:1:end}{{8}{1}}\n"
+        "\\newlabel{review:2:start}{{12}{1}}\n"
+        "\\newlabel{review:2:end}{{12}{1}}\n"
+        "\\newlabel{review:3:start}{{19}{1}}\n"
+        "\\newlabel{review:3:end}{{21}{1}}\n",
+        encoding="utf-8",
+    )
+    location = _calculate_locations(tmp_path, language=language)["1-1"]
+    assert location == expected
+    if language == "zh":
+        assert all(token not in location for token in ("Line", "Lines", "and"))
+    else:
+        assert all(token not in location for token in ("第", "行", "修改位置"))
 
 
 def test_empty_versioned_review_location_registry_is_valid(tmp_path: Path) -> None:
@@ -614,6 +676,20 @@ def test_diff_markup_separates_inline_math_from_line_decoration() -> None:
     assert rewritten == (
         r"\DIFadd{中文 }\DIFaddMath{$A \longrightarrow B$}\DIFadd{ 文本} "
         r"\DIFdel{old }\DIFdelMath{\(x+y\)}\DIFdel{ text}"
+    )
+
+
+def test_inline_math_replacement_is_refined_only_at_safe_atoms() -> None:
+    source = (
+        r"\DIFdelMath{$a+b$}\DIFdelend \DIFaddbegin "
+        r"\DIFaddReviewMath{$a+c$}"
+    )
+    assert _refine_inline_math_replacements(source) == (
+        r"$a+\DIFdel{b}\DIFaddReview{c}$"
+    )
+    grouped = r"\DIFdelMath{$x_{old}$}\DIFaddMath{$x_{new}$}"
+    assert _refine_inline_math_replacements(grouped) == (
+        r"$x_\DIFdel{{old}}\DIFadd{{new}}$"
     )
 
 

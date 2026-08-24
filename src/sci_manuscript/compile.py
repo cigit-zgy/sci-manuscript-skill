@@ -13,13 +13,10 @@ from pathlib import Path
 
 import yaml
 
+from .errors import WorkflowError
 from .metadata import generate_metadata
-from .workspace import (
-    ProjectConfig,
-    WorkflowError,
-    publisher_resource,
-    resources_root,
-)
+from .templates import publisher_resource, resources_root
+from .workspace import ProjectConfig
 
 
 @dataclass(frozen=True)
@@ -362,23 +359,17 @@ def compile_tex(
 
 
 def _render_preamble(config: ProjectConfig, target: Path) -> None:
-    template = (resources_root() / "manuscript" / "preamble.tex").read_text(
-        encoding="utf-8"
-    )
-    cjk = (
-        "\\usepackage{xeCJK}\n  \\renewcommand{\\abstractname}{摘要}"
-        if config.language == "zh"
-        else ""
-    )
+    source = resources_root() / "manuscript_preamble"
     mapping_path = publisher_resource(config) / "sections.yaml"
     data = yaml.safe_load(mapping_path.read_text(encoding="utf-8"))
     package = data["bibliography"]["package"]
-    target.write_text(
-        template.replace("%%CJK_PACKAGE%%", cjk).replace(
-            "%%BIBLIOGRAPHY_PACKAGE%%", str(package)
-        ),
-        encoding="utf-8",
-    )
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("common.tex", "zh.tex", "en.tex"):
+        template = (source / name).read_text(encoding="utf-8")
+        (target / name).write_text(
+            template.replace("%%BIBLIOGRAPHY_PACKAGE%%", str(package)),
+            encoding="utf-8",
+        )
 
 
 def stage_runtime_resources(
@@ -408,7 +399,10 @@ def stage_runtime_resources(
     for resource in publisher_resource(config).iterdir():
         if resource.is_file():
             shutil.copy2(resource, target / resource.name)
-    _render_preamble(config, target / "preamble.tex")
+    _render_preamble(config, target / "preamble")
+    (target / "preamble.tex").write_text(
+        f"\\input{{preamble/{config.language}}}\n", encoding="utf-8"
+    )
     generate_metadata(config.project, version, target)
     return target / "manuscript.tex"
 
@@ -426,7 +420,7 @@ def build_clean_manuscript(
         config, round_number, source_dir, include_manuscript=True
     )
     compiled = compile_tex(source, run_dir / "clean_build", config, engine_override)
-    output_dir = config.round_dir(round_number) / "output"
+    output_dir = config.output_dir(round_number)
     output_dir.mkdir(exist_ok=True)
     filename = "manuscript.pdf" if round_number == 0 else "manuscript_clean.pdf"
     target = output_dir / filename

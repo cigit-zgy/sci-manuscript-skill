@@ -10,13 +10,12 @@ import re
 import shutil
 import uuid
 from dataclasses import dataclass
-from importlib.resources import files
 from pathlib import Path
 from typing import Iterator
 
 import yaml
 
-from .errors import ManuscriptError
+from .errors import WorkflowError
 from .metadata import (
     ManuscriptMetadata,
     load_meta,
@@ -25,22 +24,15 @@ from .metadata import (
     save_meta,
     with_revision,
 )
-
-
-class WorkflowError(ManuscriptError):
-    """Raised when a lifecycle or filesystem invariant is violated."""
-
+from .templates import initialize_manuscript_sources, install_reference_resources
+from .templates import resources_root as resources_root
+from .tex import extract_braced
 
 REVISION_DIRECTORY_PATTERN = re.compile(r"^revision_(\d{2,})$")
 ROUND_PATTERN = re.compile(r"^r(\d{2,})$")
-PROTECTED_DIRECTORIES = ("sections", "figures", "tables", "response")
+PROTECTED_DIRECTORIES = ("sections", "figures", "tables", "response", "preamble")
 SCIENTIFIC_DIRECTORIES = ("sections", "figures", "tables")
-
-
-def resources_root() -> Path:
-    """Return the installed package-resource directory."""
-    resource = files("sci_manuscript.resources")
-    return Path(str(resource))
+INHERITED_DIRECTORIES = SCIENTIFIC_DIRECTORIES
 
 
 @dataclass(frozen=True)
@@ -84,6 +76,38 @@ class ProjectConfig:
     def round_dir(self, round_number: int) -> Path:
         """Return one version directory."""
         return self.project / revision_directory_name(round_number)
+
+    def output_dir(self, round_number: int) -> Path:
+        """Return the user-facing PDF directory for one round."""
+        return self.round_dir(round_number) / "output"
+
+    def response_dir(self, round_number: int) -> Path:
+        """Return the editable reviewer-response directory for one round."""
+        return self.round_dir(round_number) / "response"
+
+    def submission_dir(self, round_number: int) -> Path:
+        """Return the editable submission workspace for one round."""
+        return self.round_dir(round_number) / "submission"
+
+    def state_dir(self, round_number: int) -> Path:
+        """Return the persistent machine-state directory for one round."""
+        return self.project / "state" / revision_directory_name(round_number)
+
+    def review_index_path(self, round_number: int) -> Path:
+        """Return the canonical review-index state path."""
+        return self.state_dir(round_number) / "review_index.yaml"
+
+    def creation_record_path(self, round_number: int) -> Path:
+        """Return the canonical rollback-protection record path."""
+        return self.state_dir(round_number) / "creation.yaml"
+
+    def tmp_root(self) -> Path:
+        """Return the lazy reproducible run-diagnostics root."""
+        return self.project / "tmp"
+
+    def archive_root(self) -> Path:
+        """Return the manuscript-lifecycle transaction archive."""
+        return self.project / "00_archive"
 
 
 def normalize_project(path: str | Path, *, initialize: bool = False) -> Path:
@@ -190,141 +214,6 @@ def load_project(
     )
 
 
-def _latex_escape(value: str) -> str:
-    replacements = {
-        "&": r"\&",
-        "%": r"\%",
-        "$": r"\$",
-        "#": r"\#",
-        "_": r"\_",
-        "{": r"\{",
-        "}": r"\}",
-    }
-    return "".join(replacements.get(character, character) for character in value)
-
-
-def template_values(config: ProjectConfig) -> dict[str, str]:
-    """Return non-author replacements for editable correspondence sources."""
-    return {
-        "TITLE": _latex_escape(config.title),
-        "JOURNAL": _latex_escape(config.journal),
-        "ARTICLE_TYPE": _latex_escape(config.article_type),
-        "EDITOR_NAME": "Editor",
-    }
-
-
-def render_template(source: Path, target: Path, values: dict[str, str]) -> None:
-    """Render one tokenized UTF-8 template without overwriting user content."""
-    if target.exists():
-        raise WorkflowError(f"Refusing to overwrite user file: {target}")
-    try:
-        text = source.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise WorkflowError(f"Cannot read template: {source}") from exc
-    for key, value in values.items():
-        text = text.replace(f"%%{key}%%", value)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text, encoding="utf-8")
-
-
-def publisher_resource(config: ProjectConfig) -> Path:
-    """Resolve a built-in package resource or one explicit custom template."""
-    if config.metadata.publisher == "custom":
-        custom = config.references / "journal_template"
-        if not custom.is_dir():
-            raise WorkflowError(f"Custom journal template is missing: {custom}")
-        return custom
-    resource = resources_root() / "journal_templates" / config.metadata.publisher
-    if not resource.is_dir():
-        raise WorkflowError(f"Publisher package resource is missing: {resource}")
-    return resource
-
-
-def _publisher_layout(
-    config: ProjectConfig,
-) -> tuple[dict[str, str] | None, list[dict[str, str]], str, str]:
-    path = publisher_resource(config) / "sections.yaml"
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError) as exc:
-        raise WorkflowError(f"Cannot load publisher section mapping: {path}") from exc
-    sections = data.get("sections") if isinstance(data, dict) else None
-    bibliography = data.get("bibliography") if isinstance(data, dict) else None
-    frontmatter = data.get("frontmatter") if isinstance(data, dict) else None
-    if (
-        not isinstance(sections, list)
-        or not sections
-        or not isinstance(bibliography, dict)
-    ):
-        raise WorkflowError(f"Invalid publisher section mapping: {path}")
-    package = str(bibliography.get("package", "")).strip()
-    style = str(bibliography.get("style", "")).strip()
-    if not package or not style:
-        raise WorkflowError(f"Publisher bibliography mapping is incomplete: {path}")
-    frontmatter_plan: dict[str, str] | None = None
-    if frontmatter is not None:
-        if (
-            not isinstance(frontmatter, dict)
-            or "file" not in frontmatter
-            or "source" not in frontmatter
-        ):
-            raise WorkflowError(f"Invalid publisher frontmatter mapping: {path}")
-        frontmatter_plan = {
-            "file": str(frontmatter["file"]),
-            "source": str(frontmatter["source"]),
-            "title": "",
-        }
-    plan: list[dict[str, str]] = []
-    for index, item in enumerate(sections, 1):
-        if not isinstance(item, dict) or "file" not in item or "source" not in item:
-            raise WorkflowError(f"Invalid section mapping item {index}: {path}")
-        plan.append(
-            {
-                "file": str(item["file"]),
-                "source": str(item["source"]),
-                "title": str(item.get("title", "")),
-            }
-        )
-    return frontmatter_plan, plan, package, style
-
-
-def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
-    frontmatter, plan, _, style = _publisher_layout(config)
-    abstract_input = ""
-    body_plan = plan
-    if frontmatter is None:
-        abstract = plan[0]
-        abstract_input = f"\\input{{sections/{Path(abstract['file']).stem}}}"
-        body_plan = plan[1:]
-    section_inputs = "\n".join(
-        f"\\input{{sections/{Path(item['file']).stem}}}" for item in body_plan
-    )
-    frontmatter_input = (
-        f"\\input{{sections/{Path(frontmatter['file']).stem}}}"
-        if frontmatter is not None
-        else ""
-    )
-    render_template(
-        publisher_resource(config) / "workflow.tex",
-        version / "manuscript.tex",
-        {
-            "ABSTRACT_INPUT": abstract_input,
-            "FRONTMATTER_INPUT": frontmatter_input,
-            "SECTION_INPUTS": section_inputs,
-            "BIBLIOGRAPHY_STYLE": style,
-            "BIBLIOGRAPHY_PATH": "references",
-        },
-    )
-    defaults = resources_root() / "manuscript" / "sections" / "default"
-    source_plan = ([frontmatter] if frontmatter is not None else []) + plan
-    for item in source_plan:
-        render_template(
-            defaults / item["source"],
-            version / "sections" / item["file"],
-            {"SECTION_TITLE": item["title"]},
-        )
-
-
 def initialize_project(
     config: ProjectConfig,
     authors_source: Path,
@@ -356,51 +245,15 @@ def initialize_project(
         raise WorkflowError(f"Author library is missing: {authors_source}")
     if not bibliography.is_file():
         raise WorkflowError(f"Bibliography is missing: {bibliography}")
-    shutil.copy2(authors_source, config.references / "authors.yaml")
-    shutil.copy2(bibliography, config.references / "references.bib")
-    shutil.copy2(
-        resources_root() / "revision_style.tex",
-        config.references / "revision_style.tex",
+    install_reference_resources(
+        config,
+        authors_source,
+        bibliography,
+        custom_template,
     )
-    if config.metadata.publisher == "custom":
-        if custom_template is None or not custom_template.is_dir():
-            raise WorkflowError(
-                "publisher=custom requires --custom-template directory."
-            )
-        shutil.copytree(custom_template, config.references / "journal_template")
-    elif custom_template is not None:
-        raise WorkflowError("--custom-template requires publisher=custom.")
-    _create_manuscript_sources(config, initial)
+    initialize_manuscript_sources(config, initial)
     save_meta(initial / "meta.yaml", config.metadata)
     return config
-
-
-def _skip_space(text: str, position: int) -> int:
-    while position < len(text) and text[position].isspace():
-        position += 1
-    return position
-
-
-def _extract_braced(text: str, position: int) -> tuple[str, int]:
-    position = _skip_space(text, position)
-    if position >= len(text) or text[position] != "{":
-        raise ValueError("Expected a braced field.")
-    depth = 0
-    escaped = False
-    for cursor in range(position, len(text)):
-        character = text[cursor]
-        if escaped:
-            escaped = False
-            continue
-        if character == "\\":
-            escaped = True
-        elif character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                return text[position + 1 : cursor], cursor + 1
-    raise ValueError("Unbalanced provenance command braces.")
 
 
 def strip_provenance_wrappers(text: str) -> str:
@@ -425,7 +278,7 @@ def strip_provenance_wrappers(text: str) -> str:
                 try:
                     values: list[str] = []
                     for _ in range(fields):
-                        value, end = _extract_braced(output, end)
+                        value, end = extract_braced(output, end)
                         values.append(value)
                 except ValueError:
                     pieces.append(output[cursor:end])
@@ -485,7 +338,7 @@ def start_revision(
     if not source_manuscript.is_file():
         raise WorkflowError(f"Parent manuscript source is missing: {source_manuscript}")
     shutil.copy2(source_manuscript, staged / "manuscript.tex")
-    for directory in SCIENTIFIC_DIRECTORIES:
+    for directory in INHERITED_DIRECTORIES:
         source_dir = source / directory
         if source_dir.exists():
             shutil.copytree(source_dir, staged / directory)
@@ -503,13 +356,16 @@ def start_revision(
         (staged / directory).mkdir()
     comments = staged / "response" / "reviewer_comments.md"
     if reviews is None:
-        comments.write_text(
-            "# Reviewer #1\n\n## 1-1 | manuscript_revised\n\nFirst specific comment.\n",
-            encoding="utf-8",
+        shutil.copy2(
+            resources_root()
+            / "reviewer_comments"
+            / f"reviewer_comments_{config.language}.md",
+            comments,
         )
     else:
         shutil.copy2(reviews, comments)
     child = with_revision(config.metadata, target_round)
+    shutil.copy2(source / "meta.yaml", staged / "meta.yaml")
     save_meta(staged / "meta.yaml", child)
     os.replace(staged, target)
     return ProjectConfig(config.project, child, config.engine)
@@ -518,21 +374,25 @@ def start_revision(
 def finalize_revision_creation(config: ProjectConfig) -> Path:
     """Record the protected post-creation source digest."""
     version = config.round_dir(config.current_round)
-    path = version / "revision_creation.yaml"
+    path = config.creation_record_path(config.current_round)
     data = {
         "round": round_name(config.current_round),
         "parent": round_name(config.current_round - 1),
         "created_from": revision_directory_name(config.current_round - 1),
         "protected_source_digest": source_digest(version),
     }
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
     return path
 
 
-def _load_creation(version: Path) -> dict[str, str]:
-    path = version / "revision_creation.yaml"
+def _load_creation(config: ProjectConfig, round_number: int) -> dict[str, str]:
+    version = config.round_dir(round_number)
+    path = config.creation_record_path(round_number)
+    if not path.is_file():
+        path = version / "revision_creation.yaml"
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
@@ -557,17 +417,25 @@ def rollback_revision(config: ProjectConfig) -> tuple[Path, int]:
     if latest.current_round == 0:
         raise WorkflowError("initial_submission cannot be rolled back.")
     version = latest.round_dir(latest.current_round)
-    record = _load_creation(version)
+    record = _load_creation(latest, latest.current_round)
     if source_digest(version) != record["protected_source_digest"]:
         raise WorkflowError(
             "Rollback refused: protected user or scientific source has changed."
         )
     archive = _archive_directory(latest.project, "rollback")
     archived = archive / version.name
+    state = latest.state_dir(latest.current_round)
+    archived_state = archive / "state" / version.name
     try:
         os.replace(version, archived)
+        if state.exists():
+            archived_state.parent.mkdir()
+            os.replace(state, archived_state)
         load_project(latest.project)
     except Exception:
+        if archived_state.exists() and not state.exists():
+            state.parent.mkdir(exist_ok=True)
+            os.replace(archived_state, state)
         if archived.exists() and not version.exists():
             os.replace(archived, version)
         raise
@@ -604,10 +472,24 @@ def reindex_revisions(
     for number in revisions:
         source = root / f"revision_{number:02d}"
         shutil.copytree(source, archive / source.name)
+    state_root = root / "state"
+    if state_root.is_dir():
+        shutil.copytree(state_root, archive / "state")
     stage = run_dir / "reindex_stage"
+    state_stage = run_dir / "reindex_state"
     originals = run_dir / "reindex_originals"
     stage.mkdir()
+    state_stage.mkdir()
     originals.mkdir()
+    if state_root.is_dir():
+        for path in state_root.iterdir():
+            if REVISION_DIRECTORY_PATTERN.fullmatch(path.name):
+                continue
+            target = state_stage / path.name
+            if path.is_dir():
+                shutil.copytree(path, target)
+            else:
+                shutil.copy2(path, target)
     scientific_before: dict[int, str] = {}
     for new_number, old_number in enumerate(revisions, 1):
         source = root / f"revision_{old_number:02d}"
@@ -620,13 +502,22 @@ def reindex_revisions(
         creation = target / "revision_creation.yaml"
         if creation.exists():
             creation.unlink()
+        state_target = state_stage / revision_directory_name(new_number)
+        state_source = state_root / revision_directory_name(old_number)
+        if state_source.is_dir():
+            shutil.copytree(state_source, state_target)
+        else:
+            state_target.mkdir()
+        canonical_creation = state_target / "creation.yaml"
+        if canonical_creation.exists():
+            canonical_creation.unlink()
         data = {
             "round": round_name(new_number),
             "parent": round_name(new_number - 1),
             "created_from": revision_directory_name(new_number - 1),
             "protected_source_digest": source_digest(target),
         }
-        (target / "revision_creation.yaml").write_text(
+        canonical_creation.write_text(
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
@@ -640,12 +531,18 @@ def reindex_revisions(
             backup = originals / source.name
             os.replace(source, backup)
             moved.append((backup, source))
+        if state_root.exists():
+            state_backup = originals / "state"
+            os.replace(state_root, state_backup)
+            moved.append((state_backup, state_root))
         if fail_after_swap:
             raise WorkflowError("Injected reindex failure after source swap.")
         for path in sorted(stage.iterdir()):
             target = root / path.name
             os.replace(path, target)
             installed.append(target)
+        os.replace(state_stage, state_root)
+        installed.append(state_root)
         load_project(root)
     except Exception:
         for target in installed:
@@ -656,77 +553,6 @@ def reindex_revisions(
                 os.replace(backup, source)
         raise
     return mapping
-
-
-def ensure_submission_workspace(config: ProjectConfig, round_number: int) -> Path:
-    """Create editable submission sources once within one version."""
-    if round_number != config.current_round:
-        raise WorkflowError("Submission config must match the selected version.")
-    target = config.round_dir(round_number) / "submission"
-    target.mkdir(parents=True, exist_ok=True)
-    values = template_values(config)
-    values["AUTHOR_METADATA_PATH"] = "author_metadata.tex"
-    settings = config.metadata.submission
-    resources = resources_root() / "submission"
-    if settings.cover_letter and not (target / "cover_letter_body.tex").exists():
-        render_template(
-            resources / f"cover_letter_body_{config.language}.tex",
-            target / "cover_letter_body.tex",
-            values,
-        )
-    if settings.highlights and not (target / "highlights.tex").exists():
-        render_template(
-            resources / "highlights.tex",
-            target / "highlights.tex",
-            values,
-        )
-    checklist = target / "checklist.md"
-    if not checklist.exists():
-        shutil.copy2(resources / "checklist.md", checklist)
-    if settings.graphical_abstract:
-        graphical = target / "graphical_abstract"
-        graphical.mkdir(exist_ok=True)
-        source = graphical / "graphical_abstract.tex"
-        if not source.exists():
-            shutil.copy2(
-                resources / "graphical_abstract" / "graphical_abstract.tex",
-                source,
-            )
-    return target
-
-
-def _find_bib_export(project: Path, explicit: Path | None) -> Path:
-    candidates = []
-    if explicit is not None:
-        candidates.append(explicit.expanduser().resolve())
-    environment = os.environ.get("ZOTERO_BETTER_BIBTEX_EXPORT")
-    if environment:
-        candidates.append(Path(environment).expanduser().resolve())
-    candidates.extend(
-        [
-            project / "references" / "zotero-export.bib",
-            project.parent / "zotero-export.bib",
-        ]
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise WorkflowError("No Better BibTeX export found; use --bib-export PATH.")
-
-
-def sync_bibliography(project: Path, explicit: Path | None = None) -> Path:
-    """Atomically replace the single manuscript-level BibTeX database."""
-    root = normalize_project(project)
-    _round_numbers(root)
-    source = _find_bib_export(root, explicit)
-    text = source.read_text(encoding="utf-8")
-    if "@" not in text or "{" not in text:
-        raise WorkflowError(f"Bibliography does not contain BibTeX entries: {source}")
-    target = root / "references" / "references.bib"
-    temporary = target.with_suffix(".bib.new")
-    temporary.write_text(text, encoding="utf-8")
-    os.replace(temporary, target)
-    return target
 
 
 @contextlib.contextmanager

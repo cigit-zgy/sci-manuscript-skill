@@ -31,9 +31,9 @@ not write reviewer-response prose on the user's behalf.
 | --- | --- |
 | Check environment | Run `sci-manuscript doctor`; read [environment.md](references/environment.md) only for a blocker |
 | Start a paper | Collect project, journal, publisher, language, article type, author roles, and optional bibliography; if no author library is configured, route to `sci-manuscript authors configure PATH`, then run `init` |
-| Build | Run `build`; do not change TeX or create a revision |
-| Start revision | Read the response/revision parts of [workflow.md](references/workflow.md); run `revision` only after explicit confirmation |
-| Prepare submission | Confirm all user responses are complete; run `submission`, which must pass clean/marked layout QA |
+| Build | Run `build`; r00 retains clean output, while revision rounds retain both clean and adjacent marked PDFs; revision rounds also print the review audit without blocking rendering |
+| Start revision | Read the response/revision parts of [workflow.md](references/workflow.md) and the normative [revision semantics](references/revision_semantics.md); run `revision` only after explicit confirmation |
+| Prepare submission | Run `submission`; it builds available artifacts, records review completeness in the checklist, and prints unresolved review items with file paths |
 | Roll back or reindex | Explain the archive/digest transaction, obtain confirmation, then run the exact command |
 | Synchronize bibliography | Use only a user-specified BibTeX export with `sync-bib` |
 
@@ -52,11 +52,37 @@ publisher resource only to diagnose that exact publisher build.
   custom publisher creates `references/journal_template/`.
 - `manuscript.tex` is a user-owned composition root. Builds read it but never
   overwrite it.
-- `\review{ID}{text}` is the only manual provenance wrapper for new work.
-  Ordinary additions and deletions are detected by adjacent `latexdiff`;
-  legacy `\user{text}` remains readable but should not be added.
-- Successful operations remove lazy `tmp/`; failed runs may retain diagnostics.
-- Editable `response/responses.tex` and `submission/cover_letter_body.tex`
+- `revision` creates `response/reviewer_comments.md` automatically from the
+  project language. The editable template contains Editor and Reviewer sections
+  with numbered list items. Comment IDs are derived from section identity and
+  non-empty list order; review states are computed from comments, responses,
+  and manuscript provenance.
+- `\review{ID}{text}` is the only manual reviewer-provenance scope for new
+  work. It is metadata, not visual markup. The wrapper is removed before
+  structural comparison and stored as a sidecar character interval map. Only
+  actual additions that fall inside those intervals become reviewer-red;
+  unchanged text remains ordinary manuscript text. Deletions remain light gray;
+  additions outside reviewer intervals remain author-blue. Legacy `\user{text}`
+  remains readable but should not be added.
+- Revision comparison follows the four-layer contract in
+  `references/revision_semantics.md`: provenance extraction, provenance-free
+  structural diff, conservative refinement, then semantic rendering.
+- Character refinement is permitted only for TeX-structure-free prose with
+  `SequenceMatcher` similarity at least `0.70` and a maximum replacement size
+  of `2000` characters. Otherwise the replacement remains atomic.
+- Display and inline mathematics use fine-grained structural comparison with
+  `latexdiff --math-markup=FINE`. Text decorators never scan mathematical
+  content; math changes use the same semantic colors as prose.
+- Every revision `build` and `submission` audits
+  `reviewer_comments.md <-> responses.tex <-> \review{...}`. Missing responses,
+  orphan responses, orphan provenance references, empty comments, invalid input,
+  and review-ID drift are warnings. Rendering continues. Every warning reports
+  concrete source paths; `submission/checklist.md` records review
+  completeness as `COMPLETE` or `INCOMPLETE`.
+- `output/` contains final user PDFs, `state/` contains persistent machine state,
+  and lazy `tmp/` contains reproducible run diagnostics. Successful operations
+  remove `tmp/` unless diagnostics are explicitly retained.
+- Editable `response/responses.tex` and `submission/cover_letter.tex`
   sources are created once and not replaced by later builds. Complete
   correspondence documents are assembled from installed templates only in
   `tmp/`.
@@ -66,9 +92,16 @@ publisher resource only to diagnose that exact publisher build.
 - Correspondence uses the selected corresponding authors. A sole corresponding
   author signs automatically; multiple corresponding authors require an
   explicit `correspondence.signing_author` before submission.
-- Cover-letter `\guidance{...}` blocks and unresolved template tokens block
-  submission. `response_only` comments omit locations; `manuscript_revised`
-  comments use marked-manuscript locations.
+- Cover-letter `\guidance{...}` blocks and unresolved template tokens still
+  block submission because they are unresolved submission content rather than
+  review-completeness warnings.
+- Built-in journal templates and manuscript preambles remain package resources.
+  They are staged only under `tmp/<run>/`; user rounds never contain
+  `preamble/`, `manuscript_preamble/`, `journal_templates/`, publisher
+  `.cls`/`.bst`, `workflow.tex`, or `sections.yaml`.
+- Submission artifacts are published directly under `submission/`, never under
+  a generated `submission/package/` directory. Editable submission sources and
+  their final PDFs share that user-facing directory.
 
 ## Entrypoints
 
@@ -79,37 +112,44 @@ sci-manuscript authors list
 sci-manuscript init --help
 sci-manuscript status --project /path/to/project
 sci-manuscript build --project /path/to/project
-sci-manuscript revision --project /path/to/project --reviews reviews.md --yes
+sci-manuscript revision --project /path/to/project --yes
 sci-manuscript rollback --project /path/to/project --yes
 sci-manuscript reindex --project /path/to/project --yes
 sci-manuscript submission --project /path/to/project
 sci-manuscript sync-bib --project /path/to/project --bib export.bib
 ```
 
+A pre-existing reviewer-comment file may still be supplied with
+`revision --reviews /path/to/reviews.md`; the generated template is used when
+that option is omitted.
+
 ## Handoff checks
 
 Report the exact current round and parent, final project-relative artifacts,
-pending responses, source-integrity result, and whether `tmp/` was removed.
-For every revision, `submission` builds clean, direct-parent marked, and
-response PDFs from the same source and shared bibliography. It parses both
-compiler logs, compares overfull boxes, and fails if marked introduces an
-overflow absent from clean; the durable result is
-`revision_NN/output/revision_layout_qa.txt`. Do not suppress failures with
-global `\sloppy`, unconditional `\emergencystretch`, smaller body type, altered
-geometry, or hand-inserted line breaks. The automated comparison cannot decide
-whether small shared overfull boxes are visually harmless, so validate
-extractable PDF text and visually inspect marked/response pages. Never
-publish compiler intermediates, flattened TeX, location registries, caches, test
-PDFs, or private paths.
+review-audit result, source-integrity result, and whether `tmp/` was removed.
+When the audit is incomplete, report each unresolved ID and the exact paths
+printed by the CLI. Do not hide those warnings simply because PDFs compiled.
 
-Automatic revision provenance uses three non-overlapping conventions: ordinary
-author additions detected by latexdiff are blue with a wave underline,
-deletions are red with strikeout, and reviewer-linked `\review{}` additions are
-green with a straight underline. In Chinese marked manuscripts, all three line
-decorations continue through CJK punctuation instead of skipping punctuation.
-`\user{}` is backward-compatible only and has the same ordinary-addition
-semantics. Structural wrappers stay transparent, while mathematics is rendered
-through a dedicated zero-width overlay path and separated from line-decoration
-scanners. Do not wrap arbitrary latexdiff or reviewer blocks as one `ulem`,
-`soul`, or `xeCJKfntef` argument; that can turn mixed CJK/math content into
-unbreakable boxes and alter the clean manuscript's geometry.
+For every revision, `submission` builds clean and direct-parent marked PDFs from
+the same source and shared bibliography. A response PDF is assembled when
+review comments are available; incomplete responses remain visible placeholders
+and the audit stays `INCOMPLETE`. The workflow parses clean and marked compiler
+logs, compares overfull boxes, and fails if marked introduces an overflow absent
+from clean; the per-run result remains in
+`tmp/<run>/revision_layout_qa.txt` only when diagnostics are retained or the run
+fails.
+Do not suppress failures with global `\sloppy`, unconditional
+`\emergencystretch`, smaller body type, altered geometry, or hand-inserted line
+breaks. The automated comparison cannot decide whether small shared overfull
+boxes are visually harmless, so validate extractable PDF text and visually
+inspect marked/response pages. Never publish compiler intermediates, flattened
+TeX, location registries, caches, test PDFs, or private paths.
+
+Automatic revision provenance has three mutually exclusive visible states:
+ordinary author additions are blue text, deletions are light gray with
+strikeout, and reviewer/editor-linked additions are red text. Unchanged text is
+never colored because of `\review{}` alone. In Chinese marked manuscripts,
+deletion strikeout continues through CJK punctuation. Mathematics follows the
+same semantic colors; display equations use fine-grained math comparison.
+Reviewer line locations are generated in a separate transparent compilation
+and cannot change marked rendering.

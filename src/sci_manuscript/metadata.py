@@ -4,20 +4,50 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 from dataclasses import dataclass, replace
-from importlib.resources import files
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
 import yaml
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap
 
-from .errors import ManuscriptError
+from .authors import (
+    CONFIG_DIRECTORY_ENV,
+    AffiliationRecord,
+    AuthorLibrary,
+    AuthorRecord,
+    AuthorSelection,
+    configure_author_library,
+    configured_author_library_path,
+    load_author_library,
+    resolve_author_library_path,
+    resolve_authors,
+    resolve_signing_author,
+    user_config_directory,
+)
+from .errors import MetadataError
 
-
-class MetadataError(ManuscriptError):
-    """Raised when ``meta.yaml`` or ``authors.yaml`` is invalid."""
-
+__all__ = [
+    "CONFIG_DIRECTORY_ENV",
+    "AffiliationRecord",
+    "AuthorLibrary",
+    "AuthorRecord",
+    "AuthorSelection",
+    "CorrespondenceSettings",
+    "ManuscriptMetadata",
+    "MetadataError",
+    "SubmissionSettings",
+    "configure_author_library",
+    "configured_author_library_path",
+    "load_author_library",
+    "load_meta",
+    "resolve_author_library_path",
+    "resolve_authors",
+    "resolve_signing_author",
+    "user_config_directory",
+]
 
 PUBLISHER_TEMPLATES = {
     "elsevier": "elsarticle",
@@ -27,36 +57,6 @@ PUBLISHER_TEMPLATES = {
 }
 PUBLISHERS = (*PUBLISHER_TEMPLATES, "custom")
 ROUND_PATTERN = re.compile(r"^r(\d{2,})$")
-CONFIG_DIRECTORY_ENV = "SCI_MANUSCRIPT_CONFIG_DIR"
-
-
-@dataclass(frozen=True)
-class AuthorRecord:
-    """One author from the manuscript-level author library."""
-
-    author_id: str
-    name_zh: str
-    name_en: str
-    email: str
-    affiliations: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class AffiliationRecord:
-    """One complete bilingual affiliation."""
-
-    affiliation_id: str
-    name_zh: str
-    name_en: str
-    address: str
-
-
-@dataclass(frozen=True)
-class AuthorLibrary:
-    """Validated author and affiliation database."""
-
-    authors: dict[str, AuthorRecord]
-    affiliations: dict[str, AffiliationRecord]
 
 
 @dataclass(frozen=True)
@@ -111,17 +111,6 @@ class ManuscriptMetadata:
         return PUBLISHER_TEMPLATES.get(self.publisher, "custom")
 
 
-@dataclass(frozen=True)
-class AuthorSelection:
-    """Resolved authors and their used affiliations."""
-
-    authors: tuple[AuthorRecord, ...]
-    affiliations: tuple[AffiliationRecord, ...]
-    first_authors: tuple[AuthorRecord, ...]
-    corresponding_authors: tuple[AuthorRecord, ...]
-    affiliation_numbers: dict[str, int]
-
-
 class _UniqueKeyLoader(yaml.SafeLoader):
     """Safe YAML loader that rejects duplicate mapping keys."""
 
@@ -149,66 +138,6 @@ _UniqueKeyLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
     _construct_unique_mapping,
 )
-
-
-def user_config_directory() -> Path:
-    """Return the single operating-system user configuration directory."""
-    explicit = os.environ.get(CONFIG_DIRECTORY_ENV)
-    if explicit:
-        return Path(explicit).expanduser().resolve()
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "sci-manuscript"
-    if os.name == "nt":
-        base = os.environ.get("APPDATA")
-        return (
-            Path(base).expanduser().resolve() / "sci-manuscript"
-            if base
-            else Path.home() / "AppData" / "Roaming" / "sci-manuscript"
-        )
-    base = os.environ.get("XDG_CONFIG_HOME")
-    return (
-        Path(base).expanduser().resolve() / "sci-manuscript"
-        if base
-        else Path.home() / ".config" / "sci-manuscript"
-    )
-
-
-def configured_author_library_path() -> Path:
-    """Return the canonical user-level author library path."""
-    return user_config_directory() / "authors.yaml"
-
-
-def resolve_author_library_path(explicit: str | Path | None = None) -> Path:
-    """Resolve explicit, user-level, then bundled public author data."""
-    if explicit is not None:
-        selected = Path(explicit).expanduser().resolve()
-        if not selected.is_file():
-            raise MetadataError(f"Author library is missing: {selected}")
-        return selected
-    configured = configured_author_library_path()
-    if configured.is_file():
-        return configured
-    bundled = Path(str(files("sci_manuscript.resources") / "authors.yaml"))
-    if not bundled.is_file():
-        raise MetadataError("Bundled author library is missing from the installation.")
-    return bundled
-
-
-def configure_author_library(source: str | Path) -> Path:
-    """Validate and atomically install one reusable user author library."""
-    selected = Path(source).expanduser().resolve()
-    load_author_library(selected)
-    target = configured_author_library_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(".yaml.new")
-    try:
-        temporary.write_bytes(selected.read_bytes())
-        os.replace(temporary, target)
-    except OSError as exc:
-        if temporary.exists():
-            temporary.unlink()
-        raise MetadataError(f"Cannot configure author library: {target}") from exc
-    return target
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -411,9 +340,9 @@ def load_meta(path: Path) -> ManuscriptMetadata:
     )
 
 
-def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
-    """Atomically write deterministic round metadata."""
-    data = {
+def _metadata_data(metadata: ManuscriptMetadata) -> dict[str, Any]:
+    """Return the canonical editable metadata mapping."""
+    return {
         "revision": {
             "round": round_name(metadata.round_number),
             "name": revision_directory_name(metadata.round_number),
@@ -449,11 +378,90 @@ def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
             "signing_author": metadata.correspondence.signing_author or None,
         },
     }
+
+
+def _update_commented_mapping(
+    target: CommentedMap,
+    values: dict[str, Any],
+) -> None:
+    """Update known values without replacing comments or mapping order."""
+    for key, value in values.items():
+        if isinstance(value, dict):
+            nested = target.get(key)
+            if not isinstance(nested, CommentedMap):
+                nested = CommentedMap()
+                target[key] = nested
+            _update_commented_mapping(nested, value)
+        else:
+            target[key] = value
+
+
+def _add_meta_comments(data: CommentedMap) -> None:
+    """Annotate a newly created user metadata file."""
+    data.yaml_set_start_comment(
+        "Editable manuscript configuration. Build commands read this file but do "
+        "not rewrite it."
+    )
+    revision = data["revision"]
+    revision.yaml_set_comment_before_after_key(
+        "round", before="Lifecycle round; managed only by revision/reindex operations."
+    )
+    manuscript = data["manuscript"]
+    manuscript.yaml_set_comment_before_after_key(
+        "title", before="Manuscript title shown in the selected publisher template."
+    )
+    manuscript.yaml_set_comment_before_after_key(
+        "language", before="Manuscript language: en or zh."
+    )
+    manuscript.yaml_set_comment_before_after_key(
+        "article_type", before="Journal article type, for example Perspective."
+    )
+    journal = data["journal"]
+    journal.yaml_set_comment_before_after_key(
+        "name", before="Target journal name used in correspondence."
+    )
+    journal.yaml_set_comment_before_after_key(
+        "publisher",
+        before="Packaged publisher resource key: chinese, elsevier, nature, or acs.",
+    )
+    authors = data["authors"]
+    authors.yaml_set_comment_before_after_key(
+        "first_author", before="Author IDs come from references/authors.yaml."
+    )
+    authors.yaml_set_comment_before_after_key(
+        "corresponding_author",
+        before="Corresponding-author IDs; email is required in authors.yaml.",
+    )
+    authors.yaml_set_comment_before_after_key(
+        "other_author", before="Remaining author IDs in publication order."
+    )
+
+
+def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
+    """Atomically update metadata while preserving user YAML comments."""
+    yaml_round_trip = YAML(typ="rt")
+    yaml_round_trip.preserve_quotes = True
+    yaml_round_trip.width = 1000
+    yaml_round_trip.indent(mapping=2, sequence=4, offset=2)
+    is_new = not path.exists()
+    if is_new:
+        document = CommentedMap()
+    else:
+        try:
+            loaded = yaml_round_trip.load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise MetadataError(f"Cannot preserve metadata YAML: {path}") from exc
+        if not isinstance(loaded, CommentedMap):
+            raise MetadataError(f"Metadata root must be a mapping: {path}")
+        document = loaded
+    _update_commented_mapping(document, _metadata_data(metadata))
+    if is_new:
+        _add_meta_comments(document)
+    buffer = StringIO()
+    yaml_round_trip.dump(document, buffer)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".yaml.new")
-    temporary.write_text(
-        yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    temporary.write_text(buffer.getvalue(), encoding="utf-8")
     os.replace(temporary, path)
 
 
@@ -463,156 +471,6 @@ def with_revision(
 ) -> ManuscriptMetadata:
     """Return the direct child metadata while preserving all editable fields."""
     return replace(metadata, round_number=round_number, parent_round=round_number - 1)
-
-
-def load_author_library(path: Path) -> AuthorLibrary:
-    """Load the role-free manuscript author database."""
-    data = _read_yaml(path)
-    unexpected = set(data) - {"authors", "affiliations"}
-    if unexpected:
-        raise MetadataError(
-            f"Unsupported authors.yaml keys: {', '.join(sorted(unexpected))}."
-        )
-    raw_affiliations = _mapping(data.get("affiliations"), "affiliations")
-    affiliations: dict[str, AffiliationRecord] = {}
-    for raw_id, item in raw_affiliations.items():
-        affiliation_id = _text(str(raw_id), "affiliation ID")
-        if affiliation_id in affiliations:
-            raise MetadataError(f"Duplicate affiliation ID: {affiliation_id}")
-        record = _mapping(item, f"affiliations.{affiliation_id}")
-        unexpected_affiliation = set(record) - {"name_zh", "name_en", "address"}
-        if unexpected_affiliation:
-            raise MetadataError(
-                f"Affiliation {affiliation_id!r} contains unsupported keys: "
-                + ", ".join(sorted(unexpected_affiliation))
-            )
-        affiliations[affiliation_id] = AffiliationRecord(
-            affiliation_id,
-            _text(
-                record.get("name_zh"),
-                f"affiliations.{affiliation_id}.name_zh",
-                optional=True,
-            ),
-            _text(
-                record.get("name_en"),
-                f"affiliations.{affiliation_id}.name_en",
-            ),
-            _text(
-                record.get("address"),
-                f"affiliations.{affiliation_id}.address",
-                optional=True,
-            ),
-        )
-    if not affiliations:
-        raise MetadataError("affiliations must not be empty.")
-    raw_authors = _mapping(data.get("authors"), "authors")
-    authors: dict[str, AuthorRecord] = {}
-    for raw_id, item in raw_authors.items():
-        author_id = _text(str(raw_id), "author ID")
-        if author_id in authors:
-            raise MetadataError(f"Duplicate author ID: {author_id}")
-        record = _mapping(item, f"authors.{author_id}")
-        unexpected_author = set(record) - {
-            "name_zh",
-            "name_en",
-            "email",
-            "affiliations",
-        }
-        if unexpected_author:
-            raise MetadataError(
-                f"Author {author_id!r} contains unsupported keys: "
-                + ", ".join(sorted(unexpected_author))
-            )
-        raw_keys = record.get("affiliations")
-        if not isinstance(raw_keys, list) or not raw_keys:
-            raise MetadataError(
-                f"authors.{author_id}.affiliations must be a non-empty list."
-            )
-        keys = tuple(
-            _text(str(key), f"authors.{author_id}.affiliations") for key in raw_keys
-        )
-        missing = set(keys) - set(affiliations)
-        if missing:
-            raise MetadataError(
-                f"Author {author_id!r} references missing affiliations: "
-                + ", ".join(sorted(missing))
-            )
-        authors[author_id] = AuthorRecord(
-            author_id,
-            _text(record.get("name_zh"), f"authors.{author_id}.name_zh"),
-            _text(record.get("name_en"), f"authors.{author_id}.name_en"),
-            _text(
-                record.get("email"),
-                f"authors.{author_id}.email",
-                optional=True,
-            ),
-            keys,
-        )
-    if not authors:
-        raise MetadataError("authors must not be empty.")
-    return AuthorLibrary(authors, affiliations)
-
-
-def resolve_authors(
-    metadata: ManuscriptMetadata,
-    library: AuthorLibrary,
-) -> AuthorSelection:
-    """Resolve selected author IDs without assigning library-level roles."""
-    missing = [
-        author_id
-        for author_id in metadata.author_ids
-        if author_id not in library.authors
-    ]
-    if missing:
-        raise MetadataError(
-            "Selected author IDs are missing from references/authors.yaml: "
-            + ", ".join(missing)
-        )
-    corresponding = tuple(
-        library.authors[item] for item in metadata.corresponding_authors
-    )
-    missing_emails = [author.author_id for author in corresponding if not author.email]
-    if missing_emails:
-        raise MetadataError(
-            "Corresponding authors require email addresses: "
-            + ", ".join(missing_emails)
-        )
-    selected = tuple(library.authors[item] for item in metadata.author_ids)
-    used_affiliations = tuple(
-        dict.fromkeys(key for author in selected for key in author.affiliations)
-    )
-    numbers = {key: index for index, key in enumerate(used_affiliations, 1)}
-    return AuthorSelection(
-        selected,
-        tuple(library.affiliations[key] for key in used_affiliations),
-        tuple(library.authors[item] for item in metadata.first_authors),
-        corresponding,
-        numbers,
-    )
-
-
-def resolve_signing_author(
-    metadata: ManuscriptMetadata,
-    selection: AuthorSelection,
-    *,
-    require_explicit_multiple: bool = False,
-) -> AuthorRecord | None:
-    """Resolve the correspondence signer without assigning an author-library role."""
-    requested = metadata.correspondence.signing_author
-    if requested:
-        for author in selection.corresponding_authors:
-            if author.author_id == requested:
-                return author
-        raise MetadataError(
-            "correspondence.signing_author must be a corresponding author."
-        )
-    if len(selection.corresponding_authors) == 1:
-        return selection.corresponding_authors[0]
-    if require_explicit_multiple:
-        raise MetadataError(
-            "Multiple corresponding authors require correspondence.signing_author."
-        )
-    return None
 
 
 def _latex_escape(value: str) -> str:

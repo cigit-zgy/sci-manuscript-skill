@@ -1,0 +1,50 @@
+% Marked-manuscript semantic contract:
+% This template is copied once to references/revision_style.tex for user edits.
+%   ordinary latexdiff addition = blue text
+%   deletion                    = light-gray strikeout
+%   reviewer-linked addition    = red text
+%   author ordinary addition    = blue text
+
+% =====================================
+% Ordinary latexdiff addition
+% =====================================
+
+% Ordinary addition color. Additions use color only, without line decoration.
+\definecolor{RevisionAddedColor}{RGB}{0,92,153}
+
+% =====================================
+% Deleted text
+% =====================================
+
+% Deleted text color.
+\definecolor{RevisionDeletedColor}{RGB}{160,160,160}
+\newcommand{\RevisionDeletionThickness}{0.8pt}
+
+\newcommand{\RevisionDeletedStrikeout}[1]{%
+  \ifcsname CJKsout\endcsname
+    \CJKsout*[thickness=\RevisionDeletionThickness,format=\color{RevisionDeletedColor},textformat=\color{RevisionDeletedColor}]{#1}%
+  \else\begingroup\renewcommand{\ULthickness}{\RevisionDeletionThickness}\sout{#1}\endgroup\fi}
+
+% =====================================
+% Reviewer/editor-linked additions (\review)
+% =====================================
+
+\definecolor{RevisionReviewColor}{RGB}{220,45,45}
+
+% =====================================
+% Background
+% =====================================
+
+% Background wrappers. Replace #1 with \colorbox{color}{#1} to enable.
+\newcommand{\RevisionAddedBackground}[1]{#1}
+\newcommand{\RevisionDeletedBackground}[1]{#1}
+\newcommand{\RevisionReviewBackground}[1]{#1}
+
+% =====================================
+% Font
+% =====================================
+
+% Leave empty to inherit the manuscript font.
+\newcommand{\RevisionAddedFont}{}
+\newcommand{\RevisionDeletedFont}{}
+\newcommand{\RevisionReviewFont}{}

@@ -1,0 +1,44 @@
+% Shared manuscript infrastructure. Page geometry remains publisher-controlled.
+\usepackage{iftex}
+\usepackage{xcolor}
+
+% Mathematics.
+\usepackage{amsmath}
+\makeatletter
+\@ifpackageloaded{unicode-math}{}{\usepackage{amssymb}}
+\makeatother
+\usepackage{mathtools}
+
+% Chemistry and SI units.
+\usepackage[version=4]{mhchem}
+\usepackage{siunitx}
+
+% Tables and figures.
+\usepackage{booktabs}
+\usepackage{threeparttable}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{subcaption}
+
+% Algorithms.
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% Publisher-selected reference support.
+%%BIBLIOGRAPHY_PACKAGE%%
+
+% Revision provenance is transparent in clean output.
+\providecommand{\review}[2]{#2}
+\providecommand{\user}[1]{#1}
+
+% Engine compatibility.
+\ifXeTeX
+  \usepackage{fontspec}
+\else
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+\fi
+
+% All manuscript PDFs use continuous line numbers.
+\usepackage{lineno}
+\AtBeginDocument{\linenumbers}

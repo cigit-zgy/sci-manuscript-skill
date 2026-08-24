@@ -12,15 +12,23 @@ import pytest
 from sci_manuscript import ManuscriptProject, doctor, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
 from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, REVISION_RUNTIME
+from sci_manuscript.submission import ensure_submission_workspace
 from sci_manuscript.workspace import (
-    ensure_submission_workspace,
     load_project,
     source_digest,
 )
 
 pytestmark = pytest.mark.integration
 
-REQUIRED_TOOLS = ("tectonic", "latexdiff", "pdftotext", "pdftoppm", "pdfinfo")
+REQUIRED_TOOLS = (
+    "tectonic",
+    "latexdiff",
+    "pdftocairo",
+    "pdftotext",
+    "pdftoppm",
+    "pdfinfo",
+)
+SVG_COLOR = re.compile(r'(fill|stroke)="rgb\(([\d.]+)%,\s*([\d.]+)%,\s*([\d.]+)%\)"')
 
 
 def _require_toolchain() -> None:
@@ -95,7 +103,7 @@ def _complete_responses(source: Path, review_ids: tuple[str, ...]) -> None:
 
 def _complete_cover(manuscript: Path, round_number: int) -> Path:
     config = load_project(manuscript, round_number)
-    source = ensure_submission_workspace(config, round_number) / "cover_letter_body.tex"
+    source = ensure_submission_workspace(config, round_number) / "cover_letter.tex"
     text = re.sub(
         r"\\guidance\{.*?\}",
         "Approved anonymous cover-letter statement.",
@@ -137,8 +145,8 @@ def _pdf_urls(path: Path) -> str:
 
 
 def _marked_words(text: str) -> str:
-    """Normalize wave-underline extraction artifacts without hiding content loss."""
-    return " ".join(re.sub(r":+", "", text).split())
+    """Normalize whitespace without masking line-decoration glyph leakage."""
+    return " ".join(text.split())
 
 
 def _ppm_pixels(path: Path) -> bytes:
@@ -163,6 +171,59 @@ def _count_color(pixels: bytes, target: tuple[int, int, int]) -> int:
     )
 
 
+def _near_color(
+    actual: tuple[float, float, float], target: tuple[int, int, int]
+) -> bool:
+    converted = tuple(channel * 2.55 for channel in actual)
+    return all(
+        abs(left - right) <= 3 for left, right in zip(converted, target, strict=True)
+    )
+
+
+def _assert_vector_semantics(pdf: Path, render_dir: Path) -> None:
+    info = subprocess.run(
+        [shutil.which("pdfinfo") or "pdfinfo", str(pdf)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    ).stdout
+    pages_match = re.search(r"(?m)^Pages:\s+(\d+)$", info)
+    assert pages_match is not None
+    colors: list[tuple[str, tuple[float, float, float]]] = []
+    for page in range(1, int(pages_match.group(1)) + 1):
+        svg = render_dir / f"marked-{page}.svg"
+        subprocess.run(
+            [
+                shutil.which("pdftocairo") or "pdftocairo",
+                "-f",
+                str(page),
+                "-l",
+                str(page),
+                "-svg",
+                str(pdf),
+                str(svg),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        for match in SVG_COLOR.finditer(svg.read_text(encoding="utf-8")):
+            color = (
+                float(match.group(2)),
+                float(match.group(3)),
+                float(match.group(4)),
+            )
+            colors.append((match.group(1), color))
+    strokes = [color for attribute, color in colors if attribute == "stroke"]
+    fills = [color for attribute, color in colors if attribute == "fill"]
+    assert any(_near_color(color, (220, 45, 45)) for color in fills)
+    assert any(_near_color(color, (0, 92, 153)) for color in fills)
+    assert any(_near_color(color, (160, 160, 160)) for color in strokes)
+    assert not any(_near_color(color, (220, 45, 45)) for color in strokes)
+    assert not any(_near_color(color, (0, 92, 153)) for color in strokes)
+
+
 def _assert_provenance_colors(pdf: Path, render_dir: Path) -> None:
     render_dir.mkdir()
     prefix = render_dir / "marked"
@@ -182,8 +243,9 @@ def _assert_provenance_colors(pdf: Path, render_dir: Path) -> None:
         _ppm_pixels(path) for path in sorted(render_dir.glob("marked-*.ppm"))
     )
     assert _count_color(pixels, (0, 92, 153)) > 20, "blue automatic addition missing"
-    assert _count_color(pixels, (0, 135, 90)) > 20, "green reviewer markup missing"
-    assert _count_color(pixels, (220, 45, 45)) > 20, "red deletion markup missing"
+    assert _count_color(pixels, (220, 45, 45)) > 20, "red reviewer markup missing"
+    assert _count_color(pixels, (160, 160, 160)) > 20, "gray deletion markup missing"
+    _assert_vector_semantics(pdf, render_dir)
 
 
 def _assert_artifacts(result: LifecycleResult, version: Path) -> None:
@@ -192,23 +254,37 @@ def _assert_artifacts(result: LifecycleResult, version: Path) -> None:
         "Clean manuscript",
         "Marked manuscript",
         "Response letter",
-        "Revision layout QA",
         "Cover letter",
         "Highlights",
         "Graphical abstract",
         "Submission checklist",
-        "Submission package",
+        "Submission files",
     }
-    package = version / "submission" / "package"
-    assert {path.name for path in package.iterdir()} == {
-        "checklist.md",
+    submission = version / "submission"
+    assert not (submission / "package").exists()
+    assert {
+        path.name
+        for path in submission.iterdir()
+        if path.is_file() and path.suffix == ".pdf"
+    } == {
         "cover_letter.pdf",
-        "graphical_abstract.pdf",
         "highlights.pdf",
         "manuscript.pdf",
         "marked_manuscript.pdf",
         "response_letter.pdf",
     }
+    assert {path.name for path in submission.iterdir()} == {
+        "checklist.md",
+        "cover_letter.tex",
+        "cover_letter.pdf",
+        "graphical_abstract",
+        "highlights.tex",
+        "highlights.pdf",
+        "manuscript.pdf",
+        "marked_manuscript.pdf",
+        "response_letter.pdf",
+    }
+    assert (submission / "graphical_abstract" / "graphical_abstract.pdf").is_file()
 
 
 def test_target_aware_chinese_doctor_runs_real_probe() -> None:
@@ -273,9 +349,9 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
     initial = manuscript / "initial_submission"
     assert {path.name for path in (initial / "sections").iterdir()} == {
         "00_frontmatter.tex",
-        "01_manuscript.tex",
+        "01_introduction.tex",
     }
-    body = initial / "sections" / "01_manuscript.tex"
+    body = initial / "sections" / "01_introduction.tex"
     _replace_once(
         body,
         "Replace this placeholder with the manuscript body.",
@@ -400,14 +476,17 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     _complete_responses(r01 / "response" / "responses.tex", ("E-1", "1-1", "2-1"))
     cover_source = _complete_cover(manuscript, 1)
     before = source_digest(r01, scientific_only=True)
+    legacy_layout_report = r01 / "output" / "revision_layout_qa.txt"
+    legacy_layout_report.write_text("legacy generated report\n", encoding="utf-8")
     r01_result = project.build_all(engine="tectonic", keep_temp=True)
     assert source_digest(r01, scientific_only=True) == before
     _assert_artifacts(r01_result, r01)
+    assert not legacy_layout_report.exists()
     marked = r01 / "output" / "manuscript_marked.pdf"
     response = r01 / "output" / "response_letter.pdf"
     marked_text = _pdf_text(marked)
     response_text = _pdf_text(response)
-    cover_text = _pdf_text(r01 / "submission" / "package" / "cover_letter.pdf")
+    cover_text = _pdf_text(r01 / "submission" / "cover_letter.pdf")
     marked_words = _marked_words(marked_text)
     assert "Reviewed wording" in marked_words
     assert "Replace this placeholder" in marked_words
@@ -441,14 +520,22 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     _complete_responses(r02 / "response" / "responses.tex", ("1-1",))
     _complete_cover(manuscript, 2)
     before = source_digest(r02, scientific_only=True)
-    r02_result = project.build_all(engine="tectonic")
+    r02_result = project.build_all(engine="tectonic", keep_temp=True)
     assert source_digest(r02, scientific_only=True) == before
     _assert_artifacts(r02_result, r02)
     r02_marked_text = _pdf_text(r02 / "output" / "manuscript_marked.pdf")
     r02_marked_words = _marked_words(r02_marked_text)
-    assert "Reviewed wording" in r02_marked_words
-    assert "Refined wording" in r02_marked_words
     assert "Replace this placeholder and its example citation" not in r02_marked_words
+    r02_runs = list((manuscript / "tmp").glob("run_*"))
+    assert len(r02_runs) == 1
+    r02_source = (r02_runs[0] / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
+    assert r"\DIFdel{v}" in r02_source
+    assert r"\DIFdel{ew}" in r02_source
+    assert r"\DIFaddReview{f}" in r02_source
+    assert r"\DIFaddReview{n}" in r02_source
+    shutil.rmtree(manuscript / "tmp")
     assert not (manuscript / "tmp").exists()
 
 
@@ -475,7 +562,7 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
         reviews=_review_file(tmp_path / "reviews_zh.md", 1), confirmed=True
     )
     revision = manuscript / "revision_01"
-    introduction = revision / "sections" / "01_manuscript.tex"
+    introduction = revision / "sections" / "01_introduction.tex"
     _replace_once(
         introduction,
         "Replace this placeholder with the manuscript body.",
@@ -488,7 +575,7 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     result = project.build_all(engine="tectonic", keep_temp=True)
     _assert_artifacts(result, revision)
     cover_text = "".join(
-        _pdf_text(revision / "submission" / "package" / "cover_letter.pdf").split()
+        _pdf_text(revision / "submission" / "cover_letter.pdf").split()
     )
     response_text = "".join(
         _pdf_text(revision / "output" / "response_letter.pdf").split()
@@ -497,6 +584,8 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     assert "匿名甲" in cover_text
     assert "意见1-1" in response_text
     assert "第" in response_text and "行" in response_text
+    assert "使用说明" not in response_text
+    assert "reviewer_comments.md" not in response_text
     response_source_text = response_source.read_text(encoding="utf-8")
     assert "\\ReviewLocation{E-1}" not in response_source_text
     retained_runs = list((manuscript / "tmp").glob("run_*"))
@@ -511,9 +600,9 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     assert "位置不可用" not in assembled_text
     assert assembled_text.count("\\reviewlocation{第 ") == 2
     assert not (revision / "response" / "response_letter.tex").exists()
-    assert not (revision / "submission" / "cover_letter.tex").exists()
+    assert (revision / "submission" / "cover_letter.tex").is_file()
     assert "\\documentclass" not in response_source_text
-    cover_body = revision / "submission" / "cover_letter_body.tex"
+    cover_body = revision / "submission" / "cover_letter.tex"
     assert "\\documentclass" not in cover_body.read_text(encoding="utf-8")
     logs = list(retained_runs[0].rglob("*.compiler.log"))
     diagnostics = "\n".join(path.read_text(errors="replace") for path in logs)
@@ -548,7 +637,9 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     )
     manuscript = project_dir / "manuscript"
     project = ManuscriptProject(manuscript)
-    initial_body = manuscript / "initial_submission" / "sections" / "01_manuscript.tex"
+    initial_body = (
+        manuscript / "initial_submission" / "sections" / "01_introduction.tex"
+    )
     old_paragraph = (
         "原始中文段落包含行内公式 $A \\longrightarrow B$、引用"
         "~\\cite{replace_me}，并保留足够长的连续文字来验证自动差异标记"
@@ -561,14 +652,14 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     )
     project.start_revision(reviews=reviews, confirmed=True)
     revision = manuscript / "revision_01"
-    body = revision / "sections" / "01_manuscript.tex"
+    body = revision / "sections" / "01_introduction.tex"
     _replace_once(
         body,
         old_paragraph,
         "\\review{1-1}{修订后的中文长段落同样包含行内公式 "
         "$A \\longrightarrow C$、引用~\\cite{replace_me}，并覆盖标题、公式、"
         "引用及跨行中文在颜色标记下保持原生断行的回归场景。}\n\n"
-        "作者普通新增中文包含行内公式 $x+y$，用于验证蓝色波浪线与数学隔离。",
+        "作者普通新增中文包含行内公式 $x+y$，用于验证纯蓝正文与数学隔离。",
     )
     _complete_responses(revision / "response" / "responses.tex", ("1-1",))
     _complete_cover(manuscript, 1)
@@ -583,21 +674,37 @@ def test_chinese_revision_submission_generates_registry_and_locations(
         "response_letter.pdf",
     }
     marked_text = "".join(_pdf_text(output / "manuscript_marked.pdf").split())
-    marked_plain = marked_text.replace(":", "")
     response_text = "".join(_pdf_text(output / "response_letter.pdf").split())
-    assert "修订后的中文长段落" in marked_plain
-    assert "不会改变中文断行或制造不可分割的水平盒子" in marked_plain
-    assert "作者普通新增中文" in marked_plain
+    assert "修订后的中文长段落" in marked_text
+    assert "作者普通新增中文" in marked_text
     assert "第" in response_text and "行" in response_text
     assert "Locationunavailable" not in response_text
     assert "位置不可用" not in response_text
-    layout_report = (output / "revision_layout_qa.txt").read_text(encoding="utf-8")
-    assert "Marked-specific overfull boxes: 0" in layout_report
-    assert "Result: PASS" in layout_report
+    assert not list(output.glob("*")) or all(
+        path.suffix == ".pdf" for path in output.iterdir()
+    )
     _assert_provenance_colors(output / "manuscript_marked.pdf", tmp_path / "colors")
 
     retained_runs = list((manuscript / "tmp").glob("run_*"))
     assert len(retained_runs) == 1
+    layout_report = (retained_runs[0] / "revision_layout_qa.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "Marked-specific overfull boxes: 0" in layout_report
+    assert "Result: PASS" in layout_report
+    marked_source = (
+        retained_runs[0] / "marked_source" / "manuscript_marked.tex"
+    ).read_text(encoding="utf-8")
+    assert r"\DIFdel" in marked_source
+    assert r"\DIFaddReview" in marked_source
+    ordered_fragments = ("修订后的", "中文", "长", "段落")
+    positions = [marked_source.index(fragment) for fragment in ordered_fragments]
+    assert positions == sorted(positions)
+    assert r"\DIFaddReview{修订后的}" in marked_source
+    assert r"\DIFaddReview{长}" in marked_source
+    assert r"\DIFaddReview{中文}" not in marked_source
+    assert r"\DIFaddReview{段落}" not in marked_source
+    assert "作者普通新增中文" in marked_source
     registry = retained_runs[0] / "marked_build" / "manuscript_marked.reviewloc"
     assert registry.read_text(encoding="utf-8").splitlines() == [
         REVIEW_REGISTRY_HEADER,
@@ -610,5 +717,83 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     assert (retained_runs[0] / "response_source" / "response_letter.tex").is_file()
     assert (retained_runs[0] / "cover_source" / "cover_letter.tex").is_file()
     assert not (revision / "response" / "response_letter.tex").exists()
-    assert not (revision / "submission" / "cover_letter.tex").exists()
+    cover_source = revision / "submission" / "cover_letter.tex"
+    assert cover_source.is_file()
+    assert "\\documentclass" not in cover_source.read_text(encoding="utf-8")
+    shutil.rmtree(manuscript / "tmp")
+
+
+def test_math_revision_semantics_are_fine_grained_and_rendered(tmp_path: Path) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "Math Revision Project"
+    initialize_manuscript(
+        project_dir,
+        title="公式修订语义测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        authors_path=_author_library(tmp_path / "math_authors.yaml"),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    initial = manuscript / "initial_submission" / "sections" / "01_introduction.tex"
+    old = r"""Reviewer inline $a+b$ and unchanged math $u=v$.
+\begin{equation}
+x+y=z\label{eq:partial}
+\end{equation}
+\begin{equation}
+p=q\label{eq:deleted}
+\end{equation}
+Stable anchor.
+"""
+    _replace_once(initial, "Replace this placeholder with the manuscript body.", old)
+    reviews = tmp_path / "math_reviews.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n## 1-1 | manuscript_revised\n\nRevise the formulas.\n",
+        encoding="utf-8",
+    )
+    project = ManuscriptProject(manuscript)
+    project.start_revision(reviews=reviews, confirmed=True)
+    revision = manuscript / "revision_01"
+    current = revision / "sections" / "01_introduction.tex"
+    new = r"""\review{1-1}{Reviewer inline $a+c$ and unchanged math $u=v$.
+\begin{equation}
+x+y+w=z\label{eq:partial}
+\end{equation}}
+Stable anchor.
+Author inline $m+n$.
+\begin{equation}
+r=s\label{eq:author}
+\end{equation}
+"""
+    _replace_once(current, old, new)
+
+    project.build(engine="tectonic", keep_temp=True)
+    output = revision / "output"
+    marked_pdf = output / "manuscript_marked.pdf"
+    marked_text = _pdf_text(marked_pdf)
+    assert "Reviewer inline" in marked_text
+    assert "Author inline" in marked_text
+    assert "(1)" in marked_text and "(2)" in marked_text
+    _assert_provenance_colors(marked_pdf, tmp_path / "math_colors")
+
+    run = next((manuscript / "tmp").glob("run_*"))
+    marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
+    assert r"\DIFdel{b}" in marked_source
+    assert r"\DIFaddReview{c}" in marked_source
+    assert r"\DIFaddReview{+w}" in marked_source
+    assert r"\DIFdel{p=q}" in marked_source
+    assert r"\DIFaddMath{$m+n$}" in marked_source
+    assert r"\DIFadd{r=s}" in marked_source
+    unchanged = marked_source[
+        marked_source.index("u=v") - 30 : marked_source.index("u=v") + 30
+    ]
+    assert r"\DIFaddReview{u=v}" not in unchanged
+    assert marked_source.count(r"\label{eq:partial}") == 1
+    assert marked_source.count(r"\label{eq:author}") == 1
     shutil.rmtree(manuscript / "tmp")

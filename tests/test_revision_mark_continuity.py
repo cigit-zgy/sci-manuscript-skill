@@ -15,9 +15,7 @@ from sci_manuscript.compile import stage_cjk_fonts
 pytestmark = pytest.mark.integration
 
 TARGETS = {
-    "green": (0, 135, 90),
-    "blue": (0, 92, 153),
-    "red": (220, 45, 45),
+    "deletion-continuity-probe": (230, 180, 0),
 }
 
 
@@ -83,7 +81,7 @@ def _maximum_internal_gap(
     return max((right - left - 1 for left, right in pairwise(columns)), default=0)
 
 
-def test_starred_cjk_decorators_are_visually_continuous_across_punctuation(
+def test_starred_cjk_deletion_is_visually_continuous_across_punctuation(
     tmp_path: Path,
 ) -> None:
     """Rendered starred marks must bridge punctuation that legacy forms skip."""
@@ -103,17 +101,11 @@ def test_starred_cjk_decorators_are_visually_continuous_across_punctuation(
 \setCJKmainfont[Path=./]{FandolSong-Regular.otf}
 \pagestyle{empty}
 \setlength{\parindent}{0pt}
-\definecolor{RevisionBlue}{RGB}{0,92,153}
-\definecolor{RevisionRed}{RGB}{220,45,45}
-\definecolor{RevisionGreen}{RGB}{0,135,90}
+\definecolor{RevisionProbe}{RGB}{230,180,0}
 \begin{document}
 \fontsize{16}{24}\selectfont
-STAR U: \CJKunderline*[format=\color{RevisionGreen},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
-OLD U: \CJKunderline[format=\color{RevisionGreen},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
-STAR W: \CJKunderwave*[format=\color{RevisionBlue},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
-OLD W: \CJKunderwave[format=\color{RevisionBlue},textformat=\color{black}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
-STAR S: \CJKsout*[format=\color{RevisionRed},textformat=\color{RevisionRed}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
-OLD S: \CJKsout[format=\color{RevisionRed},textformat=\color{RevisionRed}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
+STAR S: \CJKsout*[format=\color{RevisionProbe},textformat=\color{RevisionProbe}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
+OLD S: \CJKsout[format=\color{RevisionProbe},textformat=\color{RevisionProbe}]{甲，乙。丙；丁：戊（己）庚！辛？壬}\par
 \end{document}
 """,
         encoding="utf-8",

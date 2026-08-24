@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sci-manuscript-skill"
-version = "1.0.0"
+version = "1.1.0"
 description = "Reproducible LaTeX scientific manuscript lifecycle management."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["PyYAML>=6.0,<7"]
+dependencies = ["PyYAML>=6.0,<7", "ruamel.yaml>=0.18,<0.19"]
 
 [project.optional-dependencies]
 dev = [
@@ -46,6 +46,7 @@ select = ["E4", "E7", "E9", "F", "W", "I", "B", "C4", "PIE", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 "tests/test_core.py" = ["RUF043"]
 "tests/test_release_integration.py" = ["RUF001"]
+"tests/test_review_audit.py" = ["RUF001"]
 "tests/test_revision_mark_continuity.py" = ["I001", "RUF001"]
 "tests/test_revision_style.py" = ["I001"]
 

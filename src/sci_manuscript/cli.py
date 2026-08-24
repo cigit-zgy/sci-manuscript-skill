@@ -15,14 +15,14 @@ from .api import (
     doctor,
     initialize_manuscript,
 )
-from .errors import ManuscriptError
-from .metadata import (
-    PUBLISHERS,
+from .authors import (
     configure_author_library,
     configured_author_library_path,
     load_author_library,
     resolve_author_library_path,
 )
+from .errors import ManuscriptError
+from .metadata import PUBLISHERS
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -58,7 +58,7 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--engine", choices=("auto", "tectonic", "latex"), default="auto")
     for command, help_text in (
         ("status", "Show project status."),
-        ("build", "Compile a clean manuscript."),
+        ("build", "Compile clean output and a marked PDF for revisions."),
         ("submission", "Build submission artifacts."),
     ):
         child = commands.add_parser(command, help=help_text)
@@ -148,12 +148,48 @@ def _relative(project: Path, path: Path) -> str:
         return str(path)
 
 
-def _print_lifecycle(result: LifecycleResult, project: Path) -> None:
-    print(f"{result.operation}: {result.version}")
+def _print_lifecycle(
+    result: LifecycleResult,
+    project: Path,
+    *,
+    language: str | None = None,
+) -> None:
+    if result.operation == "init":
+        print(f"Initialized: {result.version}")
+        print()
+        if language == "zh":
+            print(
+                "请检查 manuscript/initial_submission/meta.yaml，并补充尚未填写的论文元信息。"  # noqa: RUF001
+            )
+        else:
+            print(
+                "Please review manuscript/initial_submission/meta.yaml and complete "
+                "any missing manuscript metadata."
+            )
+    else:
+        print(f"{result.operation}: {result.version}")
     if result.artifacts:
         print("Generated:")
         for artifact in result.artifacts:
-            print(f"  {artifact.label}: {_relative(project, artifact.path)}")
+            label = (
+                "Manuscript"
+                if result.operation == "init" and artifact.label == "Initial manuscript"
+                else artifact.label
+            )
+            print(f"  {label}: {_relative(project, artifact.path)}")
+    audit = result.review_audit
+    if audit is None:
+        return
+    print("Review audit:")
+    for entry in audit.entries:
+        print(f"  {entry.review_id:<8} {entry.state}")
+    for issue in audit.issues:
+        label = issue.review_id or "review"
+        print(f"  WARNING {label}: {issue.message}")
+        for path in issue.paths:
+            print(f"    Path: {path}")
+    state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
+    print(f"Review audit result: {state} ({audit.complete}/{audit.total} complete)")
 
 
 def _print_status(result: StatusResult) -> None:
@@ -239,7 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 custom_template=args.custom_template,
                 engine=args.engine,
             )
-            _print_lifecycle(lifecycle_result, args.project)
+            _print_lifecycle(lifecycle_result, args.project, language=args.language)
             return 0
         project = ManuscriptProject(args.project)
         if args.command == "status":

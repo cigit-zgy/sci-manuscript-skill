@@ -1,0 +1,32 @@
+% Internal reviewer-location runtime. It never changes text color.
+\RequirePackage{lineno}
+\AtBeginDocument{\linenumbers}
+\newcounter{reviewblock}
+\newwrite\ReviewLocationFile
+\AtBeginDocument{%
+  \immediate\openout\ReviewLocationFile=\jobname.reviewloc
+  \immediate\write\ReviewLocationFile{sci-manuscript-reviewloc-v2}%
+}
+\AtEndDocument{\immediate\closeout\ReviewLocationFile}
+\newcommand{\ReviewLineLabel}[1]{%
+  \begingroup
+  \edef\ReviewExpandedLabel{#1}%
+  \expandafter\endgroup
+  \expandafter\linelabel\expandafter{\ReviewExpandedLabel}%
+}
+\providecommand{\review}[2]{#2}
+\providecommand{\user}[1]{#1}
+\providecommand{\selfadd}[1]{#1}
+\AtBeginDocument{%
+  \renewcommand{\review}[2]{%
+    \stepcounter{reviewblock}%
+    \edef\ReviewBlockID{\arabic{reviewblock}}%
+    \leavevmode
+    \ReviewLineLabel{review:\ReviewBlockID:start}%
+    #2%
+    \ReviewLineLabel{review:\ReviewBlockID:end}%
+    \immediate\write\ReviewLocationFile{#1|\ReviewBlockID}%
+  }%
+  \renewcommand{\user}[1]{#1}%
+  \renewcommand{\selfadd}[1]{#1}%
+}

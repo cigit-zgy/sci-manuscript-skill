@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import struct
+import subprocess
 from importlib.resources import files
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "src" / "sci_manuscript"
 
 
 def _png_size(path: Path) -> tuple[int, int]:
@@ -27,10 +30,17 @@ def test_runtime_resources_are_package_data() -> None:
     root = files("sci_manuscript.resources")
     required = (
         "authors.yaml",
-        "revision_style.tex",
-        "manuscript/preamble.tex",
+        "revision_style.template.tex",
+        "revision/marked_runtime.tex",
+        "revision/location_runtime.tex",
+        "reviewer_comments/reviewer_comments_en.md",
+        "reviewer_comments/reviewer_comments_zh.md",
+        "manuscript_preamble/common.tex",
+        "manuscript_preamble/zh.tex",
+        "manuscript_preamble/en.tex",
         "manuscript/sections/default/00_frontmatter_zh.tex",
-        "manuscript/sections/default/01_manuscript.tex",
+        "manuscript/sections/default/01_introduction.tex",
+        "manuscript/sections/default/01_introduction_zh.tex",
         "correspondence_templates/response/response_en.tex",
         "correspondence_templates/cover_letter/cover_letter_en.tex",
         "submission/cover_letter_body_en.tex",
@@ -48,24 +58,32 @@ def test_runtime_resources_are_package_data() -> None:
         assert (root / relative).is_file(), relative
 
 
-def test_revision_provenance_palette_contract_is_documented() -> None:
+def test_revision_semantics_contract_is_documented() -> None:
     style = (
-        ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.tex"
+        ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.template.tex"
     ).read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    semantics = (ROOT / "references" / "revision_semantics.md").read_text(
+        encoding="utf-8"
+    )
     for token in (
         r"\definecolor{RevisionAddedColor}{RGB}{0,92,153}",
-        r"\definecolor{RevisionDeletedColor}{RGB}{220,45,45}",
-        r"\definecolor{RevisionReviewColor}{RGB}{0,135,90}",
-        r"\CJKunderwave",
+        r"\definecolor{RevisionDeletedColor}{RGB}{160,160,160}",
+        r"\definecolor{RevisionReviewColor}{RGB}{220,45,45}",
         r"\CJKsout",
-        r"\CJKunderline",
+        r"\newcommand{\RevisionDeletionThickness}{0.8pt}",
     ):
         assert token in style
-    assert "blue wave underline" in readme
-    assert "green straight underline" in readme
-    assert "three non-overlapping conventions" in skill
+    assert r"\CJKunderwave" not in style
+    assert r"\CJKunderline" not in style
+    assert "blue text" in readme
+    assert "red text" in readme
+    assert "four-layer contract" in skill
+    assert "similarity(old, new) >= 0.70" in semantics
+    assert "max(len(old), len(new)) <= 2000" in semantics
+    assert "--math-markup=FINE" in semantics
+    assert "Rendering is mutually exclusive" in semantics
 
 
 def test_no_legacy_public_architecture_strings() -> None:
@@ -110,3 +128,93 @@ def test_correspondence_templates_are_self_contained() -> None:
     names = {path.name for path in resources.rglob("*.tex")}
     assert "correspondence_style.tex" not in names
     assert "shared_correspondence.tex" not in names
+
+
+def test_workspace_owns_canonical_project_paths() -> None:
+    forbidden = (
+        'round_dir(round_number) / "output"',
+        'round_dir(round_number) / "response"',
+        'round_dir(round_number) / "submission"',
+        'version.parent / "state"',
+    )
+    for path in sorted(SOURCE.glob("*.py")):
+        if path.name == "workspace.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        for expression in forbidden:
+            assert expression not in text, f"{path.name}: {expression}"
+
+
+def test_revision_state_and_template_invariants_are_not_duplicated() -> None:
+    source_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(SOURCE.glob("*.py"))
+    )
+    assert "First specific comment." not in source_text
+    assert "# Reviewer #1\n## 1-1 | manuscript_revised" not in source_text
+    assert '_REVISION_RUNTIME_TEMPLATE = r"""' not in source_text
+    assert '_LOCATION_RUNTIME = r"""' not in source_text
+    assert '_LOCATION_RUNTIME = rf"""' not in source_text
+
+
+def test_current_docs_have_one_revision_rendering_contract() -> None:
+    paths = (
+        ROOT / "README.md",
+        ROOT / "SKILL.md",
+        ROOT / "CHANGELOG.md",
+        ROOT / "references" / "revision_semantics.md",
+        ROOT / "references" / "workflow.md",
+    )
+    text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    obsolete = (
+        "math-markup=WHOLE",
+        "whole-equation structural comparison",
+        "green straight underline",
+        "Deletions remain red strikeout",
+        "blue wave underline",
+    )
+    for phrase in obsolete:
+        assert phrase not in text
+    assert "--math-markup=FINE" in text
+
+
+def test_runtime_module_import_graph_has_no_cycles() -> None:
+    modules = {path.stem for path in SOURCE.glob("*.py")}
+    graph: dict[str, set[str]] = {name: set() for name in modules}
+    for path in SOURCE.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module:
+                dependency = node.module.split(".", 1)[0]
+                if dependency in modules:
+                    graph[path.stem].add(dependency)
+
+    visited: set[str] = set()
+    active: list[str] = []
+
+    def visit(module: str) -> None:
+        if module in active:
+            cycle = " -> ".join((*active[active.index(module) :], module))
+            raise AssertionError(f"runtime import cycle: {cycle}")
+        if module in visited:
+            return
+        active.append(module)
+        for dependency in graph[module]:
+            visit(dependency)
+        active.pop()
+        visited.add(module)
+
+    for module in graph:
+        visit(module)
+
+
+def test_repository_tracks_no_ds_store() -> None:
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    assert not any(
+        Path(line).name == ".DS_Store" for line in result.stdout.splitlines()
+    )
