@@ -3,7 +3,10 @@
 ## 1.1.0
 
 - Revision-round `build` retains both clean and direct-parent marked PDFs.
-- Red strikeout remains deletion markup and blue wave underline remains ordinary author markup.
-- `\review{ID}{text}` is now a provenance scope rather than a formatting wrapper: only text that actually differs from the direct parent is rendered with the green straight underline, while unchanged text inside the scope remains unmarked.
-- Chinese abstract and keyword macros participate in reviewer-aware diffing, so reviewed changes in front matter use the same green semantics as body text.
-- Added regression tests for reviewer-scope classification, Chinese front matter, and retained marked build output.
+- Reviewer provenance is separated from structural comparison: `\review{ID}{text}` records reviewer scope, while only actual additions inside that scope render with the green straight underline; unchanged scoped text remains unmarked.
+- Deletions remain red strikeout and ordinary author additions remain blue wave underline.
+- Pure-prose replacements are refined at character level only when `SequenceMatcher(..., autojunk=False).ratio() >= 0.70` and the replacement is at most 2000 characters; dissimilar, long, or TeX-bearing replacements remain atomic.
+- Display mathematics uses whole-equation comparison (`latexdiff --math-markup=WHOLE`) and mathematics is excluded from CJK/ulem text-decoration scanners.
+- Chinese abstract and keyword macros participate in the same provenance classification as body text.
+- Reviewer line locations are compiled independently from marked-manuscript color rendering.
+- Added regression coverage for provenance extraction, refinement policy, Chinese front matter, mathematical markup, three-color rendering, and clean-versus-marked layout QA.
