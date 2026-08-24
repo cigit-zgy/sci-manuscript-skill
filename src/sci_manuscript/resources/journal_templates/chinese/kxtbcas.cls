@@ -43,14 +43,21 @@
 \RequirePackage{lineno}
 \RequirePackage{xcolor}
 
+% Chinese journal default layout settings.
+% Managed by sci-manuscript-skill.
+% Do not duplicate these settings in manuscript.tex.
+\setlength{\parindent}{2em}
 \hypersetup{
   colorlinks=true,
   linkcolor=blue,
   citecolor=blue,
   urlcolor=blue,
+  filecolor=blue,
+  pdfborder={0 0 0},
   pdfcreator={},
   pdfproducer={}
 }
+\setcitestyle{numbers,square,comma,sort&compress}
 \defaultfontfeatures{Ligatures=TeX,Scale=MatchLowercase}
 
 \makeatletter
@@ -167,7 +174,6 @@
   \kxtb@applymathfont
 }
 
-\setlength{\parindent}{2em}
 \setlength{\parskip}{0pt}
 \setlength{\skip\footins}{6pt}
 \setlength{\textfloatsep}{8pt plus 1pt minus 2pt}
