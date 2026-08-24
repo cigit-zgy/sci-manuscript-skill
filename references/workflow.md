@@ -171,10 +171,13 @@ sci-manuscript submission --project /absolute/path/to/project --round r01
 
 A revision build publishes clean and marked manuscript PDFs. Submission also
 publishes the available correspondence and package artifacts. If comments are
-present while some responses remain unfinished, the response PDF may contain
-visible pending placeholders and the audit remains `INCOMPLETE`. If the comment
-template is still empty, the manuscript PDFs can still be built and the audit
-points directly to `reviewer_comments.md`.
+present while some valid responses remain unfinished, the response PDF may
+contain visible pending placeholders and the audit remains `INCOMPLETE`. A
+malformed response source instead produces `RESPONSES_INVALID` with its absolute
+path: clean and marked manuscripts still build, the checklist remains
+`INCOMPLETE`, and no untrusted response PDF is generated. If the comment template
+is still empty, the manuscript PDFs can still be built and the audit points
+directly to `reviewer_comments.md`.
 
 Response locations are calculated in an independent transparent line-label
 compilation. Registries, flattened TeX, extracted text, and compiler files

@@ -180,7 +180,6 @@ existing-project/
     │   └── submission/
     ├── revision_01/
         ├── meta.yaml
-        ├── revision_creation.yaml
         ├── manuscript.tex
         ├── sections/
         ├── figures/
@@ -193,6 +192,7 @@ existing-project/
             └── cover_letter_body.tex
     ├── state/
     │   └── revision_01/
+    │       ├── creation.yaml
     │       └── review_index.yaml
     └── tmp/
 ```
@@ -330,14 +330,18 @@ Please clarify the scope.
 Please revise the sentence.
 ```
 
-`manuscript_revised` requires its ID in at least one `\review`. Pending response
-macros block submission unless the diagnostic-only `--allow-placeholders` is
-explicitly supplied. The response source displays only IDs supplied by
-`reviewer_comments.md`: it has no independent LaTeX numbering counter.
+`manuscript_revised` requires its ID in at least one `\review`. Valid pending
+responses keep the review checklist incomplete. The released
+`--allow-placeholders` option remains accepted as a compatibility no-op; review
+audit semantics are always authoritative. The response source displays only IDs
+supplied by `reviewer_comments.md`: it has no independent LaTeX numbering
+counter.
 `manuscript_revised` entries receive real marked-manuscript line locations;
 `response_only` entries omit location output.
 
-`revision_creation.yaml` hashes protected user sources. Rollback is allowed only
+`state/revision_NN/creation.yaml` hashes protected user sources. Legacy
+`revision_creation.yaml` records remain readable during workspace migration, but
+new revisions write only the canonical state path. Rollback is allowed only
 while that digest is unchanged. Reindex first copies all affected revisions to
 `00_archive/`, stages renumbered versions, checks scientific-source hashes, and
 atomically swaps directories; any failure restores the original layout.

@@ -13,13 +13,10 @@ from pathlib import Path
 
 import yaml
 
+from .errors import WorkflowError
 from .metadata import generate_metadata
-from .workspace import (
-    ProjectConfig,
-    WorkflowError,
-    publisher_resource,
-    resources_root,
-)
+from .templates import publisher_resource, resources_root
+from .workspace import ProjectConfig
 
 
 @dataclass(frozen=True)
@@ -424,7 +421,7 @@ def build_clean_manuscript(
         config, round_number, source_dir, include_manuscript=True
     )
     compiled = compile_tex(source, run_dir / "clean_build", config, engine_override)
-    output_dir = config.round_dir(round_number) / "output"
+    output_dir = config.output_dir(round_number)
     output_dir.mkdir(exist_ok=True)
     filename = "manuscript.pdf" if round_number == 0 else "manuscript_clean.pdf"
     target = output_dir / filename

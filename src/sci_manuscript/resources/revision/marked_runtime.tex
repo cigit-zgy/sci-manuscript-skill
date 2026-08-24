@@ -1,0 +1,78 @@
+% Internal marked-manuscript runtime. Reviewer provenance has already been
+% classified in Python; TeX only renders deterministic semantic macros.
+\RequirePackage{lineno}
+\RequirePackage[normalem]{ulem}
+%%CJK_REVISION_PACKAGE%%
+\RequirePackage{xcolor}
+\AtBeginDocument{\linenumbers}
+
+\newbox\RevisionMathMeasureBox
+\newcommand{\RevisionMathStyle}{\ifinner\textstyle\else\displaystyle\fi}
+\newcommand{\RevisionGobble}[1]{}
+\newcommand{\RevisionMeasureMath}[1]{%
+  \setbox\RevisionMathMeasureBox=\hbox{\mathsurround=0pt$\RevisionMathStyle
+    \let\label\RevisionGobble #1$}%
+}
+\newcommand{\RevisionMathStrikeout}[2]{%
+  \begingroup
+    \RevisionMeasureMath{#2}%
+    \dimen0=.5\ht\RevisionMathMeasureBox
+    \advance\dimen0 by -.5\dp\RevisionMathMeasureBox
+    \rlap{\raise\dimen0\hbox{\color{#1}%
+      \rule{\wd\RevisionMathMeasureBox}{\RevisionDeletionThickness}}}%
+    {\color{#1}#2}%
+  \endgroup
+}
+\providecommand{\DIFaddMath}[1]{%
+  {\RevisionAddedFont\color{RevisionAddedColor}#1}%
+}
+\providecommand{\DIFaddReviewMath}[1]{%
+  {\RevisionReviewFont\color{RevisionReviewColor}#1}%
+}
+\providecommand{\DIFdelMath}[1]{%
+  {\RevisionDeletedFont\RevisionMathStrikeout{RevisionDeletedColor}{#1}}%
+}
+\providecommand{\DIFadd}[1]{%
+  \ifmmode
+    \DIFaddMath{#1}%
+  \else
+    \RevisionAddedBackground{{\RevisionAddedFont\color{RevisionAddedColor}#1}}%
+  \fi}
+\providecommand{\DIFaddReview}[1]{%
+  \ifmmode
+    \DIFaddReviewMath{#1}%
+  \else
+    \RevisionReviewBackground{{\RevisionReviewFont\color{RevisionReviewColor}#1}}%
+  \fi}
+\providecommand{\DIFdel}[1]{%
+  \ifmmode
+    \DIFdelMath{#1}%
+  \else
+    \RevisionDeletedBackground{{\RevisionDeletedFont\color{RevisionDeletedColor}%
+      \RevisionDeletedStrikeout{#1}}}%
+  \fi}
+\providecommand{\DIFaddbegin}{}
+\providecommand{\DIFaddend}{}
+\providecommand{\DIFdelbegin}{}
+\providecommand{\DIFdelend}{}
+\providecommand{\DIFmodbegin}{}
+\providecommand{\DIFmodend}{}
+\providecommand{\DIFaddFL}[1]{\DIFadd{#1}}
+\providecommand{\DIFaddReviewFL}[1]{\DIFaddReview{#1}}
+\providecommand{\DIFdelFL}[1]{\DIFdel{#1}}
+\providecommand{\DIFaddbeginFL}{}
+\providecommand{\DIFaddendFL}{}
+\providecommand{\DIFdelbeginFL}{}
+\providecommand{\DIFdelendFL}{}
+\providecommand{\review}[2]{#2}
+\providecommand{\user}[1]{#1}
+\providecommand{\selfadd}[1]{#1}
+
+% Keep the historical empty registry contract for standalone runtime probes.
+% Real reviewer locations are compiled independently and copied over this file.
+\newwrite\MarkedReviewLocationFile
+\AtBeginDocument{%
+  \immediate\openout\MarkedReviewLocationFile=\jobname.reviewloc
+  \immediate\write\MarkedReviewLocationFile{sci-manuscript-reviewloc-v2}%
+}
+\AtEndDocument{\immediate\closeout\MarkedReviewLocationFile}

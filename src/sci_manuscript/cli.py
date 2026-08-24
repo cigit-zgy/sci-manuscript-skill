@@ -15,14 +15,14 @@ from .api import (
     doctor,
     initialize_manuscript,
 )
-from .errors import ManuscriptError
-from .metadata import (
-    PUBLISHERS,
+from .authors import (
     configure_author_library,
     configured_author_library_path,
     load_author_library,
     resolve_author_library_path,
 )
+from .errors import ManuscriptError
+from .metadata import PUBLISHERS
 
 
 def _parser() -> argparse.ArgumentParser:

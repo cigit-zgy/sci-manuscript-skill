@@ -3,42 +3,30 @@
 from __future__ import annotations
 
 import importlib.metadata
-import re
 import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .authors import load_author_library, resolve_author_library_path, resolve_authors
+from .bibliography import sync_bibliography
 from .compile import (
     build_clean_manuscript,
-    compile_tex,
     ensure_cjk_environment,
     probe_cjk_environment,
-    stage_cjk_fonts,
-    validate_revision_layout,
 )
-from .diff import MarkedResult, build_marked_manuscript
+from .diff import build_marked_manuscript
+from .errors import WorkflowError
 from .metadata import (
     PUBLISHERS,
     ManuscriptMetadata,
     SubmissionSettings,
-    generate_metadata,
-    load_author_library,
-    resolve_author_library_path,
-    resolve_authors,
-    resolve_signing_author,
 )
-from .response import (
-    ReviewAuditResult,
-    audit_reviews,
-    build_response,
-    init_response,
-    parse_reviews,
-)
+from .response import init_response, parse_reviews
+from .review import ReviewAuditResult, audit_reviews
+from .submission import prepare_submission_artifacts
 from .workspace import (
     ProjectConfig,
-    WorkflowError,
-    ensure_submission_workspace,
     finalize_revision_creation,
     initialize_project,
     is_initialized,
@@ -46,17 +34,12 @@ from .workspace import (
     normalize_project,
     parse_round,
     reindex_revisions,
-    resources_root,
     revision_directory_name,
     rollback_revision,
     round_name,
     start_revision,
-    sync_bibliography,
     temporary_run,
 )
-
-GUIDANCE_USE = re.compile(r"\\guidance\s*\{")
-TEMPLATE_TOKEN = re.compile(r"%%[A-Z0-9_]+%%")
 
 
 @dataclass(frozen=True)
@@ -313,13 +296,6 @@ class ManuscriptProject:
             child = start_revision(latest, target_round, run_dir, reviews_path)
             try:
                 comment_path = target / "response" / "reviewer_comments.md"
-                if reviews_path is None:
-                    template = (
-                        resources_root()
-                        / "reviewer_comments"
-                        / f"reviewer_comments_{child.language}.md"
-                    )
-                    shutil.copy2(template, comment_path)
                 response_source = init_response(child, target_round)
                 creation = finalize_revision_creation(child)
             except Exception:
@@ -387,7 +363,7 @@ class ManuscriptProject:
             audit_reviews(config, selected, record_index=True) if selected > 0 else None
         )
         with temporary_run(self.root, keep_temp) as run_dir:
-            artifacts = _prepare_submission(
+            submission_artifacts = prepare_submission_artifacts(
                 config,
                 selected,
                 run_dir,
@@ -395,6 +371,7 @@ class ManuscriptProject:
                 allow_placeholders,
                 audit,
             )
+        artifacts = [Artifact(item.label, item.path) for item in submission_artifacts]
         return LifecycleResult(
             "submission",
             revision_directory_name(selected),
@@ -417,212 +394,3 @@ class ManuscriptProject:
             allow_placeholders=allow_placeholders,
             keep_temp=keep_temp,
         )
-
-
-def _compile_submission_source(
-    source: Path,
-    name: str,
-    config: ProjectConfig,
-    run_dir: Path,
-    engine: str | None,
-) -> Path:
-    stage = run_dir / f"submission_source_{name}"
-    stage.mkdir(parents=True)
-    if config.language == "zh":
-        stage_cjk_fonts(stage)
-    staged_source = stage / source.name
-    shutil.copy2(source, staged_source)
-    for sibling in source.parent.iterdir():
-        if (
-            sibling.is_file()
-            and sibling != source
-            and sibling.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf"}
-        ):
-            shutil.copy2(sibling, stage / sibling.name)
-    generate_metadata(config.project, config.round_dir(config.current_round), stage)
-    result = compile_tex(
-        staged_source, run_dir / f"submission_build_{name}", config, engine
-    )
-    target = run_dir / "package_stage" / f"{name}.pdf"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(result.pdf, target)
-    return target
-
-
-def _compile_cover_letter(
-    body_source: Path,
-    config: ProjectConfig,
-    run_dir: Path,
-    engine: str | None,
-) -> Path:
-    """Assemble the package-owned cover template with user-owned body content."""
-    stage = run_dir / "cover_source"
-    stage.mkdir(parents=True)
-    if config.language == "zh":
-        stage_cjk_fonts(stage)
-    template_path = (
-        resources_root()
-        / "correspondence_templates"
-        / "cover_letter"
-        / f"cover_letter_{config.language}.tex"
-    )
-    try:
-        template = template_path.read_text(encoding="utf-8")
-        body = body_source.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise WorkflowError(
-            f"Cannot read cover-letter template or body: {body_source}"
-        ) from exc
-    if template.count("%%COVER_BODY%%") != 1:
-        raise WorkflowError(
-            "Cover-letter template must contain one %%COVER_BODY%% token: "
-            f"{template_path}"
-        )
-    staged_source = stage / "cover_letter.tex"
-    staged_source.write_text(template.replace("%%COVER_BODY%%", body), encoding="utf-8")
-    for sibling in body_source.parent.iterdir():
-        if sibling.is_file() and sibling.suffix.lower() in {
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".pdf",
-        }:
-            shutil.copy2(sibling, stage / sibling.name)
-    generate_metadata(config.project, config.round_dir(config.current_round), stage)
-    result = compile_tex(staged_source, run_dir / "cover_build", config, engine)
-    target = run_dir / "package_stage" / "cover_letter.pdf"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(result.pdf, target)
-    return target
-
-
-def _review_comments_available(config: ProjectConfig, round_number: int) -> bool:
-    path = config.round_dir(round_number) / "response" / "reviewer_comments.md"
-    try:
-        return any(block.comments for block in parse_reviews(path))
-    except WorkflowError:
-        return False
-
-
-def _prepare_submission(
-    config: ProjectConfig,
-    round_number: int,
-    run_dir: Path,
-    engine: str | None,
-    allow_placeholders: bool,
-    audit: ReviewAuditResult | None,
-) -> list[Artifact]:
-    del allow_placeholders  # public submission is audit-first and non-blocking.
-    submission = ensure_submission_workspace(config, round_number)
-    selection = resolve_authors(
-        config.metadata,
-        load_author_library(config.references / "authors.yaml"),
-    )
-    resolve_signing_author(
-        config.metadata,
-        selection,
-        require_explicit_multiple=True,
-    )
-    if config.metadata.submission.cover_letter:
-        cover_source = submission / "cover_letter_body.tex"
-        try:
-            cover_text = cover_source.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            raise WorkflowError(f"Cannot read cover letter: {cover_source}") from exc
-        if GUIDANCE_USE.search(cover_text):
-            raise WorkflowError(
-                "Cover letter still contains \\guidance{...} blocks; "
-                "replace or remove them before submission."
-            )
-        unresolved = sorted(set(TEMPLATE_TOKEN.findall(cover_text)))
-        if unresolved:
-            raise WorkflowError(
-                "Cover letter still contains unresolved template placeholders: "
-                + ", ".join(unresolved)
-            )
-    clean = build_clean_manuscript(config, round_number, run_dir, engine)
-    marked: MarkedResult | None = None
-    response_pdf: Path | None = None
-    layout_report: Path | None = None
-    if round_number > 0:
-        marked = build_marked_manuscript(config, round_number, run_dir, engine)
-        layout_report = validate_revision_layout(
-            (run_dir / "clean_build" / "manuscript.compiler.log").read_text(
-                encoding="utf-8"
-            ),
-            (run_dir / "marked_build" / "manuscript_marked.compiler.log").read_text(
-                encoding="utf-8"
-            ),
-            run_dir / "revision_layout_qa.txt",
-        )
-        if _review_comments_available(config, round_number):
-            response_pdf = build_response(
-                config,
-                round_number,
-                marked.locations,
-                run_dir,
-                engine,
-                True,
-            )
-    stage = run_dir / "package_stage"
-    stage.mkdir(parents=True, exist_ok=True)
-    settings = config.metadata.submission
-    if settings.cover_letter:
-        _compile_cover_letter(
-            submission / "cover_letter_body.tex", config, run_dir, engine
-        )
-    if settings.highlights:
-        _compile_submission_source(
-            submission / "highlights.tex", "highlights", config, run_dir, engine
-        )
-    if settings.graphical_abstract:
-        graphical_dir = submission / "graphical_abstract"
-        supplied = graphical_dir / "graphical_abstract.pdf"
-        if supplied.is_file():
-            shutil.copy2(supplied, stage / supplied.name)
-        else:
-            _compile_submission_source(
-                graphical_dir / "graphical_abstract.tex",
-                "graphical_abstract",
-                config,
-                run_dir,
-                engine,
-            )
-    shutil.copy2(clean, stage / "manuscript.pdf")
-    if marked is not None:
-        shutil.copy2(marked.pdf, stage / "marked_manuscript.pdf")
-    if response_pdf is not None:
-        shutil.copy2(response_pdf, stage / "response_letter.pdf")
-    checklist = stage / "checklist.md"
-    shutil.copy2(submission / "checklist.md", checklist)
-    if audit is not None:
-        state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
-        with checklist.open("a", encoding="utf-8") as handle:
-            handle.write(f"\n- Review completeness: **{state}**.\n")
-    package = submission / "package"
-    if package.exists():
-        shutil.rmtree(package)
-    shutil.copytree(stage, package)
-    artifacts = [Artifact("Clean manuscript", clean)]
-    if marked is not None:
-        if layout_report is None:
-            raise WorkflowError("Revision layout QA report was not generated.")
-        legacy_layout_report = (
-            config.round_dir(round_number) / "output" / "revision_layout_qa.txt"
-        )
-        if legacy_layout_report.is_file():
-            legacy_layout_report.unlink()
-        artifacts.append(Artifact("Marked manuscript", marked.pdf))
-    if response_pdf is not None:
-        artifacts.append(Artifact("Response letter", response_pdf))
-    for label, name in (
-        ("Cover letter", "cover_letter.pdf"),
-        ("Highlights", "highlights.pdf"),
-        ("Graphical abstract", "graphical_abstract.pdf"),
-        ("Submission checklist", "checklist.md"),
-    ):
-        path = package / name
-        if path.exists():
-            artifacts.append(Artifact(label, path))
-    artifacts.append(Artifact("Submission package", package))
-    return artifacts

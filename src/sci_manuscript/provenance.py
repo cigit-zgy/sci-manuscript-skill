@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import pairwise
 
-from .response import is_review_id
-from .workspace import WorkflowError
+from .errors import WorkflowError
+from .review_ids import is_review_id
+from .tex import command_at, extract_braced, is_escaped
 
 
 @dataclass(frozen=True)
@@ -26,49 +27,11 @@ class ProvenanceSource:
     review_spans: tuple[ReviewSpan, ...]
 
 
-def _is_escaped(text: str, index: int) -> bool:
-    count = 0
-    cursor = index - 1
-    while cursor >= 0 and text[cursor] == "\\":
-        count += 1
-        cursor -= 1
-    return count % 2 == 1
-
-
-def _skip_space(text: str, start: int) -> int:
-    cursor = start
-    while cursor < len(text) and text[cursor].isspace():
-        cursor += 1
-    return cursor
-
-
-def _extract_braced(text: str, start: int) -> tuple[str, int]:
-    cursor = _skip_space(text, start)
-    if cursor >= len(text) or text[cursor] != "{":
-        raise WorkflowError("Provenance command requires a braced argument.")
-    depth = 0
-    opening = cursor
-    while cursor < len(text):
-        char = text[cursor]
-        if char == "%" and not _is_escaped(text, cursor):
-            newline = text.find("\n", cursor)
-            cursor = len(text) if newline == -1 else newline + 1
-            continue
-        if char == "{" and not _is_escaped(text, cursor):
-            depth += 1
-        elif char == "}" and not _is_escaped(text, cursor):
-            depth -= 1
-            if depth == 0:
-                return text[opening + 1 : cursor], cursor + 1
-        cursor += 1
-    raise WorkflowError("Unbalanced braces in provenance command.")
-
-
-def _command_at(text: str, start: int, name: str) -> bool:
-    if not text.startswith(name, start):
-        return False
-    end = start + len(name)
-    return end >= len(text) or not (text[end].isalnum() or text[end] == "@")
+def _provenance_field(text: str, start: int) -> tuple[str, int]:
+    try:
+        return extract_braced(text, start)
+    except ValueError as exc:
+        raise WorkflowError("Unbalanced braces in provenance command.") from exc
 
 
 def _parse_review_ids(raw: str) -> tuple[str, ...]:
@@ -103,21 +66,23 @@ def extract_provenance(text: str) -> ProvenanceSource:
             length += len(value)
 
         while cursor < len(fragment):
-            if fragment[cursor] == "%" and not _is_escaped(fragment, cursor):
+            if fragment[cursor] == "%" and not is_escaped(fragment, cursor):
                 newline = fragment.find("\n", cursor)
                 end = len(fragment) if newline == -1 else newline + 1
                 append(fragment[cursor:end])
                 cursor = end
                 continue
 
-            if _command_at(fragment, cursor, r"\review"):
+            if command_at(fragment, cursor, "review"):
                 if inside_review:
                     raise WorkflowError(
                         "Nested \\review scopes are ambiguous; combine reviewer IDs "
                         "in one wrapper instead."
                     )
-                ids_raw, after_ids = _extract_braced(fragment, cursor + len(r"\review"))
-                body, end = _extract_braced(fragment, after_ids)
+                ids_raw, after_ids = _provenance_field(
+                    fragment, cursor + len(r"\review")
+                )
+                body, end = _provenance_field(fragment, after_ids)
                 ids = _parse_review_ids(ids_raw)
                 parsed = parse(body, inside_review=True)
                 start = length
@@ -131,12 +96,12 @@ def extract_provenance(text: str) -> ProvenanceSource:
                 continue
 
             transparent = None
-            for name in (r"\user", r"\selfadd"):
-                if _command_at(fragment, cursor, name):
+            for name in ("user", "selfadd"):
+                if command_at(fragment, cursor, name):
                     transparent = name
                     break
             if transparent is not None:
-                body, end = _extract_braced(fragment, cursor + len(transparent))
+                body, end = _provenance_field(fragment, cursor + len(transparent) + 1)
                 parsed = parse(body, inside_review=inside_review)
                 start = length
                 append(parsed.text)

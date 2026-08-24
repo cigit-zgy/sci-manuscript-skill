@@ -70,9 +70,9 @@ publisher resource only to diagnose that exact publisher build.
 - Character refinement is permitted only for TeX-structure-free prose with
   `SequenceMatcher` similarity at least `0.70` and a maximum replacement size
   of `2000` characters. Otherwise the replacement remains atomic.
-- Display mathematics uses whole-equation structural comparison. Text line
-  decorations never scan mathematical content; math changes use semantic color
-  only.
+- Display and inline mathematics use fine-grained structural comparison with
+  `latexdiff --math-markup=FINE`. Text decorators never scan mathematical
+  content; math changes use the same semantic colors as prose.
 - Every revision `build` and `submission` audits
   `reviewer_comments.md <-> responses.tex <-> \review{...}`. Missing responses,
   orphan responses, orphan provenance references, empty comments, invalid input,

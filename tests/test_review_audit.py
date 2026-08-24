@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,13 @@ import pytest
 from sci_manuscript import ManuscriptProject
 from sci_manuscript.api import LifecycleResult
 from sci_manuscript.cli import _print_lifecycle
-from sci_manuscript.metadata import ManuscriptMetadata, SubmissionSettings
+from sci_manuscript.diff import MarkedResult
+from sci_manuscript.metadata import (
+    ManuscriptMetadata,
+    SubmissionSettings,
+    load_meta,
+    save_meta,
+)
 from sci_manuscript.response import audit_reviews, parse_reviews
 from sci_manuscript.workspace import ProjectConfig, initialize_project
 
@@ -205,6 +212,115 @@ def test_empty_comments_with_review_macro_produces_nonblocking_audit(
     assert ("COMMENTS_EMPTY", None) in codes
     assert ("ORPHAN_REVIEW_REFERENCE", "1-1") in codes
     assert audit.comment_path.name == "reviewer_comments.md"
+
+
+@pytest.mark.parametrize("pending_id", ("2-1", "invalid"))
+def test_malformed_pending_marker_produces_nonblocking_response_issue(
+    tmp_path: Path,
+    pending_id: str,
+) -> None:
+    config = _project(tmp_path)
+    ManuscriptProject(config.project).start_revision(confirmed=True)
+    version = config.project / "revision_01"
+    comments = version / "response" / "reviewer_comments.md"
+    comments.write_text(
+        "# Reviewer #1\n\n1. First comment.\n",
+        encoding="utf-8",
+    )
+    responses = version / "response" / "responses.tex"
+    responses.write_text(
+        f"\\Response{{1-1}}{{\\ResponsePending{{{pending_id}}}}}\n",
+        encoding="utf-8",
+    )
+
+    audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
+
+    issue = next(item for item in audit.issues if item.code == "RESPONSES_INVALID")
+    assert issue.paths == (responses.resolve(),)
+    assert not audit.is_complete
+
+
+def test_submission_skips_untrusted_response_pdf_but_packages_manuscripts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _project(tmp_path)
+    ManuscriptProject(config.project).start_revision(confirmed=True)
+    version = config.project / "revision_01"
+    metadata = replace(
+        load_meta(version / "meta.yaml"),
+        submission=SubmissionSettings(False, False, False),
+    )
+    save_meta(version / "meta.yaml", metadata)
+    comments = version / "response" / "reviewer_comments.md"
+    comments.write_text("# Reviewer #1\n\n1. First comment.\n", encoding="utf-8")
+    responses = version / "response" / "responses.tex"
+    responses.write_text(
+        "\\Response{1-1}{\\ResponsePending{2-1}}\n",
+        encoding="utf-8",
+    )
+
+    import sci_manuscript.submission as submission_module
+
+    def fake_clean(
+        config: ProjectConfig,
+        round_number: int,
+        run_dir: Path,
+        engine: str | None,
+    ) -> Path:
+        del engine
+        output = config.output_dir(round_number) / "manuscript_clean.pdf"
+        output.parent.mkdir(exist_ok=True)
+        output.write_bytes(b"clean")
+        build = run_dir / "clean_build"
+        build.mkdir()
+        (build / "manuscript.compiler.log").write_text("", encoding="utf-8")
+        return output
+
+    def fake_marked(
+        config: ProjectConfig,
+        round_number: int,
+        run_dir: Path,
+        engine: str | None,
+    ) -> MarkedResult:
+        del engine
+        output = config.output_dir(round_number) / "manuscript_marked.pdf"
+        output.write_bytes(b"marked")
+        build = run_dir / "marked_build"
+        build.mkdir()
+        (build / "manuscript_marked.compiler.log").write_text("", encoding="utf-8")
+        return MarkedResult(output, {})
+
+    def fake_layout(clean: str, marked: str, report: Path) -> Path:
+        del clean, marked
+        report.write_text("Result: PASS\n", encoding="utf-8")
+        return report
+
+    monkeypatch.setattr(submission_module, "build_clean_manuscript", fake_clean)
+    monkeypatch.setattr(submission_module, "build_marked_manuscript", fake_marked)
+    monkeypatch.setattr(submission_module, "validate_revision_layout", fake_layout)
+    monkeypatch.setattr(
+        submission_module,
+        "build_response",
+        lambda *args, **kwargs: pytest.fail("malformed responses must not compile"),
+    )
+
+    result = ManuscriptProject(config.project).prepare_submission()
+
+    assert result.review_audit is not None
+    assert any(
+        issue.code == "RESPONSES_INVALID" for issue in result.review_audit.issues
+    )
+    package = version / "submission" / "package"
+    assert (package / "manuscript.pdf").is_file()
+    assert (package / "marked_manuscript.pdf").is_file()
+    assert not (package / "response_letter.pdf").exists()
+    assert "INCOMPLETE" in (package / "checklist.md").read_text(encoding="utf-8")
+    assert {path.name for path in config.output_dir(1).iterdir()} == {
+        "manuscript_clean.pdf",
+        "manuscript_marked.pdf",
+    }
+    assert all(path.suffix == ".pdf" for path in config.output_dir(1).iterdir())
 
 
 def test_review_id_drift_is_detected_after_first_recorded_mapping(

@@ -12,8 +12,8 @@ import pytest
 from sci_manuscript import ManuscriptProject, doctor, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
 from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, REVISION_RUNTIME
+from sci_manuscript.submission import ensure_submission_workspace
 from sci_manuscript.workspace import (
-    ensure_submission_workspace,
     load_project,
     source_digest,
 )

@@ -36,10 +36,10 @@ from sci_manuscript.response import (
     pending_response_ids,
     validate_review_id_list,
 )
+from sci_manuscript.submission import ensure_submission_workspace
 from sci_manuscript.workspace import (
     ProjectConfig,
     WorkflowError,
-    ensure_submission_workspace,
     finalize_revision_creation,
     initialize_project,
     reindex_revisions,
@@ -133,6 +133,18 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert (root.parent / "unrelated.txt").read_text() == "preserve"
     assert not (root / "run.py").exists()
     assert not (root / "tmp").exists()
+    assert config.output_dir(0) == root / "initial_submission" / "output"
+    assert config.response_dir(1) == root / "revision_01" / "response"
+    assert config.submission_dir(1) == root / "revision_01" / "submission"
+    assert config.state_dir(1) == root / "state" / "revision_01"
+    assert config.review_index_path(1) == (
+        root / "state" / "revision_01" / "review_index.yaml"
+    )
+    assert config.creation_record_path(1) == (
+        root / "state" / "revision_01" / "creation.yaml"
+    )
+    assert config.tmp_root() == root / "tmp"
+    assert config.archive_root() == root / "00_archive"
     assert {path.name for path in (root / "references").iterdir()} == {
         "authors.yaml",
         "references.bib",
@@ -284,7 +296,8 @@ def test_revision_contract_and_parent_integrity(tmp_path: Path) -> None:
     assert before == source_digest(r00.round_dir(0), scientific_only=True)
     assert r01.round_dir(1).name == "revision_01"
     assert load_meta(r01.round_dir(1) / "meta.yaml").parent_round == 0
-    assert (r01.round_dir(1) / "revision_creation.yaml").is_file()
+    assert r01.creation_record_path(1).is_file()
+    assert not (r01.round_dir(1) / "revision_creation.yaml").exists()
     assert not (r01.round_dir(1) / "references").exists()
     assert not any((r01.round_dir(1) / "output").iterdir())
     assert not any((r01.round_dir(1) / "submission").iterdir())
@@ -298,6 +311,10 @@ def test_rollback_success_and_refusal(tmp_path: Path) -> None:
     result = project.rollback(confirmed=True)
     assert result.version == "initial_submission"
     assert result.artifacts[0].path.is_dir()
+    assert not (project.root / "state" / "revision_01").exists()
+    assert (
+        result.artifacts[0].path.parent / "state" / "revision_01" / "creation.yaml"
+    ).is_file()
     r01 = _revision(ProjectConfig(project.root, _metadata()))
     section = r01.round_dir(1) / "sections" / "01_introduction.tex"
     section.write_text(section.read_text() + "\nUser edit.\n", encoding="utf-8")
@@ -323,6 +340,11 @@ def test_reindex_success_preserves_scientific_bytes(tmp_path: Path) -> None:
     assert source_digest(r03.round_dir(1), scientific_only=True) == before[2]
     assert source_digest(r03.round_dir(2), scientific_only=True) == before[3]
     assert load_meta(r03.round_dir(1) / "meta.yaml").round_number == 1
+    assert r03.creation_record_path(1).is_file()
+    assert r03.creation_record_path(2).is_file()
+    assert not (r03.round_dir(1) / "revision_creation.yaml").exists()
+    assert not (r03.round_dir(2) / "revision_creation.yaml").exists()
+    assert not r03.state_dir(3).exists()
     assert load_meta(r03.round_dir(2) / "meta.yaml").round_number == 2
     assert any((r03.project / "00_archive").iterdir())
 

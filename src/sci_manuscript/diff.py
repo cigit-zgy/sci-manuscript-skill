@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import collections
 import re
 import shutil
 from dataclasses import dataclass
@@ -10,15 +9,17 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from .compile import compile_tex, run_command, stage_runtime_resources
+from .errors import WorkflowError
+from .locations import REVIEW_REGISTRY_HEADER as REVIEW_REGISTRY_HEADER
+from .locations import build_review_locations, calculate_locations
 from .provenance import ProvenanceSource, extract_provenance, split_by_review_provenance
-from .response import is_review_id
-from .workspace import ProjectConfig, WorkflowError, strip_provenance_wrappers
+from .templates import resources_root
+from .tex import extract_braced, is_escaped
+from .workspace import ProjectConfig, strip_provenance_wrappers
 
 INPUT_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
-LABEL_PATTERN = re.compile(r"\\newlabel\{review:(\d+):(start|end)\}\{\{(\d+)\}")
 DIF_COMMENT_PATTERN = re.compile(r"(?m)^%DIF[^\n]*(?:\n|$)")
 DIF_CONTROL_PATTERN = re.compile(r"\\DIF(?:add|del|mod)(?:begin|end)(?:FL)?\s*")
-REVIEW_REGISTRY_HEADER = "sci-manuscript-reviewloc-v2"
 STYLE_BEGIN = "% SCI_DIFF_STYLE_BEGIN"
 STYLE_END = "% SCI_DIFF_STYLE_END"
 CHARACTER_REFINEMENT_THRESHOLD = 0.70
@@ -34,121 +35,9 @@ CHINESE_TEXT_COMMANDS = (
     "entitle",
 )
 
-_REVISION_RUNTIME_TEMPLATE = r"""
-% Internal marked-manuscript runtime. Reviewer provenance has already been
-% classified in Python; TeX only renders deterministic semantic macros.
-\RequirePackage{lineno}
-\RequirePackage[normalem]{ulem}
-%%CJK_REVISION_PACKAGE%%
-\RequirePackage{xcolor}
-\AtBeginDocument{\linenumbers}
-
-\newbox\RevisionMathMeasureBox
-\newcommand{\RevisionMathStyle}{\ifinner\textstyle\else\displaystyle\fi}
-\newcommand{\RevisionGobble}[1]{}
-\newcommand{\RevisionMeasureMath}[1]{%
-  \setbox\RevisionMathMeasureBox=\hbox{\mathsurround=0pt$\RevisionMathStyle
-    \let\label\RevisionGobble #1$}%
-}
-\newcommand{\RevisionMathStrikeout}[2]{%
-  \begingroup
-    \RevisionMeasureMath{#2}%
-    \dimen0=.5\ht\RevisionMathMeasureBox
-    \advance\dimen0 by -.5\dp\RevisionMathMeasureBox
-    \rlap{\raise\dimen0\hbox{\color{#1}%
-      \rule{\wd\RevisionMathMeasureBox}{\RevisionDeletionThickness}}}%
-    {\color{#1}#2}%
-  \endgroup
-}
-\providecommand{\DIFaddMath}[1]{%
-  {\RevisionAddedFont\color{RevisionAddedColor}#1}%
-}
-\providecommand{\DIFaddReviewMath}[1]{%
-  {\RevisionReviewFont\color{RevisionReviewColor}#1}%
-}
-\providecommand{\DIFdelMath}[1]{%
-  {\RevisionDeletedFont\RevisionMathStrikeout{RevisionDeletedColor}{#1}}%
-}
-\providecommand{\DIFadd}[1]{%
-  \ifmmode
-    \DIFaddMath{#1}%
-  \else
-    \RevisionAddedBackground{{\RevisionAddedFont\color{RevisionAddedColor}#1}}%
-  \fi}
-\providecommand{\DIFaddReview}[1]{%
-  \ifmmode
-    \DIFaddReviewMath{#1}%
-  \else
-    \RevisionReviewBackground{{\RevisionReviewFont\color{RevisionReviewColor}#1}}%
-  \fi}
-\providecommand{\DIFdel}[1]{%
-  \ifmmode
-    \DIFdelMath{#1}%
-  \else
-    \RevisionDeletedBackground{{\RevisionDeletedFont\color{RevisionDeletedColor}%
-      \RevisionDeletedStrikeout{#1}}}%
-  \fi}
-\providecommand{\DIFaddbegin}{}
-\providecommand{\DIFaddend}{}
-\providecommand{\DIFdelbegin}{}
-\providecommand{\DIFdelend}{}
-\providecommand{\DIFmodbegin}{}
-\providecommand{\DIFmodend}{}
-\providecommand{\DIFaddFL}[1]{\DIFadd{#1}}
-\providecommand{\DIFaddReviewFL}[1]{\DIFaddReview{#1}}
-\providecommand{\DIFdelFL}[1]{\DIFdel{#1}}
-\providecommand{\DIFaddbeginFL}{}
-\providecommand{\DIFaddendFL}{}
-\providecommand{\DIFdelbeginFL}{}
-\providecommand{\DIFdelendFL}{}
-\providecommand{\review}[2]{#2}
-\providecommand{\user}[1]{#1}
-\providecommand{\selfadd}[1]{#1}
-
-% Keep the historical empty registry contract for standalone runtime probes.
-% Real reviewer locations are compiled independently and copied over this file.
-\newwrite\MarkedReviewLocationFile
-\AtBeginDocument{%
-  \immediate\openout\MarkedReviewLocationFile=\jobname.reviewloc
-  \immediate\write\MarkedReviewLocationFile{sci-manuscript-reviewloc-v2}%
-}
-\AtEndDocument{\immediate\closeout\MarkedReviewLocationFile}
-"""
-
-_LOCATION_RUNTIME = rf"""
-% Internal reviewer-location runtime. It never changes text color.
-\RequirePackage{{lineno}}
-\AtBeginDocument{{\linenumbers}}
-\newcounter{{reviewblock}}
-\newwrite\ReviewLocationFile
-\AtBeginDocument{{%
-  \immediate\openout\ReviewLocationFile=\jobname.reviewloc
-  \immediate\write\ReviewLocationFile{{{REVIEW_REGISTRY_HEADER}}}%
-}}
-\AtEndDocument{{\immediate\closeout\ReviewLocationFile}}
-\newcommand{{\ReviewLineLabel}}[1]{{%
-  \begingroup
-  \edef\ReviewExpandedLabel{{#1}}%
-  \expandafter\endgroup
-  \expandafter\linelabel\expandafter{{\ReviewExpandedLabel}}%
-}}
-\providecommand{{\review}}[2]{{#2}}
-\providecommand{{\user}}[1]{{#1}}
-\providecommand{{\selfadd}}[1]{{#1}}
-\AtBeginDocument{{%
-  \renewcommand{{\review}}[2]{{%
-    \stepcounter{{reviewblock}}%
-    \edef\ReviewBlockID{{\arabic{{reviewblock}}}}%
-    \leavevmode
-    \ReviewLineLabel{{review:\ReviewBlockID:start}}%
-    #2%
-    \ReviewLineLabel{{review:\ReviewBlockID:end}}%
-    \immediate\write\ReviewLocationFile{{#1|\ReviewBlockID}}%
-  }}%
-  \renewcommand{{\user}}[1]{{#1}}%
-  \renewcommand{{\selfadd}}[1]{{#1}}%
-}}
-"""
+_REVISION_RUNTIME_TEMPLATE = (
+    resources_root() / "revision" / "marked_runtime.tex"
+).read_text(encoding="utf-8")
 
 REVISION_RUNTIME = _REVISION_RUNTIME_TEMPLATE.replace("%%CJK_REVISION_PACKAGE%%", "")
 
@@ -219,34 +108,13 @@ def _copy_resources(config: ProjectConfig, target: Path) -> None:
     )
 
 
-def _is_escaped(text: str, index: int) -> bool:
-    count = 0
-    cursor = index - 1
-    while cursor >= 0 and text[cursor] == "\\":
-        count += 1
-        cursor -= 1
-    return count % 2 == 1
-
-
-def _extract_braced(text: str, start: int) -> tuple[str, int]:
-    if start >= len(text) or text[start] != "{":
-        raise WorkflowError("Internal diff parser expected an opening brace.")
-    depth = 0
-    cursor = start
-    while cursor < len(text):
-        char = text[cursor]
-        if char == "%" and not _is_escaped(text, cursor):
-            newline = text.find("\n", cursor)
-            cursor = len(text) if newline == -1 else newline + 1
-            continue
-        if char == "{" and not _is_escaped(text, cursor):
-            depth += 1
-        elif char == "}" and not _is_escaped(text, cursor):
-            depth -= 1
-            if depth == 0:
-                return text[start + 1 : cursor], cursor + 1
-        cursor += 1
-    raise WorkflowError("Unbalanced braces while processing revision diff output.")
+def _diff_field(text: str, start: int) -> tuple[str, int]:
+    try:
+        return extract_braced(text, start)
+    except ValueError as exc:
+        raise WorkflowError(
+            "Unbalanced braces while processing revision diff output."
+        ) from exc
 
 
 def _split_diff_segments(text: str) -> list[_DiffSegment]:
@@ -272,7 +140,7 @@ def _split_diff_segments(text: str) -> list[_DiffSegment]:
         index, macro, kind = min(candidates, key=lambda item: item[0])
         if index > cursor:
             segments.append(_DiffSegment("plain", text[cursor:index]))
-        content, end = _extract_braced(text, index + len(macro))
+        content, end = _diff_field(text, index + len(macro))
         segments.append(_DiffSegment(kind, content, macro))
         cursor = end
     return segments
@@ -497,7 +365,7 @@ def _find_inline_math_end(text: str, start: int) -> int | None:
     else:
         return None
     while cursor < len(text):
-        if text.startswith(delimiter, cursor) and not _is_escaped(text, cursor):
+        if text.startswith(delimiter, cursor) and not is_escaped(text, cursor):
             return cursor + len(delimiter)
         cursor += 1
     raise WorkflowError("Unbalanced inline mathematics in revision diff markup.")
@@ -515,12 +383,12 @@ def _split_inline_math(content: str, macro: str) -> str:
     cursor = 0
     found = False
     while cursor < len(content):
-        if content[cursor] == "%" and not _is_escaped(content, cursor):
+        if content[cursor] == "%" and not is_escaped(content, cursor):
             newline = content.find("\n", cursor)
             cursor = len(content) if newline == -1 else newline + 1
             continue
         is_math = (
-            content[cursor] == "$" and not _is_escaped(content, cursor)
+            content[cursor] == "$" and not is_escaped(content, cursor)
         ) or content.startswith(r"\(", cursor)
         if not is_math:
             cursor += 1
@@ -563,7 +431,7 @@ def _separate_inline_math_from_diff_markup(text: str) -> str:
             break
         index, macro = min(matches, key=lambda item: item[0])
         output.append(text[cursor:index])
-        content, end = _extract_braced(text, index + len(macro))
+        content, end = _diff_field(text, index + len(macro))
         output.append(_split_inline_math(content, macro))
         cursor = end
     return "".join(output)
@@ -576,7 +444,7 @@ def _math_atoms(body: str) -> list[str] | None:
     while cursor < len(body):
         if body[cursor] == "{":
             try:
-                _, end = _extract_braced(body, cursor)
+                _, end = _diff_field(body, cursor)
             except WorkflowError:
                 return None
             atoms.append(body[cursor:end])
@@ -649,7 +517,7 @@ def _refine_inline_math_replacements(text: str) -> str:
         if start < 0:
             output.append(text[cursor:])
             break
-        old, old_end = _extract_braced(text, start + len(deleted_macro))
+        old, old_end = _diff_field(text, start + len(deleted_macro))
         candidates = [(text.find(f"{macro}{{", old_end), macro) for macro in additions]
         candidates = [item for item in candidates if item[0] >= 0]
         if not candidates:
@@ -661,7 +529,7 @@ def _refine_inline_math_replacements(text: str) -> str:
             output.append(text[cursor:old_end])
             cursor = old_end
             continue
-        new, add_end = _extract_braced(text, add_start + len(add_macro))
+        new, add_end = _diff_field(text, add_start + len(add_macro))
         refined = _render_inline_math_refinement(old, new, add_macro)
         if refined is None:
             output.append(text[cursor:old_end])
@@ -672,131 +540,7 @@ def _refine_inline_math_replacements(text: str) -> str:
     return "".join(output)
 
 
-def _parse_registry(path: Path) -> list[tuple[str, int]]:
-    if not path.exists():
-        raise WorkflowError(f"Location build did not create a review registry: {path}")
-    records: list[tuple[str, int]] = []
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line or (number == 1 and line == REVIEW_REGISTRY_HEADER):
-            continue
-        fields = line.split("|")
-        if len(fields) != 2 or not fields[1].isdigit():
-            raise WorkflowError(f"Malformed review registry at line {number}: {raw}")
-        records.append((fields[0], int(fields[1])))
-    return records
-
-
-def _parse_labels(path: Path) -> dict[tuple[int, str], int]:
-    if not path.exists():
-        raise WorkflowError(
-            f"Location build did not create a line-number AUX file: {path}"
-        )
-    labels: dict[tuple[int, str], int] = {}
-    text = path.read_text(encoding="utf-8", errors="replace")
-    for block, edge, line in LABEL_PATTERN.findall(text):
-        labels[(int(block), edge)] = int(line)
-    return labels
-
-
-def _format_locations(ranges: list[tuple[int, int]], language: str) -> str:
-    """Format line ranges as one complete Chinese or English phrase."""
-    if not ranges:
-        return "位置不可用" if language == "zh" else "Location unavailable"
-    if language == "zh":
-        parts = [
-            f"第 {start if start == end else f'{start}--{end}'} 行"
-            for start, end in ranges
-        ]
-        if len(parts) == 1:
-            return parts[0]
-        return (
-            "和".join(parts)
-            if len(parts) == 2
-            else "、".join(parts[:-1]) + "和" + parts[-1]
-        )
-    values = [
-        str(start) if start == end else f"{start}--{end}" for start, end in ranges
-    ]
-    if len(values) == 1:
-        prefix = "Line" if ranges[0][0] == ranges[0][1] else "Lines"
-        return f"{prefix} {values[0]}"
-    joined = (
-        f"{values[0]} and {values[1]}"
-        if len(values) == 2
-        else f"{', '.join(values[:-1])}, and {values[-1]}"
-    )
-    return f"Lines {joined}"
-
-
-def _calculate_locations(
-    build_dir: Path,
-    stem: str = "manuscript_marked",
-    language: str = "en",
-) -> dict[str, str]:
-    registry = _parse_registry(build_dir / f"{stem}.reviewloc")
-    labels = _parse_labels(build_dir / f"{stem}.aux")
-    by_comment: dict[str, list[tuple[int, int]]] = collections.defaultdict(list)
-    for ids, block in registry:
-        start = labels.get((block, "start"))
-        end = labels.get((block, "end"))
-        if start is None or end is None:
-            raise WorkflowError(f"Line labels are missing for reviewer block {block}.")
-        location = (start, end)
-        for review_id in (item.strip() for item in ids.split(",")):
-            if not is_review_id(review_id):
-                raise WorkflowError(
-                    f"Invalid reviewer ID {review_id!r}; expected E-1 or 1-1."
-                )
-            if location not in by_comment[review_id]:
-                by_comment[review_id].append(location)
-    return {
-        key: _format_locations(value, language) for key, value in by_comment.items()
-    }
-
-
-def _build_review_locations(
-    config: ProjectConfig,
-    round_number: int,
-    run_dir: Path,
-    engine_override: str | None,
-) -> dict[str, str]:
-    """Compile transparent review wrappers solely to calculate response locations."""
-    source_dir = run_dir / "location_source"
-    source = stage_runtime_resources(
-        config,
-        round_number,
-        source_dir,
-        include_manuscript=True,
-    )
-    runtime = source_dir / "revision_location_runtime.tex"
-    runtime.write_text(_LOCATION_RUNTIME, encoding="utf-8")
-    text = source.read_text(encoding="utf-8")
-    marker = r"\begin{document}"
-    if marker not in text:
-        raise WorkflowError("Manuscript source does not contain \\begin{document}.")
-    source.write_text(
-        text.replace(marker, f"\\input{{revision_location_runtime.tex}}\n{marker}", 1),
-        encoding="utf-8",
-    )
-    build_dir = run_dir / "location_build"
-    compile_tex(
-        source,
-        build_dir,
-        config,
-        engine_override,
-        keep_intermediates=True,
-    )
-    locations = _calculate_locations(build_dir, source.stem, config.language)
-
-    # Preserve the historical retained-run paths for downstream diagnostics.
-    marked_build = run_dir / "marked_build"
-    marked_build.mkdir(exist_ok=True)
-    for suffix in ("reviewloc", "aux"):
-        candidate = build_dir / f"{source.stem}.{suffix}"
-        if candidate.exists():
-            shutil.copy2(candidate, marked_build / f"manuscript_marked.{suffix}")
-    return locations
+_calculate_locations = calculate_locations
 
 
 def build_marked_manuscript(
@@ -880,13 +624,13 @@ def build_marked_manuscript(
     if not extracted_text.exists() or extracted_text.stat().st_size == 0:
         raise WorkflowError("Marked PDF text extraction produced no text.")
 
-    locations = _build_review_locations(
+    locations = build_review_locations(
         config,
         round_number,
         run_dir,
         engine_override,
     )
-    output = current / "output" / "manuscript_marked.pdf"
+    output = config.output_dir(round_number) / "manuscript_marked.pdf"
     output.parent.mkdir(exist_ok=True)
     shutil.copy2(compiled.pdf, output)
     return MarkedResult(pdf=output, locations=locations)
