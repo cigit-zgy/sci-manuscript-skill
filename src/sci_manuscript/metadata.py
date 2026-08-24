@@ -95,7 +95,6 @@ class ManuscriptMetadata:
     other_authors: tuple[str, ...]
     submission: SubmissionSettings = SubmissionSettings()
     correspondence: CorrespondenceSettings = CorrespondenceSettings()
-    author_order: tuple[str, ...] = ()
     title_zh: str = ""
     title_en: str = ""
     abstract_zh: str = ""
@@ -108,8 +107,6 @@ class ManuscriptMetadata:
     @property
     def author_ids(self) -> tuple[str, ...]:
         """Return publication order while preserving permitted role overlap."""
-        if self.author_order:
-            return self.author_order
         ordered = (
             *self.first_authors,
             *self.other_authors,
@@ -362,85 +359,26 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         "frontmatter.author_biographies",
         required=False,
     )
-    author_order: tuple[str, ...]
-    first_authors: tuple[str, ...]
-    corresponding_authors: tuple[str, ...]
-    other_authors: tuple[str, ...]
-    if "first" in authors or "other" in authors:
-        unexpected_authors = set(authors) - {"first", "corresponding", "other"}
-        if unexpected_authors:
-            raise MetadataError(
-                "Canonical authors schema contains unsupported keys: "
-                + ", ".join(sorted(unexpected_authors))
-            )
-        author_order = ()
-        first_authors = _author_group(
-            authors.get("first"), "authors.first", required=True
+    unexpected_authors = set(authors) - {"first", "corresponding", "other"}
+    if unexpected_authors:
+        raise MetadataError(
+            "Canonical authors schema contains unsupported keys: "
+            + ", ".join(sorted(unexpected_authors))
         )
-        corresponding_authors = _author_group(
-            authors.get("corresponding"),
-            "authors.corresponding",
-            required=True,
-        )
-        other_authors = _author_group(
-            authors.get("other", []), "authors.other", required=False
-        )
-        duplicate_roles = set(first_authors) & set(other_authors)
-        if duplicate_roles:
-            raise MetadataError(
-                "authors.first and authors.other must not overlap: "
-                + ", ".join(sorted(duplicate_roles))
-            )
-    elif "order" in authors:
-        unexpected_authors = set(authors) - {"order", "corresponding"}
-        if unexpected_authors:
-            raise MetadataError(
-                "Released authors schema cannot mix keys: "
-                + ", ".join(sorted(unexpected_authors))
-            )
-        author_order = _author_group(
-            authors.get("order"), "authors.order", required=True
-        )
-        corresponding_authors = _author_group(
-            authors.get("corresponding"),
-            "authors.corresponding",
-            required=True,
-        )
-        missing_corresponding = set(corresponding_authors) - set(author_order)
-        if missing_corresponding:
-            raise MetadataError(
-                "authors.corresponding must be present in authors.order: "
-                + ", ".join(sorted(missing_corresponding))
-            )
-        first_authors = author_order[:1]
-        other_authors = tuple(
-            author_id
-            for author_id in author_order[1:]
-            if author_id not in corresponding_authors
-        )
-    else:
-        unexpected_authors = set(authors) - {
-            "first_author",
-            "corresponding_author",
-            "other_author",
-        }
-        if unexpected_authors:
-            raise MetadataError(
-                "Unsupported authors keys: " + ", ".join(sorted(unexpected_authors))
-            )
-        author_order = ()
-        first_authors = _author_group(
-            authors.get("first_author"), "authors.first_author", required=True
-        )
-        corresponding_authors = _author_group(
-            authors.get("corresponding_author"),
-            "authors.corresponding_author",
-            required=True,
-        )
-        other_authors = _author_group(
-            authors.get("other_author", []),
-            "authors.other_author",
-            required=False,
+    first_authors = _author_group(authors.get("first"), "authors.first", required=True)
+    corresponding_authors = _author_group(
+        authors.get("corresponding"),
+        "authors.corresponding",
+        required=True,
+    )
+    other_authors = _author_group(
+        authors.get("other", []), "authors.other", required=False
+    )
+    duplicate_roles = set(first_authors) & set(other_authors)
+    if duplicate_roles:
+        raise MetadataError(
+            "authors.first and authors.other must not overlap: "
+            + ", ".join(sorted(duplicate_roles))
         )
     unknown_biographies = set(author_biographies) - {
         *first_authors,
@@ -523,7 +461,6 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         other_authors=other_authors,
         submission=submission,
         correspondence=correspondence,
-        author_order=author_order,
         title_zh=title_zh,
         title_en=title_en,
         abstract_zh=abstract_zh,
@@ -541,18 +478,11 @@ def _metadata_data(metadata: ManuscriptMetadata) -> dict[str, Any]:
         "language": metadata.language,
         "article_type": metadata.article_type,
     }
-    authors: dict[str, Any]
-    if metadata.author_order:
-        authors = {
-            "order": list(metadata.author_order),
-            "corresponding": list(metadata.corresponding_authors),
-        }
-    else:
-        authors = {
-            "first": list(metadata.first_authors),
-            "corresponding": list(metadata.corresponding_authors),
-            "other": list(metadata.other_authors),
-        }
+    authors = {
+        "first": list(metadata.first_authors),
+        "corresponding": list(metadata.corresponding_authors),
+        "other": list(metadata.other_authors),
+    }
     return {
         "revision": {
             "round": round_name(metadata.round_number),
@@ -629,25 +559,16 @@ def _add_meta_comments(data: CommentedMap) -> None:
         before="Packaged publisher resource key: chinese, elsevier, nature, or acs.",
     )
     authors = data["authors"]
-    if "order" in authors:
-        authors.yaml_set_comment_before_after_key(
-            "order", before="Publication order; the first ID is the first author."
-        )
-        authors.yaml_set_comment_before_after_key(
-            "corresponding",
-            before="Corresponding-author IDs; each must occur in order.",
-        )
-    else:
-        authors.yaml_set_comment_before_after_key(
-            "first", before="First-author IDs from the active authors.yaml."
-        )
-        authors.yaml_set_comment_before_after_key(
-            "corresponding",
-            before="Corresponding-author IDs; email is required in authors.yaml.",
-        )
-        authors.yaml_set_comment_before_after_key(
-            "other", before="Remaining author IDs in publication order."
-        )
+    authors.yaml_set_comment_before_after_key(
+        "first", before="First-author IDs from the active authors.yaml."
+    )
+    authors.yaml_set_comment_before_after_key(
+        "corresponding",
+        before="Corresponding-author IDs; email is required in authors.yaml.",
+    )
+    authors.yaml_set_comment_before_after_key(
+        "other", before="Remaining author IDs in publication order."
+    )
     frontmatter = data["frontmatter"]
     frontmatter.yaml_set_comment_before_after_key(
         "funding", before="Funding acknowledgements rendered by the publisher class."

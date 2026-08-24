@@ -6,8 +6,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
+    MetadataError,
     SubmissionSettings,
     load_author_library,
     load_meta,
@@ -16,6 +19,17 @@ from sci_manuscript.metadata import (
     save_meta,
 )
 from sci_manuscript.templates import resources_root
+
+
+def _legacy_role_schema() -> str:
+    first = "_".join(("first", "author"))
+    corresponding = "_".join(("corresponding", "author"))
+    other = "_".join(("other", "author"))
+    return (
+        f"  {first}: [zhao_guangyao]\n"
+        f"  {corresponding}: [liu_hong]\n"
+        f"  {other}: [yin_fengjun]"
+    )
 
 
 def _write_meta(path: Path, authors: str) -> None:
@@ -89,23 +103,38 @@ def test_canonical_meta_contains_workflow_fields_without_manuscript_text(
     assert "  order:" not in text
 
 
-def test_released_order_schema_remains_readable(tmp_path: Path) -> None:
-    path = tmp_path / "legacy.yaml"
-    _write_meta(
-        path,
+@pytest.mark.parametrize(
+    "authors",
+    (
         "  order: [zhao_guangyao, yin_fengjun, liu_hong]\n  corresponding: [liu_hong]",
-    )
+        _legacy_role_schema(),
+    ),
+)
+def test_noncanonical_authors_schemas_are_rejected(
+    tmp_path: Path,
+    authors: str,
+) -> None:
+    path = tmp_path / "legacy.yaml"
+    _write_meta(path, authors)
 
-    metadata = load_meta(path)
+    with pytest.raises(MetadataError, match="Canonical authors schema"):
+        load_meta(path)
 
-    assert metadata.author_ids == (
-        "zhao_guangyao",
-        "yin_fengjun",
-        "liu_hong",
-    )
-    assert metadata.first_authors == ("zhao_guangyao",)
-    assert metadata.corresponding_authors == ("liu_hong",)
-    assert metadata.other_authors == ("yin_fengjun",)
+
+@pytest.mark.parametrize(
+    "authors",
+    (
+        "  first: zhao_guangyao\n  corresponding: [liu_hong]\n  other: [yin_fengjun]",
+        "  first: [zhao_guangyao]\n  corresponding: liu_hong\n  other: [yin_fengjun]",
+        "  first: [zhao_guangyao]\n  corresponding: [liu_hong]\n  other: yin_fengjun",
+    ),
+)
+def test_author_roles_must_be_lists(tmp_path: Path, authors: str) -> None:
+    path = tmp_path / "scalar.yaml"
+    _write_meta(path, authors)
+
+    with pytest.raises(MetadataError, match=r"must be .*list"):
+        load_meta(path)
 
 
 def test_funding_and_selected_multiple_author_biographies_render() -> None:

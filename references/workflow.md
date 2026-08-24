@@ -57,9 +57,9 @@ directory (macOS: `~/Library/Application Support/sci-manuscript/authors.yaml`).
 The parameter-rich interactive init lists every configured ID with English and
 Chinese names and asks separately for first, corresponding, and other IDs.
 Multiple IDs and first/corresponding overlap are valid. The new metadata schema
-stores `authors.order` and `authors.corresponding`; it never duplicates names,
-email, affiliations, or bilingual biographies. Every author library stays
-role-free.
+stores the list-valued `authors.first`, `authors.corresponding`, and
+`authors.other` roles; it never duplicates names, email, affiliations, or
+bilingual biographies. Every author library stays role-free.
 
 ```bash
 sci-manuscript init \
@@ -70,8 +70,8 @@ sci-manuscript init \
   --language en \
   --article-type "Research Article" \
   --authors /absolute/path/to/authors.yaml \
-  --first-author first_author \
-  --corresponding-author corresponding_author \
+  --first-author author_one \
+  --corresponding-author author_two \
   --bib /absolute/path/to/references.bib
 ```
 

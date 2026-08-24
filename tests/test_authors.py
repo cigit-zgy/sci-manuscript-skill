@@ -190,9 +190,9 @@ def test_bundled_library_never_auto_selects_all_authors(
     monkeypatch.setattr(cli.sys, "stdin", argparse.Namespace(isatty=lambda: False))
     args = argparse.Namespace(
         authors=None,
-        first_author=[],
-        corresponding_author=[],
-        other_author=[],
+        first=[],
+        corresponding=[],
+        other=[],
     )
     with pytest.raises(ManuscriptError, match=r"first-author|corresponding-author"):
         cli._selected_authors(args)
@@ -268,9 +268,9 @@ def test_interactive_init_lists_and_selects_author_roles(
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
     args = argparse.Namespace(
         authors=None,
-        first_author=[],
-        corresponding_author=[],
-        other_author=[],
+        first=[],
+        corresponding=[],
+        other=[],
     )
     selected = cli._selected_authors(args)
     assert selected == (("author_one",), ("author_one",), ("author_two",))

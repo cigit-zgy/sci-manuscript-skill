@@ -55,8 +55,13 @@ def _parser() -> argparse.ArgumentParser:
         init.add_argument(f"--{name}")
     init.add_argument("--publisher", choices=PUBLISHERS)
     init.add_argument("--language", choices=("en", "zh"))
-    for role in ("first-author", "corresponding-author", "other-author"):
-        init.add_argument(f"--{role}", action="append", default=[])
+    for role in ("first", "corresponding", "other"):
+        init.add_argument(
+            f"--{role}-author",
+            dest=role,
+            action="append",
+            default=[],
+        )
     init.add_argument("--authors", type=Path)
     init.add_argument("--bib", type=Path)
     init.add_argument("--custom-template", type=Path)
@@ -107,9 +112,9 @@ def _selected_authors(
     library_path = resolve_author_library_path(args.authors)
     library = load_author_library(library_path)
     selected = (
-        tuple(args.first_author),
-        tuple(args.corresponding_author),
-        tuple(args.other_author),
+        tuple(args.first),
+        tuple(args.corresponding),
+        tuple(args.other),
     )
     if selected[0] and selected[1]:
         return selected
@@ -284,9 +289,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.article_type,
                     args.publisher,
                     args.language,
-                    args.first_author,
-                    args.corresponding_author,
-                    args.other_author,
+                    args.first,
+                    args.corresponding,
+                    args.other,
                     args.authors,
                     args.bib,
                     args.custom_template,

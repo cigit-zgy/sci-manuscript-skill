@@ -60,9 +60,9 @@ def _metadata(publisher: str = "elsevier", language: str = "en") -> ManuscriptMe
         publisher=publisher,
         round_number=0,
         parent_round=None,
-        first_authors=("first_author",),
-        corresponding_authors=("first_author", "corresponding_author"),
-        other_authors=("other_author",),
+        first_authors=("author_one",),
+        corresponding_authors=("author_one", "author_two"),
+        other_authors=("author_three",),
         submission=SubmissionSettings(),
     )
 
@@ -76,17 +76,17 @@ def _anonymous_author_library(tmp_path: Path) -> Path:
     name_en: Anonymous Research Institute
     address: Example City
 authors:
-  first_author:
+  author_one:
     name_en: First Author
     name_zh: 第一作者
     email: first@example.invalid
     affiliations: [institute]
-  corresponding_author:
+  author_two:
     name_en: Corresponding Author
     name_zh: 通讯作者
     email: corresponding@example.invalid
     affiliations: [institute]
-  other_author:
+  author_three:
     name_en: Other Author
     name_zh: 其他作者
     affiliations: [institute]
@@ -157,7 +157,7 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert "Document class" in (initial / "manuscript.tex").read_text()
     assert (initial / "sections" / "00_abstract.tex").is_file()
     assert not (initial / "sections" / "00_frontmatter.tex").exists()
-    assert load_meta(initial / "meta.yaml").first_authors == ("first_author",)
+    assert load_meta(initial / "meta.yaml").first_authors == ("author_one",)
     with pytest.raises(WorkflowError, match="overwrite"):
         initialize_project(config, _anonymous_author_library(tmp_path))
 
@@ -216,7 +216,7 @@ def test_author_library_is_role_free_and_allows_overlap(tmp_path: Path) -> None:
     library = load_author_library(path)
     selection = resolve_authors(_metadata(), library)
     assert selection.first_authors[0] in selection.corresponding_authors
-    assert selection.authors[0].author_id == "first_author"
+    assert selection.authors[0].author_id == "author_one"
 
 
 def test_chinese_publisher_uses_full_width_commas_between_authors(
@@ -287,8 +287,8 @@ def test_chinese_init_preflight_runs_before_workspace_creation(
             publisher="chinese",
             language="zh",
             article_type="Research Article",
-            first_authors=("first_author",),
-            corresponding_authors=("corresponding_author",),
+            first_authors=("author_one",),
+            corresponding_authors=("author_two",),
             authors_path=_anonymous_author_library(tmp_path),
             engine="tectonic",
         )
@@ -591,7 +591,7 @@ def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
             root,
             replace(
                 _metadata(),
-                corresponding_authors=("first_author",),
+                corresponding_authors=("author_one",),
             ),
         ),
         _anonymous_author_library(tmp_path),
@@ -747,8 +747,8 @@ def test_init_api_returns_structured_result(tmp_path: Path) -> None:
         publisher="elsevier",
         language="en",
         article_type="Research Article",
-        first_authors=("first_author",),
-        corresponding_authors=("corresponding_author",),
+        first_authors=("author_one",),
+        corresponding_authors=("author_two",),
         authors_path=_anonymous_author_library(tmp_path),
         engine="tectonic",
     )
