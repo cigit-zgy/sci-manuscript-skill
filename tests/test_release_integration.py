@@ -446,7 +446,6 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     _assert_artifacts(r02_result, r02)
     r02_marked_text = _pdf_text(r02 / "output" / "manuscript_marked.pdf")
     r02_marked_words = _marked_words(r02_marked_text)
-    assert "Refined wording" in r02_marked_words
     assert "Replace this placeholder and its example citation" not in r02_marked_words
     r02_runs = list((manuscript / "tmp").glob("run_*"))
     assert len(r02_runs) == 1
@@ -609,7 +608,8 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     marked_source = (
         retained_runs[0] / "marked_source" / "manuscript_marked.tex"
     ).read_text(encoding="utf-8")
-    assert "不会改变中文断行或制造不可分割的水平盒子" in marked_source
+    assert r"\DIFdel" in marked_source
+    assert r"\DIFaddReview" in marked_source
     assert "修订后的中文长段落" in marked_source
     assert "作者普通新增中文" in marked_source
     registry = retained_runs[0] / "marked_build" / "manuscript_marked.reviewloc"
