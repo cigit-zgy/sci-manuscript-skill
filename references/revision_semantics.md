@@ -22,8 +22,7 @@ unchanged between `P` and `C` remains unmarked even when it lies inside a
 reviewer interval. Nested reviewer scopes are invalid; multiple reviewer IDs
 belong in one wrapper.
 
-Legacy `\user{...}` and `\selfadd{...}` wrappers are transparent and do not
-create reviewer provenance.
+Legacy `\user{...}` remains transparent and does not create reviewer provenance.
 
 ## 2. Structural-diff layer
 
@@ -73,7 +72,7 @@ contract. Changing either requires tests, documentation, and a release note.
 
 After structural differences are known, every actual addition interval is
 mapped back to `C` and split at reviewer-provenance boundaries in `R`.
-Rendering is then mutually exclusive:
+Rendering is mutually exclusive:
 
 | Semantic state | Text rendering | Mathematics rendering |
 | --- | --- | --- |
