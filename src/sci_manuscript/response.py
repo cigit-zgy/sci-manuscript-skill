@@ -495,7 +495,7 @@ def audit_reviews(
             )
         )
 
-    for review_id, comment in comments.items():
+    for review_id in comments:
         body = responses.get(review_id, "").strip()
         has_response = bool(body) and review_id not in pending
         has_revision = review_id in provenance
