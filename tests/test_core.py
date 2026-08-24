@@ -17,7 +17,10 @@ from sci_manuscript.compile import (
     parse_overfull_boxes,
     validate_revision_layout,
 )
-from sci_manuscript.diff import _separate_inline_math_from_diff_markup
+from sci_manuscript.diff import (
+    _refine_inline_math_replacements,
+    _separate_inline_math_from_diff_markup,
+)
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     MetadataError,
@@ -154,13 +157,15 @@ def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
     sections = initial / "sections"
     assert {path.name for path in sections.iterdir()} == {
         "00_frontmatter.tex",
-        "01_manuscript.tex",
+        "01_introduction.tex",
     }
     manuscript = (initial / "manuscript.tex").read_text(encoding="utf-8")
     frontmatter_input = r"\input{sections/00_frontmatter}"
     assert manuscript.index(frontmatter_input) < manuscript.index(r"\begin{document}")
-    assert r"\input{sections/01_manuscript}" in manuscript
-    assert r"\usepackage{indentfirst}" in manuscript
+    assert r"\input{sections/01_introduction}" in manuscript
+    assert r"\input{preamble/zh}" in manuscript
+    assert r"\usepackage{indentfirst}" not in manuscript
+    assert r"\makeatletter" not in manuscript
     assert r"\setlength{\parindent}" not in manuscript
     assert r"\bibliographystyle{kxtbcas-numeric}" in manuscript
     assert r"\bibliography{references}" in manuscript
@@ -218,7 +223,9 @@ def test_chinese_publisher_uses_full_width_commas_between_authors(
 
 def test_revision_provenance_fallbacks_live_only_in_shared_preamble() -> None:
     root = resources_root()
-    preamble = (root / "manuscript" / "preamble.tex").read_text(encoding="utf-8")
+    preamble = (root / "manuscript" / "preamble" / "common.tex").read_text(
+        encoding="utf-8"
+    )
     definitions = (
         r"\providecommand{\review}[2]{#2}",
         r"\providecommand{\user}[1]{#1}",
@@ -564,6 +571,41 @@ def test_multi_id_review_location_registry(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    (
+        ("en", "Lines 7--8, 12, and 19--21"),
+        ("zh", "第 7--8 行、第 12 行和第 19--21 行"),
+    ),
+)
+def test_review_locations_are_fully_localized(
+    tmp_path: Path,
+    language: str,
+    expected: str,
+) -> None:
+    from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, _calculate_locations
+
+    (tmp_path / "manuscript_marked.reviewloc").write_text(
+        f"{REVIEW_REGISTRY_HEADER}\n1-1|1\n1-1|2\n1-1|3\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "manuscript_marked.aux").write_text(
+        "\\newlabel{review:1:start}{{7}{1}}\n"
+        "\\newlabel{review:1:end}{{8}{1}}\n"
+        "\\newlabel{review:2:start}{{12}{1}}\n"
+        "\\newlabel{review:2:end}{{12}{1}}\n"
+        "\\newlabel{review:3:start}{{19}{1}}\n"
+        "\\newlabel{review:3:end}{{21}{1}}\n",
+        encoding="utf-8",
+    )
+    location = _calculate_locations(tmp_path, language=language)["1-1"]
+    assert location == expected
+    if language == "zh":
+        assert all(token not in location for token in ("Line", "Lines", "and"))
+    else:
+        assert all(token not in location for token in ("第", "行", "修改位置"))
+
+
 def test_empty_versioned_review_location_registry_is_valid(tmp_path: Path) -> None:
     from sci_manuscript.diff import REVIEW_REGISTRY_HEADER, _calculate_locations
 
@@ -614,6 +656,20 @@ def test_diff_markup_separates_inline_math_from_line_decoration() -> None:
     assert rewritten == (
         r"\DIFadd{中文 }\DIFaddMath{$A \longrightarrow B$}\DIFadd{ 文本} "
         r"\DIFdel{old }\DIFdelMath{\(x+y\)}\DIFdel{ text}"
+    )
+
+
+def test_inline_math_replacement_is_refined_only_at_safe_atoms() -> None:
+    source = (
+        r"\DIFdelMath{$a+b$}\DIFdelend \DIFaddbegin "
+        r"\DIFaddReviewMath{$a+c$}"
+    )
+    assert _refine_inline_math_replacements(source) == (
+        r"$a+\DIFdel{b}\DIFaddReview{c}$"
+    )
+    grouped = r"\DIFdelMath{$x_{old}$}\DIFaddMath{$x_{new}$}"
+    assert _refine_inline_math_replacements(grouped) == (
+        r"$x_\DIFdel{{old}}\DIFadd{{new}}$"
     )
 
 

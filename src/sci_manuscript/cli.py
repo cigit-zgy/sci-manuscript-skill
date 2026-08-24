@@ -148,12 +148,35 @@ def _relative(project: Path, path: Path) -> str:
         return str(path)
 
 
-def _print_lifecycle(result: LifecycleResult, project: Path) -> None:
-    print(f"{result.operation}: {result.version}")
+def _print_lifecycle(
+    result: LifecycleResult,
+    project: Path,
+    *,
+    language: str | None = None,
+) -> None:
+    if result.operation == "init":
+        print(f"Initialized: {result.version}")
+        print()
+        if language == "zh":
+            print(
+                "请检查 manuscript/initial_submission/meta.yaml，并补充尚未填写的论文元信息。"  # noqa: RUF001
+            )
+        else:
+            print(
+                "Please review manuscript/initial_submission/meta.yaml and complete "
+                "any missing manuscript metadata."
+            )
+    else:
+        print(f"{result.operation}: {result.version}")
     if result.artifacts:
         print("Generated:")
         for artifact in result.artifacts:
-            print(f"  {artifact.label}: {_relative(project, artifact.path)}")
+            label = (
+                "Manuscript"
+                if result.operation == "init" and artifact.label == "Initial manuscript"
+                else artifact.label
+            )
+            print(f"  {label}: {_relative(project, artifact.path)}")
     audit = result.review_audit
     if audit is None:
         return
@@ -252,7 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 custom_template=args.custom_template,
                 engine=args.engine,
             )
-            _print_lifecycle(lifecycle_result, args.project)
+            _print_lifecycle(lifecycle_result, args.project, language=args.language)
             return 0
         project = ManuscriptProject(args.project)
         if args.command == "status":

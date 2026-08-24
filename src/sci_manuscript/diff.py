@@ -43,40 +43,43 @@ _REVISION_RUNTIME_TEMPLATE = r"""
 \RequirePackage{xcolor}
 \AtBeginDocument{\linenumbers}
 
+\newbox\RevisionMathMeasureBox
+\newcommand{\RevisionMathStyle}{\ifinner\textstyle\else\displaystyle\fi}
+\newcommand{\RevisionGobble}[1]{}
+\newcommand{\RevisionMeasureMath}[1]{%
+  \setbox\RevisionMathMeasureBox=\hbox{\mathsurround=0pt$\RevisionMathStyle
+    \let\label\RevisionGobble #1$}%
+}
+\newcommand{\RevisionMathStrikeout}[2]{%
+  \begingroup
+    \RevisionMeasureMath{#2}%
+    \dimen0=.5\ht\RevisionMathMeasureBox
+    \advance\dimen0 by -.5\dp\RevisionMathMeasureBox
+    \rlap{\raise\dimen0\hbox{\color{#1}%
+      \rule{\wd\RevisionMathMeasureBox}{\RevisionDeletionThickness}}}%
+    {\color{#1}#2}%
+  \endgroup
+}
 \providecommand{\DIFaddMath}[1]{%
   {\RevisionAddedFont\color{RevisionAddedColor}#1}%
 }
 \providecommand{\DIFaddReviewMath}[1]{%
   {\RevisionReviewFont\color{RevisionReviewColor}#1}%
 }
-\newbox\DIFdelDisplayMathBox
 \providecommand{\DIFdelMath}[1]{%
-  \ifmmode
-    {\RevisionDeletedFont\color{RevisionDeletedColor}#1}%
-  \else
-    \begingroup
-      \setbox\DIFdelDisplayMathBox=\hbox{{\RevisionDeletedFont
-        \color{RevisionDeletedColor}#1}}%
-      \dimen0=.5\ht\DIFdelDisplayMathBox
-      \advance\dimen0 by -.5\dp\DIFdelDisplayMathBox
-      \rlap{\raise\dimen0\hbox{\color{RevisionDeletedColor}%
-        \rule{\wd\DIFdelDisplayMathBox}{0.6pt}}}%
-      \box\DIFdelDisplayMathBox
-    \endgroup
-  \fi}
+  {\RevisionDeletedFont\RevisionMathStrikeout{RevisionDeletedColor}{#1}}%
+}
 \providecommand{\DIFadd}[1]{%
   \ifmmode
     \DIFaddMath{#1}%
   \else
-    \RevisionAddedBackground{{\RevisionAddedFont\color{RevisionAddedColor}%
-      \RevisionAddedUnderline{#1}}}%
+    \RevisionAddedBackground{{\RevisionAddedFont\color{RevisionAddedColor}#1}}%
   \fi}
 \providecommand{\DIFaddReview}[1]{%
   \ifmmode
     \DIFaddReviewMath{#1}%
   \else
-    \RevisionReviewBackground{{\RevisionReviewFont\color{RevisionReviewColor}%
-      \RevisionReviewUnderline{#1}}}%
+    \RevisionReviewBackground{{\RevisionReviewFont\color{RevisionReviewColor}#1}}%
   \fi}
 \providecommand{\DIFdel}[1]{%
   \ifmmode
@@ -186,6 +189,8 @@ def _flatten_tex(
 
     def replace_input(match: re.Match[str]) -> str:
         name = match.group(1).strip()
+        if name == "preamble" or name.startswith("preamble/"):
+            return match.group(0)
         candidate = resolved.parent / name
         if candidate.suffix == "":
             candidate = candidate.with_suffix(".tex")
@@ -564,6 +569,109 @@ def _separate_inline_math_from_diff_markup(text: str) -> str:
     return "".join(output)
 
 
+def _math_atoms(body: str) -> list[str] | None:
+    """Split math into command/group-safe atoms for conservative refinement."""
+    atoms: list[str] = []
+    cursor = 0
+    while cursor < len(body):
+        if body[cursor] == "{":
+            try:
+                _, end = _extract_braced(body, cursor)
+            except WorkflowError:
+                return None
+            atoms.append(body[cursor:end])
+            cursor = end
+            continue
+        if body[cursor] == "}":
+            return None
+        if body[cursor] == "\\":
+            end = cursor + 1
+            if end < len(body) and body[end].isalpha():
+                while end < len(body) and body[end].isalpha():
+                    end += 1
+                if end < len(body) and body[end] == "*":
+                    end += 1
+            elif end < len(body):
+                end += 1
+            atoms.append(body[cursor:end])
+            cursor = end
+            continue
+        atoms.append(body[cursor])
+        cursor += 1
+    return atoms
+
+
+def _unwrap_inline_math(value: str) -> tuple[str, str, str] | None:
+    for left, right in (("$$", "$$"), ("$", "$"), (r"\(", r"\)")):
+        if value.startswith(left) and value.endswith(right):
+            return left, value[len(left) : len(value) - len(right)], right
+    return None
+
+
+def _render_inline_math_refinement(
+    old: str,
+    new: str,
+    addition_macro: str,
+) -> str | None:
+    old_math = _unwrap_inline_math(old)
+    new_math = _unwrap_inline_math(new)
+    if old_math is None or new_math is None or old_math[::2] != new_math[::2]:
+        return None
+    old_atoms = _math_atoms(old_math[1])
+    new_atoms = _math_atoms(new_math[1])
+    if old_atoms is None or new_atoms is None:
+        return None
+    matcher = SequenceMatcher(a=old_atoms, b=new_atoms, autojunk=False)
+    pieces = [old_math[0]]
+    add = r"\DIFaddReview" if "Review" in addition_macro else r"\DIFadd"
+    changed = False
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            pieces.extend(new_atoms[j1:j2])
+            continue
+        changed = True
+        if tag in {"delete", "replace"}:
+            pieces.append(f"\\DIFdel{{{''.join(old_atoms[i1:i2])}}}")
+        if tag in {"insert", "replace"}:
+            pieces.append(f"{add}{{{''.join(new_atoms[j1:j2])}}}")
+    pieces.append(old_math[2])
+    return "".join(pieces) if changed else new
+
+
+def _refine_inline_math_replacements(text: str) -> str:
+    """Refine paired inline-math replacements without crossing TeX groups."""
+    deleted_macro = r"\DIFdelMath"
+    additions = (r"\DIFaddReviewMath", r"\DIFaddMath")
+    output: list[str] = []
+    cursor = 0
+    while True:
+        start = text.find(f"{deleted_macro}{{", cursor)
+        if start < 0:
+            output.append(text[cursor:])
+            break
+        old, old_end = _extract_braced(text, start + len(deleted_macro))
+        candidates = [(text.find(f"{macro}{{", old_end), macro) for macro in additions]
+        candidates = [item for item in candidates if item[0] >= 0]
+        if not candidates:
+            output.append(text[cursor:])
+            break
+        add_start, add_macro = min(candidates)
+        separator = text[old_end:add_start]
+        if not _separator_is_diff_only(separator):
+            output.append(text[cursor:old_end])
+            cursor = old_end
+            continue
+        new, add_end = _extract_braced(text, add_start + len(add_macro))
+        refined = _render_inline_math_refinement(old, new, add_macro)
+        if refined is None:
+            output.append(text[cursor:old_end])
+            cursor = old_end
+            continue
+        output.extend((text[cursor:start], refined))
+        cursor = add_end
+    return "".join(output)
+
+
 def _parse_registry(path: Path) -> list[tuple[str, int]]:
     if not path.exists():
         raise WorkflowError(f"Location build did not create a review registry: {path}")
@@ -591,33 +699,50 @@ def _parse_labels(path: Path) -> dict[tuple[int, str], int]:
     return labels
 
 
-def _format_location(start: int, end: int) -> str:
-    return f"Line {start}" if start == end else f"Lines {start}--{end}"
-
-
-def _join_locations(locations: list[str]) -> str:
-    if not locations:
-        return "Location unavailable"
-    if len(locations) == 1:
-        return locations[0]
-    if len(locations) == 2:
-        return f"{locations[0]} and {locations[1]}"
-    return f"{', '.join(locations[:-1])}, and {locations[-1]}"
+def _format_locations(ranges: list[tuple[int, int]], language: str) -> str:
+    """Format line ranges as one complete Chinese or English phrase."""
+    if not ranges:
+        return "位置不可用" if language == "zh" else "Location unavailable"
+    if language == "zh":
+        parts = [
+            f"第 {start if start == end else f'{start}--{end}'} 行"
+            for start, end in ranges
+        ]
+        if len(parts) == 1:
+            return parts[0]
+        return (
+            "和".join(parts)
+            if len(parts) == 2
+            else "、".join(parts[:-1]) + "和" + parts[-1]
+        )
+    values = [
+        str(start) if start == end else f"{start}--{end}" for start, end in ranges
+    ]
+    if len(values) == 1:
+        prefix = "Line" if ranges[0][0] == ranges[0][1] else "Lines"
+        return f"{prefix} {values[0]}"
+    joined = (
+        f"{values[0]} and {values[1]}"
+        if len(values) == 2
+        else f"{', '.join(values[:-1])}, and {values[-1]}"
+    )
+    return f"Lines {joined}"
 
 
 def _calculate_locations(
     build_dir: Path,
     stem: str = "manuscript_marked",
+    language: str = "en",
 ) -> dict[str, str]:
     registry = _parse_registry(build_dir / f"{stem}.reviewloc")
     labels = _parse_labels(build_dir / f"{stem}.aux")
-    by_comment: dict[str, list[str]] = collections.defaultdict(list)
+    by_comment: dict[str, list[tuple[int, int]]] = collections.defaultdict(list)
     for ids, block in registry:
         start = labels.get((block, "start"))
         end = labels.get((block, "end"))
         if start is None or end is None:
             raise WorkflowError(f"Line labels are missing for reviewer block {block}.")
-        location = _format_location(start, end)
+        location = (start, end)
         for review_id in (item.strip() for item in ids.split(",")):
             if not is_review_id(review_id):
                 raise WorkflowError(
@@ -625,7 +750,9 @@ def _calculate_locations(
                 )
             if location not in by_comment[review_id]:
                 by_comment[review_id].append(location)
-    return {key: _join_locations(value) for key, value in by_comment.items()}
+    return {
+        key: _format_locations(value, language) for key, value in by_comment.items()
+    }
 
 
 def _build_review_locations(
@@ -660,7 +787,7 @@ def _build_review_locations(
         engine_override,
         keep_intermediates=True,
     )
-    locations = _calculate_locations(build_dir, source.stem)
+    locations = _calculate_locations(build_dir, source.stem, config.language)
 
     # Preserve the historical retained-run paths for downstream diagnostics.
     marked_build = run_dir / "marked_build"
@@ -717,7 +844,7 @@ def build_marked_manuscript(
         shutil.which("latexdiff") or "latexdiff",
         "--encoding=utf8",
         "--packages=none",
-        "--math-markup=WHOLE",
+        "--math-markup=FINE",
         f"--preamble={style}",
         "--disable-citation-markup",
         "--ignore-warnings",
@@ -729,8 +856,9 @@ def build_marked_manuscript(
     result = run_command(command, cwd=source_dir)
     classified = _classify_reviewer_additions(result.stdout, provenance)
     marked_source = source_dir / "manuscript_marked.tex"
+    separated = _separate_inline_math_from_diff_markup(classified)
     marked_source.write_text(
-        _separate_inline_math_from_diff_markup(classified), encoding="utf-8"
+        _refine_inline_math_replacements(separated), encoding="utf-8"
     )
     compiled = compile_tex(
         marked_source,

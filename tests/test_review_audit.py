@@ -65,7 +65,10 @@ def test_revision_creates_user_facing_chinese_review_template(tmp_path: Path) ->
     assert "无需填写" not in text
     assert result.artifacts[0].label == "Reviewer comments"
     assert result.artifacts[0].path == comments
-    assert (comments.parent / "responses.tex").read_text(encoding="utf-8") == ""
+    response_help = (comments.parent / "responses.tex").read_text(encoding="utf-8")
+    assert "% 使用说明：" in response_help
+    assert "reviewer_comments.md" in response_help
+    assert "\\Response{" not in response_help
 
 
 def test_revision_creates_matching_english_review_template(tmp_path: Path) -> None:
@@ -78,6 +81,9 @@ def test_revision_creates_matching_english_review_template(tmp_path: Path) -> No
     assert "# Reviewer #2" in text
     assert "Use one numbered list item for each comment" in text
     assert "manuscript_revised" not in text
+    response_help = (comments.parent / "responses.tex").read_text(encoding="utf-8")
+    assert "% Instructions:" in response_help
+    assert "not rendered in the final PDF" in response_help
 
 
 def test_numbered_list_parser_assigns_internal_ids_and_preserves_general_text(
@@ -219,7 +225,26 @@ def test_review_id_drift_is_detected_after_first_recorded_mapping(
     )
     audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
     assert any(issue.code == "REVIEW_ID_DRIFT" for issue in audit.issues)
-    assert (version / "output" / "review_index.yaml").is_file()
+    assert (config.project / "state" / "revision_01" / "review_index.yaml").is_file()
+    assert not (version / "output" / "review_index.yaml").exists()
+
+
+def test_legacy_review_index_migrates_out_of_user_output(tmp_path: Path) -> None:
+    config = _project(tmp_path)
+    ManuscriptProject(config.project).start_revision(confirmed=True)
+    version = config.project / "revision_01"
+    comments = version / "response" / "reviewer_comments.md"
+    comments.write_text("# Reviewer #1\n\n1. Stable comment.\n", encoding="utf-8")
+    state_index = config.project / "state" / "revision_01" / "review_index.yaml"
+    audit_reviews(ProjectConfig(config.project, config.metadata), 1, record_index=True)
+    legacy_index = version / "output" / "review_index.yaml"
+    legacy_index.write_text(state_index.read_text(encoding="utf-8"), encoding="utf-8")
+    state_index.unlink()
+
+    audit_reviews(ProjectConfig(config.project, config.metadata), 1, record_index=True)
+
+    assert state_index.is_file()
+    assert not legacy_index.exists()
 
 
 def test_cli_review_warning_prints_concrete_file_paths(
@@ -236,3 +261,28 @@ def test_cli_review_warning_prints_concrete_file_paths(
     assert "Review audit result: INCOMPLETE" in output
     assert "Path:" in output
     assert str(version / "response" / "reviewer_comments.md") in output
+
+
+def test_cli_init_output_is_minimal_and_action_oriented(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manuscript = tmp_path / "project" / "manuscript"
+    artifact = manuscript / "initial_submission" / "output" / "manuscript.pdf"
+    from sci_manuscript.api import Artifact
+
+    _print_lifecycle(
+        LifecycleResult(
+            "init", "initial_submission", (Artifact("Manuscript", artifact),)
+        ),
+        tmp_path / "project",
+        language="zh",
+    )
+    output = capsys.readouterr().out
+    assert "Initialized: initial_submission" in output
+    assert "meta.yaml" in output
+    assert "manuscript/initial_submission/output/manuscript.pdf" in output
+    assert all(
+        token not in output
+        for token in ("tmp/", "reviewloc", "latexdiff", "Tectonic", "sidecar")
+    )

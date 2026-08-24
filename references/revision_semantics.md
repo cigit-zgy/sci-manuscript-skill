@@ -35,13 +35,12 @@ The structural comparison uses these fixed rules:
 - UTF-8 input;
 - citation markup disabled;
 - Chinese front-matter commands explicitly registered as text commands;
-- display mathematics compared with `--math-markup=WHOLE`.
+- display mathematics compared with `--math-markup=FINE`.
 
-`WHOLE` is a semantic policy, not a project-specific workaround. A display
-formula is a structured mathematical object whose internal TeX grouping should
-not be rewritten by diff commands. If a display formula changes, its old and
-new formula blocks are treated atomically. Inline mathematics remains embedded
-in surrounding prose but is separated from text-decoration rendering later.
+`FINE` is a math-aware semantic policy, not a project-specific workaround. It
+marks only changed formula fragments, while the rendering layer overlays the
+line decoration without rewriting the mathematical expression or equation
+number. Inline mathematics is likewise separated from prose decoration.
 
 ## 3. Refinement policy
 
@@ -76,19 +75,20 @@ Rendering is mutually exclusive:
 
 | Semantic state | Text rendering | Mathematics rendering |
 | --- | --- | --- |
-| Author addition | blue wave underline | blue content |
-| Reviewer/editor-linked addition | green straight underline | green content |
-| Deletion | red strikeout | red content |
+| Author addition | blue text | blue mathematics |
+| Reviewer/editor-linked addition | red text | red mathematics |
+| Deletion | light-gray strikeout | light-gray strikeout |
 | Unchanged content | ordinary manuscript text | ordinary mathematics |
 
-A changed span can never be both author-blue and reviewer-green. Reviewer
-provenance applies only to added current text; deletions remain red regardless
+A changed span can never be both author-blue and reviewer-red. Reviewer
+provenance applies only to added current text; deletions remain light gray regardless
 of reviewer scope.
 
-Chinese text decorations use punctuation-continuous CJK decorators. Mathematics
-is never passed through CJK/ulem line-decoration scanners. This preserves TeX
-grouping and prevents marked output from creating layout boxes that do not exist
-in the clean manuscript.
+Chinese deletion strikeout uses a punctuation-continuous CJK decorator.
+Reviewer and author additions use color only. Mathematics is never passed
+through CJK/ulem text-decoration scanners. This preserves TeX grouping and
+prevents marked output from creating layout boxes that do not exist in the clean
+manuscript.
 
 ## 5. Reviewer locations
 
@@ -112,7 +112,7 @@ contiguous source substring.
 compile, reviewer/author/deletion colors must be present in rendered pixels, and
 marked rendering must introduce no layout overflow absent from the clean build.
 PDF text extraction is useful for ordinary current text but is not a fidelity
-oracle for deleted or character-refined text: strikeout, wave underline, CJK
+oracle for deleted or character-refined text: strikeout, CJK
 font handling, and interleaved diff macros can change extraction order without
 changing the visible manuscript.
 
@@ -121,7 +121,7 @@ A revision implementation is acceptable only when all of the following pass:
 1. unit tests for provenance extraction, refinement policy, and lossless
    old/new replacement representation;
 2. formatting, linting, typing, package build, and wheel smoke tests;
-3. real LaTeX integration tests with blue, green, and red rendered pixels;
+3. real LaTeX integration tests with blue, red, and light-gray rendered pixels;
 4. clean-versus-marked layout QA with zero marked-specific overflow;
 5. a real manuscript E2E when a consuming manuscript repository is available.
 

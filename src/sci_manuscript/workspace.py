@@ -33,8 +33,9 @@ class WorkflowError(ManuscriptError):
 
 REVISION_DIRECTORY_PATTERN = re.compile(r"^revision_(\d{2,})$")
 ROUND_PATTERN = re.compile(r"^r(\d{2,})$")
-PROTECTED_DIRECTORIES = ("sections", "figures", "tables", "response")
+PROTECTED_DIRECTORIES = ("sections", "figures", "tables", "response", "preamble")
 SCIENTIFIC_DIRECTORIES = ("sections", "figures", "tables")
+INHERITED_DIRECTORIES = (*SCIENTIFIC_DIRECTORIES, "preamble")
 
 
 def resources_root() -> Path:
@@ -289,7 +290,7 @@ def _publisher_layout(
 
 
 def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
-    frontmatter, plan, _, style = _publisher_layout(config)
+    frontmatter, plan, package, style = _publisher_layout(config)
     abstract_input = ""
     body_plan = plan
     if frontmatter is None:
@@ -322,6 +323,15 @@ def _create_manuscript_sources(config: ProjectConfig, version: Path) -> None:
             defaults / item["source"],
             version / "sections" / item["file"],
             {"SECTION_TITLE": item["title"]},
+        )
+    preamble_source = resources_root() / "manuscript" / "preamble"
+    preamble_target = version / "preamble"
+    preamble_target.mkdir(parents=True, exist_ok=True)
+    for name in ("common.tex", "zh.tex", "en.tex"):
+        render_template(
+            preamble_source / name,
+            preamble_target / name,
+            {"BIBLIOGRAPHY_PACKAGE": package},
         )
 
 
@@ -485,7 +495,7 @@ def start_revision(
     if not source_manuscript.is_file():
         raise WorkflowError(f"Parent manuscript source is missing: {source_manuscript}")
     shutil.copy2(source_manuscript, staged / "manuscript.tex")
-    for directory in SCIENTIFIC_DIRECTORIES:
+    for directory in INHERITED_DIRECTORIES:
         source_dir = source / directory
         if source_dir.exists():
             shutil.copytree(source_dir, staged / directory)

@@ -7,6 +7,6 @@ frontmatter:
   source: 00_frontmatter_zh.tex
 
 sections:
-  - file: 01_manuscript.tex
-    source: 01_manuscript.tex
-    title: ""
+  - file: 01_introduction.tex
+    source: 01_introduction_zh.tex
+    title: 引言

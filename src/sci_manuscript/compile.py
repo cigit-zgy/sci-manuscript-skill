@@ -362,23 +362,17 @@ def compile_tex(
 
 
 def _render_preamble(config: ProjectConfig, target: Path) -> None:
-    template = (resources_root() / "manuscript" / "preamble.tex").read_text(
-        encoding="utf-8"
-    )
-    cjk = (
-        "\\usepackage{xeCJK}\n  \\renewcommand{\\abstractname}{摘要}"
-        if config.language == "zh"
-        else ""
-    )
+    source = resources_root() / "manuscript" / "preamble"
     mapping_path = publisher_resource(config) / "sections.yaml"
     data = yaml.safe_load(mapping_path.read_text(encoding="utf-8"))
     package = data["bibliography"]["package"]
-    target.write_text(
-        template.replace("%%CJK_PACKAGE%%", cjk).replace(
-            "%%BIBLIOGRAPHY_PACKAGE%%", str(package)
-        ),
-        encoding="utf-8",
-    )
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("common.tex", "zh.tex", "en.tex"):
+        template = (source / name).read_text(encoding="utf-8")
+        (target / name).write_text(
+            template.replace("%%BIBLIOGRAPHY_PACKAGE%%", str(package)),
+            encoding="utf-8",
+        )
 
 
 def stage_runtime_resources(
@@ -395,7 +389,7 @@ def stage_runtime_resources(
         stage_cjk_fonts(target)
     if include_manuscript:
         shutil.copy2(version / "manuscript.tex", target / "manuscript.tex")
-        for directory in ("sections", "figures", "tables"):
+        for directory in ("sections", "figures", "tables", "preamble"):
             source = version / directory
             if source.exists():
                 shutil.copytree(source, target / directory, dirs_exist_ok=True)
@@ -408,7 +402,11 @@ def stage_runtime_resources(
     for resource in publisher_resource(config).iterdir():
         if resource.is_file():
             shutil.copy2(resource, target / resource.name)
-    _render_preamble(config, target / "preamble.tex")
+    if not (target / "preamble").is_dir():
+        _render_preamble(config, target / "preamble")
+    (target / "preamble.tex").write_text(
+        f"\\input{{preamble/{config.language}}}\n", encoding="utf-8"
+    )
     generate_metadata(config.project, version, target)
     return target / "manuscript.tex"
 

@@ -607,16 +607,12 @@ def _prepare_submission(
     if marked is not None:
         if layout_report is None:
             raise WorkflowError("Revision layout QA report was not generated.")
-        published_layout_report = (
+        legacy_layout_report = (
             config.round_dir(round_number) / "output" / "revision_layout_qa.txt"
         )
-        shutil.copy2(layout_report, published_layout_report)
-        artifacts.extend(
-            [
-                Artifact("Marked manuscript", marked.pdf),
-                Artifact("Revision layout QA", published_layout_report),
-            ]
-        )
+        if legacy_layout_report.is_file():
+            legacy_layout_report.unlink()
+        artifacts.append(Artifact("Marked manuscript", marked.pdf))
     if response_pdf is not None:
         artifacts.append(Artifact("Response letter", response_pdf))
     for label, name in (

@@ -1,45 +1,34 @@
 % Marked-manuscript semantic contract:
-%   ordinary latexdiff addition = blue wave underline
-%   deletion                    = red strikeout
-%   reviewer-linked addition    = green straight underline
-%   author ordinary addition    = blue wave underline
+%   ordinary latexdiff addition = blue text
+%   deletion                    = light-gray strikeout
+%   reviewer-linked addition    = red text
+%   author ordinary addition    = blue text
 
 % =====================================
 % Ordinary latexdiff addition
 % =====================================
 
-% Ordinary addition color.
+% Ordinary addition color. Additions use color only, without line decoration.
 \definecolor{RevisionAddedColor}{RGB}{0,92,153}
-
-% Chinese builds load xeCJKfntef so long CJK additions remain line-breakable.
-% Starred CJK decorators keep the mark continuous across CJK punctuation.
-% Other builds use ulem. Mathematics is excluded by the runtime.
-\newcommand{\RevisionAddedUnderline}[1]{%
-  \ifcsname CJKunderwave\endcsname
-    \CJKunderwave*[format=\color{RevisionAddedColor},textformat=\color{RevisionAddedColor}]{#1}%
-  \else\uwave{#1}\fi}
 
 % =====================================
 % Deleted text
 % =====================================
 
 % Deleted text color.
-\definecolor{RevisionDeletedColor}{RGB}{220,45,45}
+\definecolor{RevisionDeletedColor}{RGB}{160,160,160}
+\newcommand{\RevisionDeletionThickness}{0.8pt}
 
 \newcommand{\RevisionDeletedStrikeout}[1]{%
   \ifcsname CJKsout\endcsname
-    \CJKsout*[format=\color{RevisionDeletedColor},textformat=\color{RevisionDeletedColor}]{#1}%
-  \else\sout{#1}\fi}
+    \CJKsout*[thickness=\RevisionDeletionThickness,format=\color{RevisionDeletedColor},textformat=\color{RevisionDeletedColor}]{#1}%
+  \else\begingroup\renewcommand{\ULthickness}{\RevisionDeletionThickness}\sout{#1}\endgroup\fi}
 
 % =====================================
 % Reviewer/editor-linked additions (\review)
 % =====================================
 
-\definecolor{RevisionReviewColor}{RGB}{0,135,90}
-\newcommand{\RevisionReviewUnderline}[1]{%
-  \ifcsname CJKunderline\endcsname
-    \CJKunderline*[format=\color{RevisionReviewColor},textformat=\color{RevisionReviewColor}]{#1}%
-  \else\uline{#1}\fi}
+\definecolor{RevisionReviewColor}{RGB}{220,45,45}
 
 % =====================================
 % Background

@@ -125,7 +125,7 @@ Use `\review{1-1}{revised text}` only for reviewer-linked manuscript changes.
 Write ordinary author additions directly; adjacent `latexdiff` detects them.
 Legacy `\user{additional text}` remains readable but should not be added.
 
-`\review` is provenance metadata only. It does not make its whole body green.
+`\review` is provenance metadata only. It does not make its whole body red.
 Before diffing, wrappers are removed and their current-source character ranges
 are retained in a sidecar map. Actual additions are classified against that map
 after structural comparison. Therefore unchanged reviewer-scoped text remains
@@ -160,7 +160,7 @@ non-blocking review-completeness warnings: clean and marked rendering continues.
 Each warning prints the concrete path or paths that require attention.
 
 The first audit of populated comments records comment fingerprints in
-`revision_NN/output/review_index.yaml`. Later reordering that would remap the
+`state/revision_NN/review_index.yaml`. Later reordering that would remap the
 same comment text to a different ID is reported as `REVIEW_ID_DRIFT` instead of
 silently changing the established association.
 
@@ -194,20 +194,19 @@ Character refinement is allowed only for TeX-structure-free prose when
 autojunk=False).ratio() >= 0.70`. Dissimilar, long, or TeX-bearing replacements
 stay atomic. These are release-level policy values, not per-project settings.
 
-Display mathematics is compared with `latexdiff --math-markup=WHOLE`. The
-formula is treated as a structured object and diff commands are not inserted
-into its internal grouping. Inline and display mathematics are excluded from
-CJK/ulem text-decoration scanners.
+Display mathematics is compared with `latexdiff --math-markup=FINE`. Math-aware
+diff commands mark only changed fragments. Inline and display additions use
+semantic color; deletion alone uses a strike overlay. Mathematics remains
+excluded from CJK/ulem text-decoration scanners.
 
 Visible states are mutually exclusive:
 
-- ordinary author addition: blue wave underline in text, blue in mathematics;
-- reviewer/editor-linked addition: green straight underline in text, green in
-  mathematics;
-- deletion: red strikeout in text, red in mathematics;
+- ordinary author addition: blue text in prose and mathematics;
+- reviewer/editor-linked addition: red text in prose and mathematics;
+- deletion: light-gray strikeout in text and mathematics;
 - unchanged content: normal rendering.
 
-Chinese text decoration remains continuous through CJK punctuation.
+Chinese deletion strikeout remains continuous through CJK punctuation.
 
 ## Submission and artifact contract
 
@@ -233,10 +232,11 @@ paths.
 
 After clean and marked compilation, the workflow parses both compiler logs and
 compares their unique overfull boxes. Any marked-specific overfull box fails the
-revision build. A passing run publishes
-`revision_NN/output/revision_layout_qa.txt`; shared warnings still require visual
-PDF inspection and must not be hidden through global spacing, font-size,
-page-geometry, or manual line-break workarounds.
+revision build. A passing run keeps the report only in the current `tmp/<run>/`
+when diagnostics are explicitly retained. A failure preserves that run and
+reports its absolute path. Shared warnings still require visual PDF inspection
+and must not be hidden through global spacing, font-size, page-geometry, or
+manual line-break workarounds.
 
 Marked-manuscript PDFs have continuous line numbers. Cover letters, response
 letters, highlights, and graphical abstracts do not use manuscript line

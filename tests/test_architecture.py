@@ -30,9 +30,12 @@ def test_runtime_resources_are_package_data() -> None:
         "revision_style.tex",
         "reviewer_comments/reviewer_comments_en.md",
         "reviewer_comments/reviewer_comments_zh.md",
-        "manuscript/preamble.tex",
+        "manuscript/preamble/common.tex",
+        "manuscript/preamble/zh.tex",
+        "manuscript/preamble/en.tex",
         "manuscript/sections/default/00_frontmatter_zh.tex",
-        "manuscript/sections/default/01_manuscript.tex",
+        "manuscript/sections/default/01_introduction.tex",
+        "manuscript/sections/default/01_introduction_zh.tex",
         "correspondence_templates/response/response_en.tex",
         "correspondence_templates/cover_letter/cover_letter_en.tex",
         "submission/cover_letter_body_en.tex",
@@ -61,19 +64,20 @@ def test_revision_semantics_contract_is_documented() -> None:
     )
     for token in (
         r"\definecolor{RevisionAddedColor}{RGB}{0,92,153}",
-        r"\definecolor{RevisionDeletedColor}{RGB}{220,45,45}",
-        r"\definecolor{RevisionReviewColor}{RGB}{0,135,90}",
-        r"\CJKunderwave",
+        r"\definecolor{RevisionDeletedColor}{RGB}{160,160,160}",
+        r"\definecolor{RevisionReviewColor}{RGB}{220,45,45}",
         r"\CJKsout",
-        r"\CJKunderline",
+        r"\newcommand{\RevisionDeletionThickness}{0.8pt}",
     ):
         assert token in style
-    assert "blue wave underline" in readme
-    assert "green straight underline" in readme
+    assert r"\CJKunderwave" not in style
+    assert r"\CJKunderline" not in style
+    assert "blue text" in readme
+    assert "red text" in readme
     assert "four-layer contract" in skill
     assert "similarity(old, new) >= 0.70" in semantics
     assert "max(len(old), len(new)) <= 2000" in semantics
-    assert "--math-markup=WHOLE" in semantics
+    assert "--math-markup=FINE" in semantics
     assert "Rendering is mutually exclusive" in semantics
 
 

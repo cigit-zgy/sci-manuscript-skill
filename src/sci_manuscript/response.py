@@ -404,11 +404,17 @@ def _comment_fingerprint(comment: ReviewComment) -> str:
 
 
 def _review_index_path(version: Path) -> Path:
+    return version.parent / "state" / version.name / REVIEW_INDEX_NAME
+
+
+def _legacy_review_index_path(version: Path) -> Path:
     return version / "output" / REVIEW_INDEX_NAME
 
 
 def _load_review_index(version: Path) -> dict[str, str]:
     path = _review_index_path(version)
+    if not path.is_file():
+        path = _legacy_review_index_path(version)
     if not path.is_file():
         return {}
     try:
@@ -441,6 +447,9 @@ def _write_review_index(version: Path, comments: dict[str, ReviewComment]) -> No
     path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
+    legacy = _legacy_review_index_path(version)
+    if legacy.is_file():
+        legacy.unlink()
 
 
 def audit_reviews(
@@ -575,7 +584,7 @@ def audit_reviews(
 
 
 def init_response(config: ProjectConfig, round_number: int) -> Path:
-    """Create the editable response source; empty review templates yield an empty file."""
+    """Create the editable response source with language-specific comments."""
     if round_number < 1:
         raise WorkflowError("r00 does not have a reviewer response.")
     response_dir = config.round_dir(round_number) / "response"
@@ -590,8 +599,32 @@ def init_response(config: ProjectConfig, round_number: int) -> Path:
         for block in blocks
         for comment in block.comments
     ]
+    if config.language == "zh":
+        instructions = """% 回复审稿意见文件。
+%
+% 使用说明：
+% 1. 每条回复应对应 reviewer_comments.md 中的一条审稿意见。
+% 2. review ID 由系统管理，请勿随意修改。
+% 3. manuscript 中的 \\review{} 用于关联审稿意见与实际修改。
+% 4. 修改位置由系统自动计算。
+% 5. 未完成回复请保留系统规定的 \\ResponsePending{} 状态。
+% 6. 这些 LaTeX 注释不会出现在最终 PDF 中。
+"""  # noqa: RUF001
+    else:
+        instructions = """% Reviewer-response source.
+%
+% Instructions:
+% 1. Match every response to one review comment in reviewer_comments.md.
+% 2. Review IDs are managed by the system; do not change them arbitrarily.
+% 3. Use \\review{} in the manuscript to link a comment to the actual revision.
+% 4. Revision locations are calculated automatically.
+% 5. Keep the required \\ResponsePending{} state for unfinished responses.
+% 6. These LaTeX comments are not rendered in the final PDF.
+"""
     target.write_text(
-        ("\n\n".join(entries) + "\n") if entries else "", encoding="utf-8"
+        instructions
+        + (("\n".join(("", "\n\n".join(entries))) + "\n") if entries else ""),
+        encoding="utf-8",
     )
     return target
 
@@ -672,7 +705,8 @@ def build_response(
     missing_locations = sorted(
         review_id
         for review_id in revised_ids
-        if review_id not in locations or locations[review_id] == "Location unavailable"
+        if review_id not in locations
+        or locations[review_id] in {"Location unavailable", "位置不可用"}
     )
     if missing_locations and not allow_placeholders:
         raise WorkflowError(
@@ -692,16 +726,10 @@ def build_response(
         review_id = match.group(1)
         if not is_review_id(review_id):
             raise WorkflowError(f"Invalid response location ID: {review_id}")
-        location = locations.get(review_id, "Location unavailable")
-        if config.language != "zh":
-            return location
-        if location.startswith("Lines "):
-            return "第 " + location.removeprefix("Lines ") + " 行"
-        if location.startswith("Line "):
-            return "第 " + location.removeprefix("Line ") + " 行"
-        if location == "Location unavailable":
-            return "位置不可用"
-        return location
+        unavailable = (
+            "位置不可用" if config.language == "zh" else "Location unavailable"
+        )
+        return locations.get(review_id, unavailable)
 
     staged_source = stage / "response_letter.tex"
     staged_source.write_text(LOCATION_USE.sub(replace_location, text), encoding="utf-8")

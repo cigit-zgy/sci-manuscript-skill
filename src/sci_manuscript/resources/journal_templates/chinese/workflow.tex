@@ -3,29 +3,8 @@
 % Runtime metadata.
 \input{publisher_metadata}
 
-% Shared manuscript infrastructure.
-\input{preamble}
-
-% Chinese-specific defaults.
-\usepackage{indentfirst}
-
-% Make bare DOI and URL values emitted through \nolinkurl clickable while
-% preserving ordinary \nolinkurl content.
-\usepackage{xstring}
-\makeatletter
-\let\kxtb@orig@nolinkurl\nolinkurl
-\renewcommand{\nolinkurl}[1]{%
-  \IfBeginWith{#1}{10.}{%
-    \href{https://doi.org/#1}{\kxtb@orig@nolinkurl{#1}}%
-  }{%
-    \IfBeginWith{#1}{http}{%
-      \href{#1}{\kxtb@orig@nolinkurl{#1}}%
-    }{%
-      \kxtb@orig@nolinkurl{#1}%
-    }%
-  }%
-}
-\makeatother
+% Shared and Chinese-specific manuscript infrastructure.
+\input{preamble/zh}
 
 % Publisher front matter.
 %%FRONTMATTER_INPUT%%
@@ -36,7 +15,6 @@
 
 %%SECTION_INPUTS%%
 
-\renewcommand{\refname}{参考文献}
 \bibliographystyle{%%BIBLIOGRAPHY_STYLE%%}
 \bibliography{%%BIBLIOGRAPHY_PATH%%}
 

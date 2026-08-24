@@ -60,8 +60,8 @@ publisher resource only to diagnose that exact publisher build.
 - `\review{ID}{text}` is the only manual reviewer-provenance scope for new
   work. It is metadata, not visual markup. The wrapper is removed before
   structural comparison and stored as a sidecar character interval map. Only
-  actual additions that fall inside those intervals become reviewer-green;
-  unchanged text remains ordinary manuscript text. Deletions remain red;
+  actual additions that fall inside those intervals become reviewer-red;
+  unchanged text remains ordinary manuscript text. Deletions remain light gray;
   additions outside reviewer intervals remain author-blue. Legacy `\user{text}`
   remains readable but should not be added.
 - Revision comparison follows the four-layer contract in
@@ -79,7 +79,9 @@ publisher resource only to diagnose that exact publisher build.
   and review-ID drift are warnings. Rendering continues. Every warning reports
   concrete source paths; `submission/package/checklist.md` records review
   completeness as `COMPLETE` or `INCOMPLETE`.
-- Successful operations remove lazy `tmp/`; failed runs may retain diagnostics.
+- `output/` contains final user PDFs, `state/` contains persistent machine state,
+  and lazy `tmp/` contains reproducible run diagnostics. Successful operations
+  remove `tmp/` unless diagnostics are explicitly retained.
 - Editable `response/responses.tex` and `submission/cover_letter_body.tex`
   sources are created once and not replaced by later builds. Complete
   correspondence documents are assembled from installed templates only in
@@ -126,7 +128,9 @@ the same source and shared bibliography. A response PDF is assembled when
 review comments are available; incomplete responses remain visible placeholders
 and the audit stays `INCOMPLETE`. The workflow parses clean and marked compiler
 logs, compares overfull boxes, and fails if marked introduces an overflow absent
-from clean; the durable result is `revision_NN/output/revision_layout_qa.txt`.
+from clean; the per-run result remains in
+`tmp/<run>/revision_layout_qa.txt` only when diagnostics are retained or the run
+fails.
 Do not suppress failures with global `\sloppy`, unconditional
 `\emergencystretch`, smaller body type, altered geometry, or hand-inserted line
 breaks. The automated comparison cannot decide whether small shared overfull
@@ -135,11 +139,10 @@ inspect marked/response pages. Never publish compiler intermediates, flattened
 TeX, location registries, caches, test PDFs, or private paths.
 
 Automatic revision provenance has three mutually exclusive visible states:
-ordinary author additions are blue with a wave underline, deletions are red
-with strikeout, and reviewer/editor-linked additions are green with a straight
-underline. Unchanged text is never colored because of `\review{}` alone. In
-Chinese marked manuscripts, text decorations continue through CJK punctuation.
-Mathematics follows the same semantic colors but is excluded from text
-line-decoration scanners; display equations are compared atomically. Reviewer
-line locations are generated in a separate transparent compilation and cannot
-change marked rendering.
+ordinary author additions are blue text, deletions are light gray with
+strikeout, and reviewer/editor-linked additions are red text. Unchanged text is
+never colored because of `\review{}` alone. In Chinese marked manuscripts,
+deletion strikeout continues through CJK punctuation. Mathematics follows the
+same semantic colors; display equations use fine-grained math comparison.
+Reviewer line locations are generated in a separate transparent compilation
+and cannot change marked rendering.

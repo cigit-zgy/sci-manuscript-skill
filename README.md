@@ -10,8 +10,10 @@ packages. It never writes scientific prose or decides how to answer reviewers.
 
 The images below are equal-size renders from the anonymous test lifecycle, not
 mockups. The marked-manuscript contract is: ordinary author additions detected
-by latexdiff use a blue wave underline, deletions use red strikeout, and
-only actual additions inside reviewer-linked `\review{}` scopes use a green straight underline; unchanged text inside the scope remains unmarked.
+by latexdiff use blue text, deletions use a subdued light-gray strikeout, and
+only actual additions inside reviewer-linked `\review{}` scopes use red text;
+unchanged text inside the scope remains
+unmarked.
 
 | Marked manuscript | Response letter with location |
 | --- | --- |
@@ -176,7 +178,7 @@ existing-project/
     │   ├── tables/
     │   ├── output/
     │   └── submission/
-    └── revision_01/
+    ├── revision_01/
         ├── meta.yaml
         ├── revision_creation.yaml
         ├── manuscript.tex
@@ -189,6 +191,10 @@ existing-project/
         ├── output/
         └── submission/
             └── cover_letter_body.tex
+    ├── state/
+    │   └── revision_01/
+    │       └── review_index.yaml
+    └── tmp/
 ```
 
 No project-local `run.py` is created. Built-in publisher classes and generated
@@ -197,12 +203,17 @@ so the user workspace stays small. A custom publisher alone creates
 `references/journal_template/`. `tmp/` is created only during work and removed
 after success.
 
+`output/` contains final user PDFs only. Persistent machine state, including
+review-ID drift fingerprints, belongs under `state/`; reproducible compiler,
+diff, registry, and QA intermediates belong under the current `tmp/<run>/`.
+
 Reviewer comments remain authoritative in `response/reviewer_comments.md`;
 users edit only `response/responses.tex` and `submission/cover_letter_body.tex`.
 Complete response and cover-letter TeX documents are assembled in `tmp/` from
 the installed package correspondence templates during submission builds.
-Revision submission also publishes `output/revision_layout_qa.txt`; a marked
-overflow not present in the clean compiler log fails the entire workflow.
+Revision layout QA remains an internal per-run diagnostic under `tmp/`; a marked
+overflow not present in the clean compiler log fails the entire workflow and
+reports the retained diagnostic path.
 Visual inspection of the marked PDF remains required for small shared warnings.
 
 ### Migrating a legacy workspace
@@ -289,15 +300,15 @@ The visual semantics are fixed and mutually exclusive:
 
 | Meaning | Color | Line style | Source |
 | --- | --- | --- | --- |
-| Ordinary addition not linked to a comment | Blue `(0,92,153)` | Wave underline | adjacent `latexdiff` |
-| Deletion | Red `(220,45,45)` | Strikeout | adjacent `latexdiff` |
-| Reviewer/editor-linked addition | Green `(0,135,90)` | Straight underline | `\review{IDs}{...}` |
+| Ordinary addition not linked to a comment | Blue `(0,92,153)` | None | adjacent `latexdiff` |
+| Deletion | Light gray `(160,160,160)` | Strikeout | adjacent `latexdiff` |
+| Reviewer/editor-linked addition | Red `(220,45,45)` | None | `\review{IDs}{...}` |
 
 Ordinary author additions need no wrapper. `\user{...}` remains accepted only
-for backward compatibility and renders with the same ordinary blue-wave style.
+for backward compatibility and renders with the same ordinary blue-text style.
 Do not use `\review` merely to recolor an ordinary edit: its IDs drive response
 coverage and marked-manuscript line locations. Mathematics follows the same
-color semantics; deleted formulae use a zero-width red strike overlay, while
+color semantics; deleted formulae use a zero-width light-gray strike overlay, while
 text line decorators never scan mathematical content.
 
 Deletions need no wrapper; adjacent `latexdiff` detects them. A new revision
@@ -352,7 +363,7 @@ python -m build
 Release validation also installs the wheel in a clean environment, audits
 package resources, compiles all four publishers, runs an anonymous
 `r00 -> r01 -> r02` PDF lifecycle, checks rollback/reindex safety and temporary
-cleanup, verifies blue ordinary-addition/red deletion/green reviewer provenance
+cleanup, verifies blue ordinary-addition/light-gray deletion/red reviewer provenance
 with zero
 marked-PDF overfull boxes, inspects rendered pages, and verifies the two README
 screenshots have identical dimensions. GitHub Actions keeps a fast Linux quality

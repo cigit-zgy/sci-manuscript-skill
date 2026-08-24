@@ -1,0 +1,38 @@
+\input{preamble/common}
+
+% Chinese typography and portable CJK font fallback.
+\usepackage{xeCJK}
+\renewcommand{\abstractname}{摘要}
+\usepackage{indentfirst}
+\ifcsname kxtbsetcjkfontfiles\endcsname
+  \IfFileExists{SimSun.ttf}{}{%
+    \IfFontExistsTF{Songti SC}{}{%
+      \IfFontExistsTF{STSong}{}{%
+        \IfFileExists{FandolSong-Regular.otf}{%
+          \kxtbsetcjkfontfiles
+            {FandolSong-Regular.otf}
+            {FandolSong-Bold.otf}
+            {FandolSong-Regular.otf}%
+        }{}%
+      }%
+    }%
+  }%
+\fi
+
+% Chinese publisher DOI/URL compatibility.
+\usepackage{xstring}
+\makeatletter
+\let\kxtb@orig@nolinkurl\nolinkurl
+\renewcommand{\nolinkurl}[1]{%
+  \IfBeginWith{#1}{10.}{%
+    \href{https://doi.org/#1}{\kxtb@orig@nolinkurl{#1}}%
+  }{%
+    \IfBeginWith{#1}{http}{%
+      \href{#1}{\kxtb@orig@nolinkurl{#1}}%
+    }{%
+      \kxtb@orig@nolinkurl{#1}%
+    }%
+  }%
+}
+\makeatother
+\renewcommand{\refname}{参考文献}
