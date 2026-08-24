@@ -87,20 +87,43 @@ next revision, submission sources, or scientific content.
 
 ## Revision response
 
-Reviewer comments use Markdown headings and consecutive numbered comments:
+Running
+
+```bash
+sci-manuscript revision --project /absolute/path/to/project --yes
+```
+
+automatically creates `revision_NN/response/reviewer_comments.md` from the
+project language. The Chinese template contains `编辑`, `审稿人 #1`, and
+`审稿人 #2`; the English template contains the corresponding `Editor` and
+`Reviewer` headings. Each specific comment is entered as one numbered list
+item. Empty template items are ignored and users may add or remove list items or
+reviewer sections.
+
+Example:
 
 ```text
+# Editor
+
+1. Please clarify the scope.
+
 # Reviewer #1
 
-General assessment.
+General assessment from Reviewer 1.
 
 1. First specific comment.
+2. Second specific comment.
 ```
+
+The parser derives `E-1`, `1-1`, `1-2`, and subsequent IDs from section identity
+and non-empty list order. A paragraph placed between a reviewer heading and the
+first numbered item is treated as that reviewer's general assessment. Legacy
+files using explicit `## 1-1 | ...` headings remain readable for migration, but
+new revision templates use only the numbered-list form.
 
 Use `\review{1-1}{revised text}` only for reviewer-linked manuscript changes.
 Write ordinary author additions directly; adjacent `latexdiff` detects them.
 Legacy `\user{additional text}` remains readable but should not be added.
-Replace every generated `\ResponsePending{1-1}` with the real response.
 
 `\review` is provenance metadata only. It does not make its whole body green.
 Before diffing, wrappers are removed and their current-source character ranges
@@ -108,18 +131,50 @@ are retained in a sidecar map. Actual additions are classified against that map
 after structural comparison. Therefore unchanged reviewer-scoped text remains
 unmarked.
 
-```bash
-sci-manuscript submission --project /absolute/path/to/project
-```
+`response/responses.tex` stores editable response prose. When a revision is
+created from an already populated review file, one pending response entry is
+created for each parsed comment. When the generated review template is still
+empty, the response source is initially empty. Review completeness is therefore
+derived at build time rather than encoded in `reviewer_comments.md`.
 
-This publishes:
+### Review audit
+
+Every revision `build` and `submission` performs a three-way audit of:
 
 ```text
-revision_NN/output/manuscript_clean.pdf
-revision_NN/output/manuscript_marked.pdf
-revision_NN/output/response_letter.pdf
-revision_NN/submission/package/
+reviewer_comments.md <-> responses.tex <-> manuscript \review{...}
 ```
+
+The audit computes these states:
+
+- `manuscript_revised`: completed response plus matching manuscript provenance;
+- `response_only`: completed response without manuscript provenance;
+- `manuscript_changed_but_unanswered`: manuscript provenance exists but the
+  response is missing or pending;
+- `unanswered`: the comment has neither a completed response nor manuscript
+  provenance.
+
+It also reports empty or invalid comment files, orphan response IDs, orphan
+`\review` IDs, and review-ID drift after list reordering. These are
+non-blocking review-completeness warnings: clean and marked rendering continues.
+Each warning prints the concrete path or paths that require attention.
+
+The first audit of populated comments records comment fingerprints in
+`revision_NN/output/review_index.yaml`. Later reordering that would remap the
+same comment text to a different ID is reported as `REVIEW_ID_DRIFT` instead of
+silently changing the established association.
+
+```bash
+sci-manuscript build --project /absolute/path/to/project --round r01
+sci-manuscript submission --project /absolute/path/to/project --round r01
+```
+
+A revision build publishes clean and marked manuscript PDFs. Submission also
+publishes the available correspondence and package artifacts. If comments are
+present while some responses remain unfinished, the response PDF may contain
+visible pending placeholders and the audit remains `INCOMPLETE`. If the comment
+template is still empty, the manuscript PDFs can still be built and the audit
+points directly to `reviewer_comments.md`.
 
 Response locations are calculated in an independent transparent line-label
 compilation. Registries, flattened TeX, extracted text, and compiler files
@@ -157,8 +212,24 @@ Chinese text decoration remains continuous through CJK punctuation.
 ## Submission and artifact contract
 
 `submission` builds the clean manuscript and version-local submission material;
-for a revision it also builds the adjacent marked comparison and response
-letter. The marked comparison is always direct-parent to current.
+for a revision it also builds the adjacent marked comparison. A response letter
+is assembled when parsed review comments are available. Review-completeness
+warnings do not suppress manuscript rendering or the rest of the package.
+
+The copied `submission/package/checklist.md` receives one generated line:
+
+```text
+Review completeness: COMPLETE
+```
+
+or
+
+```text
+Review completeness: INCOMPLETE
+```
+
+The terminal audit remains the detailed source of unresolved IDs and concrete
+paths.
 
 After clean and marked compilation, the workflow parses both compiler logs and
 compares their unique overfull boxes. Any marked-specific overfull box fails the
