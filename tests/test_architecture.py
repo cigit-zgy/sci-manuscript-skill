@@ -28,6 +28,8 @@ def test_runtime_resources_are_package_data() -> None:
     required = (
         "authors.yaml",
         "revision_style.tex",
+        "reviewer_comments/reviewer_comments_en.md",
+        "reviewer_comments/reviewer_comments_zh.md",
         "manuscript/preamble.tex",
         "manuscript/sections/default/00_frontmatter_zh.tex",
         "manuscript/sections/default/01_manuscript.tex",
