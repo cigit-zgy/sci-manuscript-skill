@@ -436,8 +436,7 @@ def _compile_submission_source(
         if (
             sibling.is_file()
             and sibling != source
-            and sibling.suffix.lower()
-            in {".png", ".jpg", ".jpeg", ".pdf"}
+            and sibling.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf"}
         ):
             shutil.copy2(sibling, stage / sibling.name)
     generate_metadata(config.project, config.round_dir(config.current_round), stage)
