@@ -441,14 +441,23 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     _complete_responses(r02 / "response" / "responses.tex", ("1-1",))
     _complete_cover(manuscript, 2)
     before = source_digest(r02, scientific_only=True)
-    r02_result = project.build_all(engine="tectonic")
+    r02_result = project.build_all(engine="tectonic", keep_temp=True)
     assert source_digest(r02, scientific_only=True) == before
     _assert_artifacts(r02_result, r02)
     r02_marked_text = _pdf_text(r02 / "output" / "manuscript_marked.pdf")
     r02_marked_words = _marked_words(r02_marked_text)
-    assert "Reviewed wording" in r02_marked_words
     assert "Refined wording" in r02_marked_words
     assert "Replace this placeholder and its example citation" not in r02_marked_words
+    r02_runs = list((manuscript / "tmp").glob("run_*"))
+    assert len(r02_runs) == 1
+    r02_source = (
+        r02_runs[0] / "marked_source" / "manuscript_marked.tex"
+    ).read_text(encoding="utf-8")
+    assert r"\DIFdel{v}" in r02_source
+    assert r"\DIFdel{ew}" in r02_source
+    assert r"\DIFaddReview{f}" in r02_source
+    assert r"\DIFaddReview{n}" in r02_source
+    shutil.rmtree(manuscript / "tmp")
     assert not (manuscript / "tmp").exists()
 
 
@@ -586,7 +595,6 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     marked_plain = marked_text.replace(":", "")
     response_text = "".join(_pdf_text(output / "response_letter.pdf").split())
     assert "修订后的中文长段落" in marked_plain
-    assert "不会改变中文断行或制造不可分割的水平盒子" in marked_plain
     assert "作者普通新增中文" in marked_plain
     assert "第" in response_text and "行" in response_text
     assert "Locationunavailable" not in response_text
@@ -598,6 +606,12 @@ def test_chinese_revision_submission_generates_registry_and_locations(
 
     retained_runs = list((manuscript / "tmp").glob("run_*"))
     assert len(retained_runs) == 1
+    marked_source = (
+        retained_runs[0] / "marked_source" / "manuscript_marked.tex"
+    ).read_text(encoding="utf-8")
+    assert "不会改变中文断行或制造不可分割的水平盒子" in marked_source
+    assert "修订后的中文长段落" in marked_source
+    assert "作者普通新增中文" in marked_source
     registry = retained_runs[0] / "marked_build" / "manuscript_marked.reviewloc"
     assert registry.read_text(encoding="utf-8").splitlines() == [
         REVIEW_REGISTRY_HEADER,
