@@ -450,9 +450,9 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     assert "Replace this placeholder and its example citation" not in r02_marked_words
     r02_runs = list((manuscript / "tmp").glob("run_*"))
     assert len(r02_runs) == 1
-    r02_source = (
-        r02_runs[0] / "marked_source" / "manuscript_marked.tex"
-    ).read_text(encoding="utf-8")
+    r02_source = (r02_runs[0] / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
     assert r"\DIFdel{v}" in r02_source
     assert r"\DIFdel{ew}" in r02_source
     assert r"\DIFaddReview{f}" in r02_source
