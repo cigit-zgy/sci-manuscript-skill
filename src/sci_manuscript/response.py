@@ -672,7 +672,15 @@ def build_response(
         raise WorkflowError(
             "Response source still contains unfinished responses: " + ", ".join(pending)
         )
-    revised_ids = _ids_from_sources(version).intersection(expected_ids)
+    legacy_revised_ids = {
+        comment.review_id
+        for block in blocks
+        for comment in block.comments
+        if comment.status == "manuscript_revised"
+    }
+    revised_ids = (
+        _ids_from_sources(version) | legacy_revised_ids
+    ).intersection(expected_ids)
     missing_locations = sorted(
         review_id
         for review_id in revised_ids
