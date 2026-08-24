@@ -97,11 +97,29 @@ the current source. This compilation uses reviewer intervals only for line
 labels and never for colors. Consequently response-letter location generation
 cannot change marked-manuscript rendering.
 
-## 6. Release invariants
+## 6. Fidelity and release invariants
+
+Revision validation has two independent fidelity layers.
+
+**Source fidelity** checks the generated marked TeX and unit-level refinement
+operations. Old and new replacement content must remain represented by deletion,
+addition, reviewer-addition, and unchanged spans without character loss.
+Character-level refinement may interleave unchanged text with several diff
+macros, so a complete old or new sentence is not required to remain one
+contiguous source substring.
+
+**Render fidelity** checks the compiled PDF. The current manuscript text must
+compile, reviewer/author/deletion colors must be present in rendered pixels, and
+marked rendering must introduce no layout overflow absent from the clean build.
+PDF text extraction is useful for ordinary current text but is not a fidelity
+oracle for deleted or character-refined text: strikeout, wave underline, CJK
+font handling, and interleaved diff macros can change extraction order without
+changing the visible manuscript.
 
 A revision implementation is acceptable only when all of the following pass:
 
-1. unit tests for provenance extraction and refinement policy;
+1. unit tests for provenance extraction, refinement policy, and lossless
+   old/new replacement representation;
 2. formatting, linting, typing, package build, and wheel smoke tests;
 3. real LaTeX integration tests with blue, green, and red rendered pixels;
 4. clean-versus-marked layout QA with zero marked-specific overflow;
