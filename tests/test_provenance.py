@@ -47,6 +47,22 @@ def test_character_refinement_colors_only_real_reviewer_change() -> None:
     assert r"\DIFaddReview{模型能够" not in classified
 
 
+def test_character_refinement_preserves_old_and_new_text_spans() -> None:
+    provenance = extract_provenance(
+        r"\begin{document}\review{1-1}{Refined wording.}\end{document}"
+    )
+    latexdiff = (
+        r"\begin{document}"
+        r"\DIFdel{Reviewed wording.}\DIFadd{Refined wording.}"
+        r"\end{document}"
+    )
+    classified = _classify_reviewer_additions(latexdiff, provenance)
+    assert (
+        r"Re\DIFdel{v}\DIFaddReview{f}i\DIFdel{ew}"
+        r"\DIFaddReview{n}ed wording."
+    ) in classified
+
+
 def test_frontmatter_addition_is_classified_before_begin_document() -> None:
     provenance = extract_provenance(
         r"\cnabstract{\review{1-1}{第一句不变。第二句新表述。}}"
