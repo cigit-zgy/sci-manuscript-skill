@@ -120,8 +120,8 @@ def _publisher_layout(
 
 
 def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
-    """Create the canonical composition root, sections, and preamble."""
-    frontmatter, plan, package, style = _publisher_layout(config)
+    """Create user-owned manuscript composition and section sources."""
+    frontmatter, plan, _package, style = _publisher_layout(config)
     abstract_input = ""
     body_plan = plan
     if frontmatter is None:
@@ -155,15 +155,6 @@ def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
             version / "sections" / item["file"],
             {"SECTION_TITLE": item["title"]},
         )
-    preamble_source = resources_root() / "manuscript" / "preamble"
-    preamble_target = version / "preamble"
-    preamble_target.mkdir(parents=True, exist_ok=True)
-    for name in ("common.tex", "zh.tex", "en.tex"):
-        render_template(
-            preamble_source / name,
-            preamble_target / name,
-            {"BIBLIOGRAPHY_PACKAGE": package},
-        )
 
 
 def install_reference_resources(
@@ -176,7 +167,7 @@ def install_reference_resources(
     shutil.copy2(authors_source, config.references / "authors.yaml")
     shutil.copy2(bibliography_source, config.references / "references.bib")
     shutil.copy2(
-        resources_root() / "revision" / "style.tex",
+        resources_root() / "revision_style.template.tex",
         config.references / "revision_style.tex",
     )
     if config.metadata.publisher == "custom":

@@ -240,7 +240,7 @@ def test_malformed_pending_marker_produces_nonblocking_response_issue(
     assert not audit.is_complete
 
 
-def test_submission_skips_untrusted_response_pdf_but_packages_manuscripts(
+def test_submission_skips_untrusted_response_pdf_but_publishes_manuscripts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -311,11 +311,12 @@ def test_submission_skips_untrusted_response_pdf_but_packages_manuscripts(
     assert any(
         issue.code == "RESPONSES_INVALID" for issue in result.review_audit.issues
     )
-    package = version / "submission" / "package"
-    assert (package / "manuscript.pdf").is_file()
-    assert (package / "marked_manuscript.pdf").is_file()
-    assert not (package / "response_letter.pdf").exists()
-    assert "INCOMPLETE" in (package / "checklist.md").read_text(encoding="utf-8")
+    submission = version / "submission"
+    assert not (submission / "package").exists()
+    assert (submission / "manuscript.pdf").is_file()
+    assert (submission / "marked_manuscript.pdf").is_file()
+    assert not (submission / "response_letter.pdf").exists()
+    assert "INCOMPLETE" in (submission / "checklist.md").read_text(encoding="utf-8")
     assert {path.name for path in config.output_dir(1).iterdir()} == {
         "manuscript_clean.pdf",
         "manuscript_marked.pdf",

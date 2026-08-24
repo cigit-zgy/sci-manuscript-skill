@@ -69,7 +69,17 @@ them, and non-interactive initialization still requires explicit
 `--first-author` and `--corresponding-author`. Omitting `--bib` uses the package
 bibliography placeholder and must be reported as requiring replacement.
 Initialization creates and builds only `initial_submission`; it must not create
-a revision or a submission package.
+a revision or submission files.
+
+Journal templates, publisher classes/styles, and the shared manuscript
+preamble are installed package resources. A build resolves them after reading
+the user project, stages them under `manuscript/tmp/<run>/`, compiles there, and
+publishes final PDFs. User rounds therefore do not contain `preamble/`,
+`manuscript_preamble/`, `journal_templates/`, publisher `.cls`/`.bst`,
+`workflow.tex`, or `sections.yaml`. The one intentional style copy is
+`references/revision_style.tex`, initialized from the packaged
+`revision_style.template.tex` so users can configure revision colors and the
+deletion strikeout.
 
 ## Initial submission
 
@@ -79,8 +89,11 @@ sci-manuscript submission --project /absolute/path/to/project
 ```
 
 The clean PDF is `initial_submission/output/manuscript.pdf`. Submission sources
-are created on demand under `initial_submission/submission/`; their package is
-published under `submission/package/` without exposing compiler intermediates.
+are created on demand under `initial_submission/submission/`; final submission
+files are published directly in that directory without a nested `package/` and
+without exposing compiler intermediates. `cover_letter.tex`, `highlights.tex`,
+the graphical-abstract directory, and `checklist.md` are user-editable;
+generated PDFs share the same submission directory.
 
 `build` recompiles only the selected clean manuscript. It must not create the
 next revision, submission sources, or scientific content.
@@ -218,7 +231,7 @@ for a revision it also builds the adjacent marked comparison. A response letter
 is assembled when parsed review comments are available. Review-completeness
 warnings do not suppress manuscript rendering or the rest of the package.
 
-The copied `submission/package/checklist.md` receives one generated line:
+The staged `submission/checklist.md` receives one generated line:
 
 ```text
 Review completeness: COMPLETE

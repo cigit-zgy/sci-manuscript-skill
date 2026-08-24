@@ -5,10 +5,13 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, replace
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
 import yaml
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap
 
 from .authors import (
     CONFIG_DIRECTORY_ENV,
@@ -337,9 +340,9 @@ def load_meta(path: Path) -> ManuscriptMetadata:
     )
 
 
-def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
-    """Atomically write deterministic round metadata."""
-    data = {
+def _metadata_data(metadata: ManuscriptMetadata) -> dict[str, Any]:
+    """Return the canonical editable metadata mapping."""
+    return {
         "revision": {
             "round": round_name(metadata.round_number),
             "name": revision_directory_name(metadata.round_number),
@@ -375,11 +378,90 @@ def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
             "signing_author": metadata.correspondence.signing_author or None,
         },
     }
+
+
+def _update_commented_mapping(
+    target: CommentedMap,
+    values: dict[str, Any],
+) -> None:
+    """Update known values without replacing comments or mapping order."""
+    for key, value in values.items():
+        if isinstance(value, dict):
+            nested = target.get(key)
+            if not isinstance(nested, CommentedMap):
+                nested = CommentedMap()
+                target[key] = nested
+            _update_commented_mapping(nested, value)
+        else:
+            target[key] = value
+
+
+def _add_meta_comments(data: CommentedMap) -> None:
+    """Annotate a newly created user metadata file."""
+    data.yaml_set_start_comment(
+        "Editable manuscript configuration. Build commands read this file but do "
+        "not rewrite it."
+    )
+    revision = data["revision"]
+    revision.yaml_set_comment_before_after_key(
+        "round", before="Lifecycle round; managed only by revision/reindex operations."
+    )
+    manuscript = data["manuscript"]
+    manuscript.yaml_set_comment_before_after_key(
+        "title", before="Manuscript title shown in the selected publisher template."
+    )
+    manuscript.yaml_set_comment_before_after_key(
+        "language", before="Manuscript language: en or zh."
+    )
+    manuscript.yaml_set_comment_before_after_key(
+        "article_type", before="Journal article type, for example Perspective."
+    )
+    journal = data["journal"]
+    journal.yaml_set_comment_before_after_key(
+        "name", before="Target journal name used in correspondence."
+    )
+    journal.yaml_set_comment_before_after_key(
+        "publisher",
+        before="Packaged publisher resource key: chinese, elsevier, nature, or acs.",
+    )
+    authors = data["authors"]
+    authors.yaml_set_comment_before_after_key(
+        "first_author", before="Author IDs come from references/authors.yaml."
+    )
+    authors.yaml_set_comment_before_after_key(
+        "corresponding_author",
+        before="Corresponding-author IDs; email is required in authors.yaml.",
+    )
+    authors.yaml_set_comment_before_after_key(
+        "other_author", before="Remaining author IDs in publication order."
+    )
+
+
+def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
+    """Atomically update metadata while preserving user YAML comments."""
+    yaml_round_trip = YAML(typ="rt")
+    yaml_round_trip.preserve_quotes = True
+    yaml_round_trip.width = 1000
+    yaml_round_trip.indent(mapping=2, sequence=4, offset=2)
+    is_new = not path.exists()
+    if is_new:
+        document = CommentedMap()
+    else:
+        try:
+            loaded = yaml_round_trip.load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise MetadataError(f"Cannot preserve metadata YAML: {path}") from exc
+        if not isinstance(loaded, CommentedMap):
+            raise MetadataError(f"Metadata root must be a mapping: {path}")
+        document = loaded
+    _update_commented_mapping(document, _metadata_data(metadata))
+    if is_new:
+        _add_meta_comments(document)
+    buffer = StringIO()
+    yaml_round_trip.dump(document, buffer)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".yaml.new")
-    temporary.write_text(
-        yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    temporary.write_text(buffer.getvalue(), encoding="utf-8")
     os.replace(temporary, path)
 
 

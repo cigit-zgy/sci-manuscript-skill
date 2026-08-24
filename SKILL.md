@@ -77,12 +77,12 @@ publisher resource only to diagnose that exact publisher build.
   `reviewer_comments.md <-> responses.tex <-> \review{...}`. Missing responses,
   orphan responses, orphan provenance references, empty comments, invalid input,
   and review-ID drift are warnings. Rendering continues. Every warning reports
-  concrete source paths; `submission/package/checklist.md` records review
+  concrete source paths; `submission/checklist.md` records review
   completeness as `COMPLETE` or `INCOMPLETE`.
 - `output/` contains final user PDFs, `state/` contains persistent machine state,
   and lazy `tmp/` contains reproducible run diagnostics. Successful operations
   remove `tmp/` unless diagnostics are explicitly retained.
-- Editable `response/responses.tex` and `submission/cover_letter_body.tex`
+- Editable `response/responses.tex` and `submission/cover_letter.tex`
   sources are created once and not replaced by later builds. Complete
   correspondence documents are assembled from installed templates only in
   `tmp/`.
@@ -95,6 +95,13 @@ publisher resource only to diagnose that exact publisher build.
 - Cover-letter `\guidance{...}` blocks and unresolved template tokens still
   block submission because they are unresolved submission content rather than
   review-completeness warnings.
+- Built-in journal templates and manuscript preambles remain package resources.
+  They are staged only under `tmp/<run>/`; user rounds never contain
+  `preamble/`, `manuscript_preamble/`, `journal_templates/`, publisher
+  `.cls`/`.bst`, `workflow.tex`, or `sections.yaml`.
+- Submission artifacts are published directly under `submission/`, never under
+  a generated `submission/package/` directory. Editable submission sources and
+  their final PDFs share that user-facing directory.
 
 ## Entrypoints
 

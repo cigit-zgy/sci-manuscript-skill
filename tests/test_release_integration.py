@@ -103,7 +103,7 @@ def _complete_responses(source: Path, review_ids: tuple[str, ...]) -> None:
 
 def _complete_cover(manuscript: Path, round_number: int) -> Path:
     config = load_project(manuscript, round_number)
-    source = ensure_submission_workspace(config, round_number) / "cover_letter_body.tex"
+    source = ensure_submission_workspace(config, round_number) / "cover_letter.tex"
     text = re.sub(
         r"\\guidance\{.*?\}",
         "Approved anonymous cover-letter statement.",
@@ -258,18 +258,33 @@ def _assert_artifacts(result: LifecycleResult, version: Path) -> None:
         "Highlights",
         "Graphical abstract",
         "Submission checklist",
-        "Submission package",
+        "Submission files",
     }
-    package = version / "submission" / "package"
-    assert {path.name for path in package.iterdir()} == {
-        "checklist.md",
+    submission = version / "submission"
+    assert not (submission / "package").exists()
+    assert {
+        path.name
+        for path in submission.iterdir()
+        if path.is_file() and path.suffix == ".pdf"
+    } == {
         "cover_letter.pdf",
-        "graphical_abstract.pdf",
         "highlights.pdf",
         "manuscript.pdf",
         "marked_manuscript.pdf",
         "response_letter.pdf",
     }
+    assert {path.name for path in submission.iterdir()} == {
+        "checklist.md",
+        "cover_letter.tex",
+        "cover_letter.pdf",
+        "graphical_abstract",
+        "highlights.tex",
+        "highlights.pdf",
+        "manuscript.pdf",
+        "marked_manuscript.pdf",
+        "response_letter.pdf",
+    }
+    assert (submission / "graphical_abstract" / "graphical_abstract.pdf").is_file()
 
 
 def test_target_aware_chinese_doctor_runs_real_probe() -> None:
@@ -471,7 +486,7 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     response = r01 / "output" / "response_letter.pdf"
     marked_text = _pdf_text(marked)
     response_text = _pdf_text(response)
-    cover_text = _pdf_text(r01 / "submission" / "package" / "cover_letter.pdf")
+    cover_text = _pdf_text(r01 / "submission" / "cover_letter.pdf")
     marked_words = _marked_words(marked_text)
     assert "Reviewed wording" in marked_words
     assert "Replace this placeholder" in marked_words
@@ -560,7 +575,7 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     result = project.build_all(engine="tectonic", keep_temp=True)
     _assert_artifacts(result, revision)
     cover_text = "".join(
-        _pdf_text(revision / "submission" / "package" / "cover_letter.pdf").split()
+        _pdf_text(revision / "submission" / "cover_letter.pdf").split()
     )
     response_text = "".join(
         _pdf_text(revision / "output" / "response_letter.pdf").split()
@@ -585,9 +600,9 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     assert "位置不可用" not in assembled_text
     assert assembled_text.count("\\reviewlocation{第 ") == 2
     assert not (revision / "response" / "response_letter.tex").exists()
-    assert not (revision / "submission" / "cover_letter.tex").exists()
+    assert (revision / "submission" / "cover_letter.tex").is_file()
     assert "\\documentclass" not in response_source_text
-    cover_body = revision / "submission" / "cover_letter_body.tex"
+    cover_body = revision / "submission" / "cover_letter.tex"
     assert "\\documentclass" not in cover_body.read_text(encoding="utf-8")
     logs = list(retained_runs[0].rglob("*.compiler.log"))
     diagnostics = "\n".join(path.read_text(errors="replace") for path in logs)
@@ -702,7 +717,9 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     assert (retained_runs[0] / "response_source" / "response_letter.tex").is_file()
     assert (retained_runs[0] / "cover_source" / "cover_letter.tex").is_file()
     assert not (revision / "response" / "response_letter.tex").exists()
-    assert not (revision / "submission" / "cover_letter.tex").exists()
+    cover_source = revision / "submission" / "cover_letter.tex"
+    assert cover_source.is_file()
+    assert "\\documentclass" not in cover_source.read_text(encoding="utf-8")
     shutil.rmtree(manuscript / "tmp")
 
 

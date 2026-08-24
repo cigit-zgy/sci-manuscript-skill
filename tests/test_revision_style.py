@@ -8,7 +8,7 @@ from sci_manuscript.diff import REVISION_RUNTIME
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STYLE = ROOT / "src" / "sci_manuscript" / "resources" / "revision" / "style.tex"
+STYLE = ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.template.tex"
 
 
 def test_chinese_deletion_marks_include_cjk_punctuation() -> None:

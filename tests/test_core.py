@@ -235,9 +235,7 @@ def test_chinese_publisher_uses_full_width_commas_between_authors(
 
 def test_revision_provenance_fallbacks_live_only_in_shared_preamble() -> None:
     root = resources_root()
-    preamble = (root / "manuscript" / "preamble" / "common.tex").read_text(
-        encoding="utf-8"
-    )
+    preamble = (root / "manuscript_preamble" / "common.tex").read_text(encoding="utf-8")
     definitions = (
         r"\providecommand{\review}[2]{#2}",
         r"\providecommand{\user}[1]{#1}",
@@ -553,11 +551,11 @@ def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
         ),
         _anonymous_author_library(tmp_path),
     )
-    source = ensure_submission_workspace(config, 0) / "cover_letter_body.tex"
+    source = ensure_submission_workspace(config, 0) / "cover_letter.tex"
     original = source.read_text(encoding="utf-8")
     assert "\\guidance{" in original
     assert "\\documentclass" not in original
-    assert not (source.parent / "cover_letter.tex").exists()
+    assert not (source.parent / "cover_letter_body.tex").exists()
     source.write_text(original + "\n% user-owned cover edit\n", encoding="utf-8")
     ensure_submission_workspace(config, 0)
     assert source.read_text(encoding="utf-8").endswith("% user-owned cover edit\n")

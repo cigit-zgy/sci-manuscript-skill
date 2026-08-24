@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["PyYAML>=6.0,<7"]
+dependencies = ["PyYAML>=6.0,<7", "ruamel.yaml>=0.18,<0.19"]
 
 [project.optional-dependencies]
 dev = [

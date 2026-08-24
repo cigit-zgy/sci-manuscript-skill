@@ -234,7 +234,21 @@ class ManuscriptProject:
         for number in range(latest.current_round + 1):
             version = latest.round_dir(number)
             artifacts.extend(sorted((version / "output").glob("*.pdf")))
-            artifacts.extend(sorted((version / "submission" / "package").glob("*")))
+            submission = latest.submission_dir(number)
+            for name in (
+                "manuscript.pdf",
+                "marked_manuscript.pdf",
+                "response_letter.pdf",
+                "cover_letter.pdf",
+                "highlights.pdf",
+                "checklist.md",
+            ):
+                path = submission / name
+                if path.is_file():
+                    artifacts.append(path)
+            graphical = submission / "graphical_abstract" / "graphical_abstract.pdf"
+            if graphical.is_file():
+                artifacts.append(graphical)
         return StatusResult(
             self.root,
             revision_directory_name(latest.current_round),

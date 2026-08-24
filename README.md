@@ -179,17 +179,28 @@ existing-project/
     │   ├── output/
     │   └── submission/
     ├── revision_01/
-        ├── meta.yaml
-        ├── manuscript.tex
-        ├── sections/
-        ├── figures/
-        ├── tables/
-        ├── response/
-        │   ├── reviewer_comments.md
-        │   └── responses.tex
-        ├── output/
-        └── submission/
-            └── cover_letter_body.tex
+    │   ├── meta.yaml
+    │   ├── manuscript.tex
+    │   ├── sections/
+    │   ├── figures/
+    │   ├── tables/
+    │   ├── response/
+    │   │   ├── reviewer_comments.md
+    │   │   └── responses.tex
+    │   ├── output/
+    │   │   ├── manuscript_clean.pdf
+    │   │   ├── manuscript_marked.pdf
+    │   │   └── response_letter.pdf
+    │   └── submission/
+    │       ├── manuscript.pdf
+    │       ├── marked_manuscript.pdf
+    │       ├── response_letter.pdf
+    │       ├── cover_letter.tex
+    │       ├── cover_letter.pdf
+    │       ├── highlights.tex
+    │       ├── highlights.pdf
+    │       ├── graphical_abstract/
+    │       └── checklist.md
     ├── state/
     │   └── revision_01/
     │       ├── creation.yaml
@@ -197,20 +208,26 @@ existing-project/
     └── tmp/
 ```
 
-No project-local `run.py` is created. Built-in publisher classes and generated
-metadata are staged from installed package resources inside a temporary build,
-so the user workspace stays small. A custom publisher alone creates
-`references/journal_template/`. `tmp/` is created only during work and removed
-after success.
+No project-local `run.py`, `preamble/`, `manuscript_preamble/`,
+`journal_templates/`, publisher `.cls`/`.bst`, `workflow.tex`, or
+`sections.yaml` is created. Built-in journal templates and manuscript preambles
+remain installed package resources. Each build resolves those resources into
+`tmp/<run>/`, compiles there, and publishes only final PDFs to `output/`. A
+custom publisher alone creates `references/journal_template/`. `tmp/` is
+created only during work and removed after success.
 
 `output/` contains final user PDFs only. Persistent machine state, including
 review-ID drift fingerprints, belongs under `state/`; reproducible compiler,
 diff, registry, and QA intermediates belong under the current `tmp/<run>/`.
 
 Reviewer comments remain authoritative in `response/reviewer_comments.md`;
-users edit only `response/responses.tex` and `submission/cover_letter_body.tex`.
+users edit only `response/responses.tex` and `submission/cover_letter.tex`.
 Complete response and cover-letter TeX documents are assembled in `tmp/` from
 the installed package correspondence templates during submission builds.
+Submission artifacts are published directly under `submission/`; there is no
+generated `submission/package/` layer. A legacy `cover_letter_body.tex` is read
+once to initialize `cover_letter.tex` without deleting or overwriting the
+legacy source.
 Revision layout QA remains an internal per-run diagnostic under `tmp/`; a marked
 overflow not present in the clean compiler log fails the entire workflow and
 reports the retained diagnostic path.

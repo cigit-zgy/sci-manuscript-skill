@@ -24,6 +24,16 @@ from .workspace import ProjectConfig
 
 GUIDANCE_USE = re.compile(r"\\guidance\s*\{")
 TEMPLATE_TOKEN = re.compile(r"%%[A-Z0-9_]+%%")
+REVIEW_COMPLETENESS_LINE = re.compile(
+    r"(?m)^- Review completeness: \*\*(?:COMPLETE|INCOMPLETE)\*\*\.\n?"
+)
+GENERATED_SUBMISSION_FILES = (
+    "manuscript.pdf",
+    "marked_manuscript.pdf",
+    "response_letter.pdf",
+    "cover_letter.pdf",
+    "highlights.pdf",
+)
 
 
 @dataclass(frozen=True)
@@ -44,12 +54,17 @@ def ensure_submission_workspace(config: ProjectConfig, round_number: int) -> Pat
     values["AUTHOR_METADATA_PATH"] = "author_metadata.tex"
     settings = config.metadata.submission
     resources = resources_root() / "submission"
-    if settings.cover_letter and not (target / "cover_letter_body.tex").exists():
-        render_template(
-            resources / f"cover_letter_body_{config.language}.tex",
-            target / "cover_letter_body.tex",
-            values,
-        )
+    cover_source = target / "cover_letter.tex"
+    legacy_cover_source = target / "cover_letter_body.tex"
+    if settings.cover_letter and not cover_source.exists():
+        if legacy_cover_source.is_file():
+            shutil.copy2(legacy_cover_source, cover_source)
+        else:
+            render_template(
+                resources / f"cover_letter_body_{config.language}.tex",
+                cover_source,
+                values,
+            )
     if settings.highlights and not (target / "highlights.tex").exists():
         render_template(resources / "highlights.tex", target / "highlights.tex", values)
     checklist = target / "checklist.md"
@@ -173,7 +188,7 @@ def prepare_submission_artifacts(
         require_explicit_multiple=True,
     )
     if config.metadata.submission.cover_letter:
-        cover_source = submission / "cover_letter_body.tex"
+        cover_source = submission / "cover_letter.tex"
         try:
             cover_text = cover_source.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
@@ -220,9 +235,7 @@ def prepare_submission_artifacts(
     stage.mkdir(parents=True, exist_ok=True)
     settings = config.metadata.submission
     if settings.cover_letter:
-        _compile_cover_letter(
-            submission / "cover_letter_body.tex", config, run_dir, engine
-        )
+        _compile_cover_letter(submission / "cover_letter.tex", config, run_dir, engine)
     if settings.highlights:
         _compile_submission_source(
             submission / "highlights.tex", "highlights", config, run_dir, engine
@@ -230,31 +243,44 @@ def prepare_submission_artifacts(
     if settings.graphical_abstract:
         graphical_dir = submission / "graphical_abstract"
         supplied = graphical_dir / "graphical_abstract.pdf"
+        staged_graphical = stage / "graphical_abstract" / "graphical_abstract.pdf"
+        staged_graphical.parent.mkdir(parents=True, exist_ok=True)
         if supplied.is_file():
-            shutil.copy2(supplied, stage / supplied.name)
+            shutil.copy2(supplied, staged_graphical)
         else:
-            _compile_submission_source(
+            compiled_graphical = _compile_submission_source(
                 graphical_dir / "graphical_abstract.tex",
                 "graphical_abstract",
                 config,
                 run_dir,
                 engine,
             )
+            shutil.move(compiled_graphical, staged_graphical)
     shutil.copy2(clean, stage / "manuscript.pdf")
     if marked is not None:
         shutil.copy2(marked.pdf, stage / "marked_manuscript.pdf")
     if response_pdf is not None:
         shutil.copy2(response_pdf, stage / "response_letter.pdf")
     checklist = stage / "checklist.md"
-    shutil.copy2(submission / "checklist.md", checklist)
+    checklist_text = (submission / "checklist.md").read_text(encoding="utf-8")
+    checklist_text = REVIEW_COMPLETENESS_LINE.sub("", checklist_text).rstrip()
     if audit is not None:
         state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
-        with checklist.open("a", encoding="utf-8") as handle:
-            handle.write(f"\n- Review completeness: **{state}**.\n")
-    package = submission / "package"
-    if package.exists():
-        shutil.rmtree(package)
-    shutil.copytree(stage, package)
+        checklist_text += f"\n\n- Review completeness: **{state}**."
+    checklist.write_text(checklist_text + "\n", encoding="utf-8")
+    legacy_package = submission / "package"
+    if legacy_package.exists():
+        shutil.rmtree(legacy_package)
+    for name in GENERATED_SUBMISSION_FILES:
+        generated = submission / name
+        if generated.is_file():
+            generated.unlink()
+    for generated in stage.iterdir():
+        target = submission / generated.name
+        if generated.is_dir():
+            shutil.copytree(generated, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(generated, target)
     artifacts = [SubmissionArtifact("Clean manuscript", clean)]
     if marked is not None:
         if layout_report is None:
@@ -270,11 +296,13 @@ def prepare_submission_artifacts(
     for label, name in (
         ("Cover letter", "cover_letter.pdf"),
         ("Highlights", "highlights.pdf"),
-        ("Graphical abstract", "graphical_abstract.pdf"),
         ("Submission checklist", "checklist.md"),
     ):
-        path = package / name
+        path = submission / name
         if path.exists():
             artifacts.append(SubmissionArtifact(label, path))
-    artifacts.append(SubmissionArtifact("Submission package", package))
+    graphical_pdf = submission / "graphical_abstract" / "graphical_abstract.pdf"
+    if graphical_pdf.is_file():
+        artifacts.append(SubmissionArtifact("Graphical abstract", graphical_pdf))
+    artifacts.append(SubmissionArtifact("Submission files", submission))
     return artifacts

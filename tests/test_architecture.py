@@ -30,14 +30,14 @@ def test_runtime_resources_are_package_data() -> None:
     root = files("sci_manuscript.resources")
     required = (
         "authors.yaml",
-        "revision/style.tex",
+        "revision_style.template.tex",
         "revision/marked_runtime.tex",
         "revision/location_runtime.tex",
         "reviewer_comments/reviewer_comments_en.md",
         "reviewer_comments/reviewer_comments_zh.md",
-        "manuscript/preamble/common.tex",
-        "manuscript/preamble/zh.tex",
-        "manuscript/preamble/en.tex",
+        "manuscript_preamble/common.tex",
+        "manuscript_preamble/zh.tex",
+        "manuscript_preamble/en.tex",
         "manuscript/sections/default/00_frontmatter_zh.tex",
         "manuscript/sections/default/01_introduction.tex",
         "manuscript/sections/default/01_introduction_zh.tex",
@@ -60,7 +60,7 @@ def test_runtime_resources_are_package_data() -> None:
 
 def test_revision_semantics_contract_is_documented() -> None:
     style = (
-        ROOT / "src" / "sci_manuscript" / "resources" / "revision" / "style.tex"
+        ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.template.tex"
     ).read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

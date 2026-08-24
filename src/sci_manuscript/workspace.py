@@ -32,7 +32,7 @@ REVISION_DIRECTORY_PATTERN = re.compile(r"^revision_(\d{2,})$")
 ROUND_PATTERN = re.compile(r"^r(\d{2,})$")
 PROTECTED_DIRECTORIES = ("sections", "figures", "tables", "response", "preamble")
 SCIENTIFIC_DIRECTORIES = ("sections", "figures", "tables")
-INHERITED_DIRECTORIES = (*SCIENTIFIC_DIRECTORIES, "preamble")
+INHERITED_DIRECTORIES = SCIENTIFIC_DIRECTORIES
 
 
 @dataclass(frozen=True)
@@ -365,6 +365,7 @@ def start_revision(
     else:
         shutil.copy2(reviews, comments)
     child = with_revision(config.metadata, target_round)
+    shutil.copy2(source / "meta.yaml", staged / "meta.yaml")
     save_meta(staged / "meta.yaml", child)
     os.replace(staged, target)
     return ProjectConfig(config.project, child, config.engine)
