@@ -25,16 +25,26 @@ non-adjacent parents are rejected.
 
 ## Initialization
 
-Run `doctor` before initialization when the environment has not already been
-verified. For Chinese targets, run `sci-manuscript doctor --language zh` so the
-real CJK compile-and-glyph probe is included. Collect an existing parent project
-path, title, journal, publisher, language, article type, author order, and any
-existing author YAML or BibTeX file. Do not infer missing scientific or identity
-data.
+Run `doctor` before the first build when the environment has not already been
+verified. Metadata-first initialization requires only the parent project path:
 
-The author-library priority is strict: explicit `init --authors PATH`, then the
-configured user library, then the bundled role-free public team library in
-`resources/authors.yaml`. Configure a reusable library once with:
+```bash
+sci-manuscript init --project /absolute/path/to/project
+```
+
+It creates a commented `initial_submission/meta.yaml`, prints `Please edit
+meta.yaml before build.`, and does not compile or infer scientific/identity
+data. After the user supplies journal, publisher, language, article type,
+bilingual title/abstract/keywords, funding, author order, and corresponding
+roles, the first build materializes publisher-appropriate manuscript sources.
+The released parameter-rich form remains available for automation and backward
+compatibility.
+
+The author-library priority for existing and explicit workspaces is a project
+`references/authors.yaml`, then the configured user library, then the bundled
+role-free Skill library in `resources/authors.yaml`. Metadata-first init does
+not copy the bundled library into the project. Configure a reusable override
+once with:
 
 ```bash
 sci-manuscript authors configure /absolute/path/to/authors.yaml
@@ -44,10 +54,12 @@ sci-manuscript authors show author_id
 
 The configured location follows the operating-system user configuration
 directory (macOS: `~/Library/Application Support/sci-manuscript/authors.yaml`).
-In an interactive terminal, `init` lists every configured ID with English and
+The parameter-rich interactive init lists every configured ID with English and
 Chinese names and asks separately for first, corresponding, and other IDs.
-Multiple IDs and first/corresponding overlap are valid. These roles are written
-only to the paper's `meta.yaml`; the global profile library stays role-free.
+Multiple IDs and first/corresponding overlap are valid. The new metadata schema
+stores `authors.order` and `authors.corresponding`; it never duplicates names,
+email, affiliations, or bilingual biographies. Every author library stays
+role-free.
 
 ```bash
 sci-manuscript init \
@@ -68,8 +80,11 @@ Neither source assigns manuscript roles: interactive initialization asks for
 them, and non-interactive initialization still requires explicit
 `--first-author` and `--corresponding-author`. Omitting `--bib` uses the package
 bibliography placeholder and must be reported as requiring replacement.
-Initialization creates and builds only `initial_submission`; it must not create
-a revision or submission files.
+Metadata-first initialization creates only editable configuration and workspace
+directories. It must not compile, create a revision, or create submission files.
+During build, bilingual manuscript fields and author-library biographies are
+rendered to `tmp/<run>/publisher_metadata.tex`; successful runs remove tmp and
+no generated metadata TeX enters `initial_submission/`.
 
 Journal templates, publisher classes/styles, and the shared manuscript
 preamble are installed package resources. A build resolves them after reading

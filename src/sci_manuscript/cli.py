@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from . import __version__
 from .api import (
     DoctorResult,
     LifecycleResult,
@@ -14,6 +15,7 @@ from .api import (
     StatusResult,
     doctor,
     initialize_manuscript,
+    initialize_manuscript_draft,
 )
 from .authors import (
     configure_author_library,
@@ -29,6 +31,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sci-manuscript",
         description="Manage a reproducible SCI LaTeX manuscript lifecycle.",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
     )
     commands = parser.add_subparsers(dest="command", required=True)
     doctor_parser = commands.add_parser("doctor", help="Inspect the local toolchain.")
@@ -157,7 +162,9 @@ def _print_lifecycle(
     if result.operation == "init":
         print(f"Initialized: {result.version}")
         print()
-        if language == "zh":
+        if any(item.label == "Metadata template" for item in result.artifacts):
+            print("Please edit meta.yaml before build.")
+        elif language == "zh":
             print(
                 "请检查 manuscript/initial_submission/meta.yaml，并补充尚未填写的论文元信息。"  # noqa: RUF001
             )
@@ -259,6 +266,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Configuration directory: {configured_author_library_path().parent}")
             return 0
         if args.command == "init":
+            if not any(
+                (
+                    args.title,
+                    args.journal,
+                    args.article_type,
+                    args.publisher,
+                    args.language,
+                    args.first_author,
+                    args.corresponding_author,
+                    args.other_author,
+                    args.authors,
+                    args.bib,
+                    args.custom_template,
+                )
+            ):
+                lifecycle_result = initialize_manuscript_draft(args.project)
+                _print_lifecycle(lifecycle_result, args.project)
+                return 0
             first, corresponding, other = _selected_authors(args)
             lifecycle_result = initialize_manuscript(
                 args.project,

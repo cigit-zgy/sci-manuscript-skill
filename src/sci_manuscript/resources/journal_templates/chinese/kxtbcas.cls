@@ -292,7 +292,7 @@
     {\end{table*}}
 
 \newcommand{\kxtb@metaentry}[2]{%
-  \ifstrempty{#2}{}{\noindent\textbf{#1}#2\par}%
+  \ifstrempty{#2}{}{\noindent\raggedright\textbf{#1}#2\par}%
 }
 
 \newcommand{\kxtb@datesline}{%
@@ -358,13 +358,24 @@
     \vspace{6pt}
     {\fontsize{10.5}{14}\selectfont \kxtb@enaffiliation\par}
   \end{center}
-  \ifstrempty{\kxtb@firstauthoren}{}{\vspace{6pt}{\fontsize{10}{13}\selectfont First author: \kxtb@firstauthoren\par}}
-  \ifstrempty{\kxtb@corrauthoren}{}{\vspace{4pt}{\fontsize{10}{13}\selectfont * Corresponding author: \kxtb@corrauthoren\par}}
+  \ifstrempty{\kxtb@firstauthoren}{}{\vspace{6pt}{\fontsize{10}{13}\selectfont\raggedright First author: \kxtb@firstauthoren\par}}
+  \ifstrempty{\kxtb@corrauthoren}{}{\vspace{4pt}{\fontsize{10}{13}\selectfont\raggedright * Corresponding author: \kxtb@corrauthoren\par}}
   \vspace{10pt}
   {\fontsize{10.5}{13.65}\selectfont\setstretch{1.3}\textbf{Abstract: }\kxtb@enabstract\par}
   \vspace{8pt}
   {\fontsize{10.5}{13.65}\selectfont\setstretch{1.3}\textbf{Keywords: }\kxtb@enkeywords\par}
   % \ifstrempty{\kxtb@doi}{}{\vspace{0.5em}{\small doi: \kxtb@doi\par}}
 }{}
+
+\newcommand{\kxtb@renderenglishsummary}{%
+  \begin{kxtbsummary}
+  \end{kxtbsummary}%
+}
+
+\newcommand{\makeenglishsummary}{%
+  \ifstrempty{\kxtb@entitle}
+    {\ifstrempty{\kxtb@enabstract}{}{\kxtb@renderenglishsummary}}
+    {\kxtb@renderenglishsummary}%
+}
 
 \makeatother

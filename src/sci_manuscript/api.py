@@ -25,9 +25,11 @@ from .metadata import (
 from .response import init_response, parse_reviews
 from .review import ReviewAuditResult, audit_reviews
 from .submission import prepare_submission_artifacts
+from .templates import ensure_manuscript_sources
 from .workspace import (
     ProjectConfig,
     finalize_revision_creation,
+    initialize_draft_project,
     initialize_project,
     is_initialized,
     load_project,
@@ -212,6 +214,16 @@ def initialize_manuscript(
     )
 
 
+def initialize_manuscript_draft(path: str | Path) -> LifecycleResult:
+    """Create a metadata-first workspace without compiling or inventing content."""
+    metadata_path = initialize_draft_project(path)
+    return LifecycleResult(
+        "init",
+        revision_directory_name(0),
+        (Artifact("Metadata template", metadata_path),),
+    )
+
+
 class ManuscriptProject:
     """High-level lifecycle operations for one project/manuscript workspace."""
 
@@ -275,6 +287,7 @@ class ManuscriptProject:
         latest = load_project(self.root)
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
+        ensure_manuscript_sources(config, selected)
         audit: ReviewAuditResult | None = None
         with temporary_run(self.root, keep_temp) as run_dir:
             clean = build_clean_manuscript(config, selected, run_dir, engine)
@@ -373,6 +386,7 @@ class ManuscriptProject:
         latest = load_project(self.root)
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
+        ensure_manuscript_sources(config, selected)
         audit = (
             audit_reviews(config, selected, record_index=True) if selected > 0 else None
         )

@@ -28,6 +28,8 @@ class AuthorRecord:
     name_en: str
     email: str
     affiliations: tuple[str, ...]
+    bio_zh: str = ""
+    bio_en: str = ""
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,14 @@ def resolve_author_library_path(explicit: str | Path | None = None) -> Path:
     return bundled
 
 
+def resolve_workspace_author_library_path(manuscript_root: Path) -> Path:
+    """Resolve a legacy project library before user-level and bundled data."""
+    project_library = manuscript_root / "references" / "authors.yaml"
+    return (
+        project_library if project_library.is_file() else resolve_author_library_path()
+    )
+
+
 def configure_author_library(source: str | Path) -> Path:
     """Validate and atomically install one reusable user author library."""
     selected = Path(source).expanduser().resolve()
@@ -224,6 +234,8 @@ def load_author_library(path: Path) -> AuthorLibrary:
             "name_en",
             "email",
             "affiliations",
+            "bio_zh",
+            "bio_en",
         }
         if unexpected_author:
             raise MetadataError(
@@ -250,6 +262,8 @@ def load_author_library(path: Path) -> AuthorLibrary:
             _text(record.get("name_en"), f"authors.{author_id}.name_en"),
             _text(record.get("email"), f"authors.{author_id}.email", optional=True),
             keys,
+            _text(record.get("bio_zh"), f"authors.{author_id}.bio_zh", optional=True),
+            _text(record.get("bio_en"), f"authors.{author_id}.bio_en", optional=True),
         )
     if not authors:
         raise MetadataError("authors must not be empty.")

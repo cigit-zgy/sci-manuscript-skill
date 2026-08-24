@@ -182,7 +182,10 @@ def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
     assert r"\bibliographystyle{kxtbcas-numeric}" in manuscript
     assert r"\bibliography{references}" in manuscript
     assert r"\clearpage" not in manuscript
-    assert "kxtbsummary" not in manuscript
+    assert manuscript.count(r"\makeenglishsummary") == 1
+    assert manuscript.index(r"\bibliography{references}") < manuscript.index(
+        r"\makeenglishsummary"
+    )
     for forbidden in ("methods", "results", "discussion", "conclusion"):
         assert forbidden not in manuscript.lower()
     frontmatter = (sections / "00_frontmatter.tex").read_text(encoding="utf-8")

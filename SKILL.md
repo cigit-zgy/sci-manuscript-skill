@@ -30,7 +30,7 @@ not write reviewer-response prose on the user's behalf.
 | Request | Action |
 | --- | --- |
 | Check environment | Run `sci-manuscript doctor`; read [environment.md](references/environment.md) only for a blocker |
-| Start a paper | Collect project, journal, publisher, language, article type, author roles, and optional bibliography; if no author library is configured, route to `sci-manuscript authors configure PATH`, then run `init` |
+| Start a paper | Run `init --project PATH` to create commented metadata without inventing values; the user edits `meta.yaml` before the first build. The parameter-rich form remains supported for automation. |
 | Build | Run `build`; r00 retains clean output, while revision rounds retain both clean and adjacent marked PDFs; revision rounds also print the review audit without blocking rendering |
 | Start revision | Read the response/revision parts of [workflow.md](references/workflow.md) and the normative [revision semantics](references/revision_semantics.md); run `revision` only after explicit confirmation |
 | Prepare submission | Run `submission`; it builds available artifacts, records review completeness in the checklist, and prints unresolved review items with file paths |
@@ -46,10 +46,17 @@ publisher resource only to diagnose that exact publisher build.
   preserved and an existing `manuscript/` is never overwritten.
 - Revision ancestry is adjacent and fixed-width:
   `initial_submission (r00) -> revision_01 (r01) -> revision_02 (r02)`.
-- Only `manuscript/references/` contains `authors.yaml`, `references.bib`, and
-  `revision_style.tex`; revision directories never contain `references/`.
+- `manuscript/references/` contains `references.bib` and `revision_style.tex`.
+  A legacy or explicit project `authors.yaml` remains supported there; otherwise
+  builds resolve the configured or bundled Skill-level author library. Revision
+  directories never contain `references/`.
 - Built-in publisher resources are package data, not copied user files. Only a
   custom publisher creates `references/journal_template/`.
+- `meta.yaml` owns bilingual manuscript title, abstract, keywords, funding,
+  language, article type, journal, publisher, author order, and corresponding
+  roles. The author library owns names, email, affiliations, and bilingual
+  biography strings. Runtime `publisher_metadata.tex` combines both under
+  `tmp/<run>/` and is never published into a manuscript round.
 - `manuscript.tex` is a user-owned composition root. Builds read it but never
   overwrite it.
 - `revision` creates `response/reviewer_comments.md` automatically from the
@@ -110,6 +117,7 @@ sci-manuscript doctor
 sci-manuscript authors configure /path/to/authors.yaml
 sci-manuscript authors list
 sci-manuscript init --help
+sci-manuscript init --project /path/to/project
 sci-manuscript status --project /path/to/project
 sci-manuscript build --project /path/to/project
 sci-manuscript revision --project /path/to/project --yes

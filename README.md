@@ -46,17 +46,16 @@ python -m pip install .
 sci-manuscript doctor
 ```
 
-Initialize a manuscript project:
+Initialize a metadata-first manuscript project:
 
 ```bash
-sci-manuscript init \
-  --project /path/to/project \
-  --title "Manuscript title" \
-  --journal "Target Journal" \
-  --publisher elsevier \
-  --language en \
-  --article-type "Research Article"
+sci-manuscript init --project /path/to/project
 ```
+
+The command creates a fully commented `initial_submission/meta.yaml` and prints
+`Please edit meta.yaml before build.` It does not compile, select authors, or
+invent manuscript metadata. The released parameter-rich initialization form
+remains available for automation and backward compatibility.
 
 Build:
 
@@ -71,11 +70,10 @@ User-facing manuscript projects follow this structure:
 ```text
 manuscript/
 ├── references/
-│   ├── authors.yaml
-│   ├── meta.yaml
 │   ├── references.bib
 │   └── revision_style.tex
 ├── initial_submission/
+│   └── meta.yaml
 ├── revision_01/
 ├── state/
 └── tmp/
@@ -84,7 +82,7 @@ manuscript/
 Users edit:
 
 - `meta.yaml`
-- `authors.yaml`
+- optional project `references/authors.yaml` overrides for legacy/custom workspaces
 - manuscript sections
 - figures and tables
 - reviewer responses
@@ -96,7 +94,10 @@ The Skill manages internally:
 - compiler resources;
 - temporary build files.
 
-Packaged resources are resolved during compilation and do not need to be copied into user projects.
+The bundled `resources/authors.yaml` is the default reusable person-level
+library and is not copied by metadata-first initialization. A pre-existing
+project author library remains supported. Packaged resources are resolved
+during compilation and do not need to be copied into user projects.
 
 ## Workflow
 
@@ -125,17 +126,29 @@ The marked manuscript uses three visual meanings:
 | Deleted content | Light-gray strikeout |
 
 Reviewer-linked additions are created through explicit `\\review{}` markers so that reviewer comments, responses, and manuscript changes remain traceable.
+Ordinary additions are rendered as blue text without underline; this wording
+describes the existing revision contract and is unchanged by metadata work.
+Reviewer-linked additions use red text without underline, while deletions retain
+the light-gray strikeout.
 
 ## Configuration
 
 `meta.yaml` stores manuscript metadata:
 
-- journal
-- publisher
-- language
-- article type
+- bilingual title, abstract, and keywords;
+- funding, language, and article type;
+- journal and publisher;
+- publication-order author IDs and corresponding-author IDs.
 
-`authors.yaml` stores reusable author information.
+The active author library stores only person-level names, email, affiliations,
+and bilingual biography strings. Names, affiliations, email, and biographies
+are not duplicated in `meta.yaml`.
+
+For a Chinese publisher, the build resolves `meta.yaml` plus the active author
+library into the runtime-only `tmp/<run>/publisher_metadata.tex`. It generates
+Chinese and English titles and abstracts, funding, and
+`firstauthorcn`/`firstauthoren`/`corrauthorcn`/`corrauthoren`; it is never written
+into `initial_submission/`.
 
 `revision_style.tex` stores user-editable revision visualization settings.
 

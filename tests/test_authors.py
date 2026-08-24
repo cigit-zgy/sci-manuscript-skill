@@ -159,6 +159,14 @@ def test_bundled_public_library_is_the_final_fallback(
         "liu_hong",
     )
     assert library.authors["song_cheng"].email == "songcheng@cigit.ac.cn"
+    assert library.authors["zhao_guangyao"].bio_zh == (
+        "赵光耀（1991--），男，博士，助理研究员，主要研究方向为污水处理模型，"  # noqa: RUF001
+        "zhaoguangyao@cigit.ac.cn"
+    )
+    assert library.authors["liu_hong"].bio_en == (
+        "Hong Liu (1970--), PhD, Professor, specializing in water pollution "
+        "control and intelligent wastewater treatment, liuhong@cigit.ac.cn"
+    )
     affiliation_1 = library.affiliations["1"]
     affiliation_2 = library.affiliations["2"]
     assert affiliation_1.name_zh == "中国科学院重庆绿色智能技术研究院，重庆 400714"  # noqa: RUF001

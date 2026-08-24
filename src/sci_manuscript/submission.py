@@ -7,7 +7,12 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .authors import load_author_library, resolve_authors, resolve_signing_author
+from .authors import (
+    load_author_library,
+    resolve_authors,
+    resolve_signing_author,
+    resolve_workspace_author_library_path,
+)
 from .compile import (
     build_clean_manuscript,
     compile_tex,
@@ -180,7 +185,7 @@ def prepare_submission_artifacts(
     submission = ensure_submission_workspace(config, round_number)
     selection = resolve_authors(
         config.metadata,
-        load_author_library(config.references / "authors.yaml"),
+        load_author_library(resolve_workspace_author_library_path(config.project)),
     )
     resolve_signing_author(
         config.metadata,

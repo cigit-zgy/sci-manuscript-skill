@@ -23,6 +23,7 @@ from .metadata import (
     round_name,
     save_meta,
     with_revision,
+    write_meta_template,
 )
 from .templates import initialize_manuscript_sources, install_reference_resources
 from .templates import resources_root as resources_root
@@ -162,7 +163,6 @@ def _round_numbers(project: Path) -> tuple[int, ...]:
         raise WorkflowError(f"Manuscript workspace is not initialized: {project}")
     required = (
         project / "00_archive",
-        project / "references" / "authors.yaml",
         project / "references" / "references.bib",
         project / "references" / "revision_style.tex",
     )
@@ -254,6 +254,36 @@ def initialize_project(
     initialize_manuscript_sources(config, initial)
     save_meta(initial / "meta.yaml", config.metadata)
     return config
+
+
+def initialize_draft_project(path: str | Path) -> Path:
+    """Create a metadata-first workspace without selecting manuscript content."""
+    root = normalize_project(path, initialize=True)
+    if root.exists():
+        raise WorkflowError(f"Refusing to overwrite existing manuscript/: {root}")
+    initial = root / "initial_submission"
+    references = root / "references"
+    for directory in (
+        root / "00_archive",
+        references,
+        initial / "sections",
+        initial / "figures",
+        initial / "tables",
+        initial / "output",
+        initial / "submission",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        resources_root() / "manuscript" / "references.bib",
+        references / "references.bib",
+    )
+    shutil.copy2(
+        resources_root() / "revision_style.template.tex",
+        references / "revision_style.tex",
+    )
+    metadata_path = initial / "meta.yaml"
+    write_meta_template(metadata_path)
+    return metadata_path
 
 
 def strip_provenance_wrappers(text: str) -> str:

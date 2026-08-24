@@ -157,6 +157,23 @@ def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
         )
 
 
+def ensure_manuscript_sources(config: ProjectConfig, round_number: int) -> None:
+    """Materialize sources for a metadata-first initial submission exactly once."""
+    version = config.round_dir(round_number)
+    manuscript = version / "manuscript.tex"
+    if manuscript.is_file():
+        return
+    if round_number != 0:
+        raise WorkflowError(f"Manuscript source is missing: {manuscript}")
+    sections = version / "sections"
+    existing = tuple(sections.iterdir()) if sections.is_dir() else ()
+    if existing:
+        raise WorkflowError(
+            f"Refusing to overwrite draft manuscript sections: {sections}"
+        )
+    initialize_manuscript_sources(config, version)
+
+
 def install_reference_resources(
     config: ProjectConfig,
     authors_source: Path,

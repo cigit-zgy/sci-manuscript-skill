@@ -25,6 +25,7 @@ from .authors import (
     resolve_author_library_path,
     resolve_authors,
     resolve_signing_author,
+    resolve_workspace_author_library_path,
     user_config_directory,
 )
 from .errors import MetadataError
@@ -94,16 +95,32 @@ class ManuscriptMetadata:
     other_authors: tuple[str, ...]
     submission: SubmissionSettings = SubmissionSettings()
     correspondence: CorrespondenceSettings = CorrespondenceSettings()
+    author_order: tuple[str, ...] = ()
+    title_zh: str = ""
+    title_en: str = ""
+    abstract_zh: str = ""
+    abstract_en: str = ""
+    keywords_zh: str = ""
+    keywords_en: str = ""
+    funding: str = ""
 
     @property
     def author_ids(self) -> tuple[str, ...]:
         """Return publication order while preserving permitted role overlap."""
+        if self.author_order:
+            return self.author_order
         ordered = (
             *self.first_authors,
             *self.other_authors,
             *self.corresponding_authors,
         )
         return tuple(dict.fromkeys(ordered))
+
+    def localized_title(self, language: str) -> str:
+        """Return the requested title with the legacy scalar as fallback."""
+        preferred = self.title_zh if language == "zh" else self.title_en
+        alternate = self.title_en if language == "zh" else self.title_zh
+        return preferred or self.title or alternate
 
     @property
     def journal_template(self) -> str:
@@ -197,6 +214,36 @@ def _author_group(value: Any, location: str, *, required: bool) -> tuple[str, ..
     return ids
 
 
+def _localized_text(
+    value: Any,
+    location: str,
+    *,
+    language: str,
+    optional: bool,
+) -> tuple[str, str, str]:
+    """Parse a bilingual mapping while accepting the released scalar form."""
+    if isinstance(value, str):
+        scalar = _text(value, location, optional=optional)
+        return (
+            scalar,
+            scalar if language == "zh" else "",
+            scalar if language == "en" else "",
+        )
+    mapping = _mapping(value, location)
+    unexpected = set(mapping) - {"zh", "en"}
+    if unexpected:
+        raise MetadataError(
+            f"{location} contains unsupported keys: {', '.join(sorted(unexpected))}."
+        )
+    zh = _text(mapping.get("zh"), f"{location}.zh", optional=True)
+    en = _text(mapping.get("en"), f"{location}.en", optional=True)
+    primary = zh if language == "zh" else en
+    primary = primary or en or zh
+    if not optional and not primary:
+        raise MetadataError(f"{location} must contain zh or en text.")
+    return primary, zh, en
+
+
 def round_name(round_number: int) -> str:
     """Return a fixed-width semantic revision identifier."""
     if round_number < 0:
@@ -251,6 +298,76 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         raise MetadataError(
             f"journal.publisher must be one of: {', '.join(PUBLISHERS)}."
         )
+    title, title_zh, title_en = _localized_text(
+        manuscript.get("title"),
+        "manuscript.title",
+        language=language,
+        optional=False,
+    )
+    _, abstract_zh, abstract_en = _localized_text(
+        manuscript.get("abstract", ""),
+        "manuscript.abstract",
+        language=language,
+        optional=True,
+    )
+    _, keywords_zh, keywords_en = _localized_text(
+        manuscript.get("keywords", ""),
+        "manuscript.keywords",
+        language=language,
+        optional=True,
+    )
+    funding = _text(manuscript.get("funding"), "manuscript.funding", optional=True)
+    if "order" in authors or "corresponding" in authors:
+        unexpected_authors = set(authors) - {"order", "corresponding"}
+        if unexpected_authors:
+            raise MetadataError(
+                "New authors schema cannot mix legacy keys: "
+                + ", ".join(sorted(unexpected_authors))
+            )
+        author_order = _author_group(
+            authors.get("order"), "authors.order", required=True
+        )
+        corresponding_authors = _author_group(
+            authors.get("corresponding"),
+            "authors.corresponding",
+            required=True,
+        )
+        missing_corresponding = set(corresponding_authors) - set(author_order)
+        if missing_corresponding:
+            raise MetadataError(
+                "authors.corresponding must be present in authors.order: "
+                + ", ".join(sorted(missing_corresponding))
+            )
+        first_authors = author_order[:1]
+        other_authors = tuple(
+            author_id
+            for author_id in author_order[1:]
+            if author_id not in corresponding_authors
+        )
+    else:
+        unexpected_authors = set(authors) - {
+            "first_author",
+            "corresponding_author",
+            "other_author",
+        }
+        if unexpected_authors:
+            raise MetadataError(
+                "Unsupported authors keys: " + ", ".join(sorted(unexpected_authors))
+            )
+        author_order = ()
+        first_authors = _author_group(
+            authors.get("first_author"), "authors.first_author", required=True
+        )
+        corresponding_authors = _author_group(
+            authors.get("corresponding_author"),
+            "authors.corresponding_author",
+            required=True,
+        )
+        other_authors = _author_group(
+            authors.get("other_author", []),
+            "authors.other_author",
+            required=False,
+        )
     raw_submission = data.get("submission")
     if raw_submission is None:
         submission = SubmissionSettings()
@@ -304,44 +421,68 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         )
         if (
             correspondence.signing_author
-            and correspondence.signing_author
-            not in _author_group(
-                authors.get("corresponding_author"),
-                "authors.corresponding_author",
-                required=True,
-            )
+            and correspondence.signing_author not in corresponding_authors
         ):
             raise MetadataError(
                 "correspondence.signing_author must be a corresponding author."
             )
     return ManuscriptMetadata(
-        title=_text(manuscript.get("title"), "manuscript.title"),
+        title=title,
         article_type=_text(manuscript.get("article_type"), "manuscript.article_type"),
         language=language,
         journal_name=_text(journal.get("name"), "journal.name"),
         publisher=publisher,
         round_number=current,
         parent_round=parent,
-        first_authors=_author_group(
-            authors.get("first_author"), "authors.first_author", required=True
-        ),
-        corresponding_authors=_author_group(
-            authors.get("corresponding_author"),
-            "authors.corresponding_author",
-            required=True,
-        ),
-        other_authors=_author_group(
-            authors.get("other_author", []),
-            "authors.other_author",
-            required=False,
-        ),
+        first_authors=first_authors,
+        corresponding_authors=corresponding_authors,
+        other_authors=other_authors,
         submission=submission,
         correspondence=correspondence,
+        author_order=author_order,
+        title_zh=title_zh,
+        title_en=title_en,
+        abstract_zh=abstract_zh,
+        abstract_en=abstract_en,
+        keywords_zh=keywords_zh,
+        keywords_en=keywords_en,
+        funding=funding,
     )
 
 
 def _metadata_data(metadata: ManuscriptMetadata) -> dict[str, Any]:
     """Return the canonical editable metadata mapping."""
+    manuscript: dict[str, Any] = {
+        "title": metadata.title,
+        "language": metadata.language,
+        "article_type": metadata.article_type,
+    }
+    if metadata.title_zh or metadata.title_en:
+        manuscript["title"] = {
+            "zh": metadata.title_zh or None,
+            "en": metadata.title_en or None,
+        }
+        manuscript["abstract"] = {
+            "zh": metadata.abstract_zh or None,
+            "en": metadata.abstract_en or None,
+        }
+        manuscript["keywords"] = {
+            "zh": metadata.keywords_zh or None,
+            "en": metadata.keywords_en or None,
+        }
+        manuscript["funding"] = metadata.funding or None
+    authors: dict[str, Any]
+    if metadata.author_order:
+        authors = {
+            "order": list(metadata.author_order),
+            "corresponding": list(metadata.corresponding_authors),
+        }
+    else:
+        authors = {
+            "first_author": list(metadata.first_authors),
+            "corresponding_author": list(metadata.corresponding_authors),
+            "other_author": list(metadata.other_authors),
+        }
     return {
         "revision": {
             "round": round_name(metadata.round_number),
@@ -352,20 +493,12 @@ def _metadata_data(metadata: ManuscriptMetadata) -> dict[str, Any]:
                 else round_name(metadata.parent_round)
             ),
         },
-        "manuscript": {
-            "title": metadata.title,
-            "language": metadata.language,
-            "article_type": metadata.article_type,
-        },
+        "manuscript": manuscript,
         "journal": {
             "name": metadata.journal_name,
             "publisher": metadata.publisher,
         },
-        "authors": {
-            "first_author": list(metadata.first_authors),
-            "corresponding_author": list(metadata.corresponding_authors),
-            "other_author": list(metadata.other_authors),
-        },
+        "authors": authors,
         "submission": {
             "cover_letter": metadata.submission.cover_letter,
             "highlights": metadata.submission.highlights,
@@ -408,8 +541,18 @@ def _add_meta_comments(data: CommentedMap) -> None:
     )
     manuscript = data["manuscript"]
     manuscript.yaml_set_comment_before_after_key(
-        "title", before="Manuscript title shown in the selected publisher template."
+        "title", before="Manuscript title in zh and en when both are available."
     )
+    if "abstract" in manuscript:
+        manuscript.yaml_set_comment_before_after_key(
+            "abstract", before="Bilingual abstract rendered into publisher frontmatter."
+        )
+        manuscript.yaml_set_comment_before_after_key(
+            "keywords", before="Bilingual keyword strings in publisher punctuation."
+        )
+        manuscript.yaml_set_comment_before_after_key(
+            "funding", before="Funding acknowledgement rendered by the publisher class."
+        )
     manuscript.yaml_set_comment_before_after_key(
         "language", before="Manuscript language: en or zh."
     )
@@ -425,16 +568,25 @@ def _add_meta_comments(data: CommentedMap) -> None:
         before="Packaged publisher resource key: chinese, elsevier, nature, or acs.",
     )
     authors = data["authors"]
-    authors.yaml_set_comment_before_after_key(
-        "first_author", before="Author IDs come from references/authors.yaml."
-    )
-    authors.yaml_set_comment_before_after_key(
-        "corresponding_author",
-        before="Corresponding-author IDs; email is required in authors.yaml.",
-    )
-    authors.yaml_set_comment_before_after_key(
-        "other_author", before="Remaining author IDs in publication order."
-    )
+    if "order" in authors:
+        authors.yaml_set_comment_before_after_key(
+            "order", before="Publication order; the first ID is the first author."
+        )
+        authors.yaml_set_comment_before_after_key(
+            "corresponding",
+            before="Corresponding-author IDs; each must occur in order.",
+        )
+    else:
+        authors.yaml_set_comment_before_after_key(
+            "first_author", before="Author IDs come from references/authors.yaml."
+        )
+        authors.yaml_set_comment_before_after_key(
+            "corresponding_author",
+            before="Corresponding-author IDs; email is required in authors.yaml.",
+        )
+        authors.yaml_set_comment_before_after_key(
+            "other_author", before="Remaining author IDs in publication order."
+        )
 
 
 def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
@@ -462,6 +614,59 @@ def save_meta(path: Path, metadata: ManuscriptMetadata) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".yaml.new")
     temporary.write_text(buffer.getvalue(), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def write_meta_template(path: Path) -> None:
+    """Create an intentionally incomplete, commented metadata draft."""
+    text = """# Edit every required value before the first build.
+revision:
+  # Lifecycle state; do not edit during normal manuscript work.
+  round: r00
+  name: initial_submission
+  parent: null
+manuscript:
+  # Bilingual manuscript title.
+  title:
+    zh:
+    en:
+  # Bilingual abstract rendered into publisher frontmatter.
+  abstract:
+    zh:
+    en:
+  # Bilingual keywords using the target journal's punctuation.
+  keywords:
+    zh:
+    en:
+  # Funding acknowledgement; leave null when not applicable.
+  funding:
+  # Required: en or zh.
+  language:
+  # Required journal article type.
+  article_type:
+journal:
+  # Required target journal name.
+  name:
+  # Required packaged publisher key: chinese, elsevier, nature, or acs.
+  publisher:
+authors:
+  # Publication order; the first ID is the first author.
+  order: []
+  # Corresponding-author IDs; every ID must also occur in order.
+  corresponding: []
+submission:
+  cover_letter: true
+  highlights: true
+  graphical_abstract: true
+correspondence:
+  manuscript_id:
+  editor_name:
+  editor_title:
+  signing_author:
+"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".yaml.new")
+    temporary.write_text(text, encoding="utf-8")
     os.replace(temporary, path)
 
 
@@ -560,7 +765,7 @@ def render_author_metadata(
     return "\n".join(
         [
             "% Generated from meta.yaml and authors.yaml. Do not edit.",
-            f"\\newcommand{{\\ManuscriptTitle}}{{{_latex_escape(metadata.title)}}}",
+            f"\\newcommand{{\\ManuscriptTitle}}{{{_latex_escape(metadata.localized_title(metadata.language))}}}",
             f"\\newcommand{{\\JournalName}}{{{_latex_escape(metadata.journal_name)}}}",
             f"\\newcommand{{\\ArticleType}}{{{_latex_escape(metadata.article_type)}}}",
             f"\\newcommand{{\\SelectedAuthorNames}}{{{names_en}}}",
@@ -609,7 +814,7 @@ def render_publisher_metadata(
     """Render declarations required by the selected publisher class."""
     corresponding = set(selection.corresponding_authors)
     affiliations = {item.affiliation_id: item for item in selection.affiliations}
-    title = _latex_escape(metadata.title)
+    title = _latex_escape(metadata.localized_title(metadata.language))
     lines = ["% Generated publisher metadata. Do not edit."]
     if metadata.publisher == "elsevier":
         lines.append(f"\\title{{{title}}}")
@@ -657,6 +862,8 @@ def render_publisher_metadata(
                 name = _latex_escape(_affiliation_text(affiliations[key], "en"))
                 lines.append(f"\\{command}[{name}]{{{name}}}")
     elif metadata.publisher == "chinese":
+        title_zh = _latex_escape(metadata.localized_title("zh"))
+        title_en = _latex_escape(metadata.localized_title("en"))
         labels_en = ", ".join(
             _author_label(item, selection, "en") for item in selection.authors
         )
@@ -673,26 +880,45 @@ def render_publisher_metadata(
             f"{_latex_escape(_affiliation_text(item, 'zh'))}"
             for item in selection.affiliations
         )
-        corr_en = "; ".join(
-            f"{_latex_escape(item.name_en)}, {_latex_escape(item.email)}"
-            for item in selection.corresponding_authors
-        )
+
+        def biography(author: AuthorRecord, language: str) -> str:
+            bio = author.bio_zh if language == "zh" else author.bio_en
+            if bio:
+                return _latex_escape(bio)
+            name = author.name_zh if language == "zh" else author.name_en
+            return f"{_latex_escape(name)}, {_latex_escape(author.email)}"
+
+        first_zh = "; ".join(biography(item, "zh") for item in selection.first_authors)
+        first_en = "; ".join(biography(item, "en") for item in selection.first_authors)
         corr_zh = "; ".join(
-            f"{_latex_escape(item.name_zh)}, {_latex_escape(item.email)}"
-            for item in selection.corresponding_authors
+            biography(item, "zh") for item in selection.corresponding_authors
+        )
+        corr_en = "; ".join(
+            biography(item, "en") for item in selection.corresponding_authors
         )
         lines.extend(
             [
-                f"\\title{{{title}}}",
-                f"\\entitle{{{title}}}",
+                f"\\title{{{title_zh}}}",
+                f"\\entitle{{{title_en}}}",
                 f"\\author{{{labels_zh}}}",
                 f"\\enauthor{{{labels_en}}}",
                 f"\\affiliation{{{affiliation_zh}}}",
                 f"\\enaffiliation{{{affiliation_en}}}",
+                f"\\firstauthorcn{{{first_zh}}}",
+                f"\\firstauthoren{{{first_en}}}",
                 f"\\corrauthorcn{{{corr_zh}}}",
                 f"\\corrauthoren{{{corr_en}}}",
             ]
         )
+        for command, value in (
+            ("cnabstract", metadata.abstract_zh),
+            ("cnkeywords", metadata.keywords_zh),
+            ("enabstract", metadata.abstract_en),
+            ("enkeywords", metadata.keywords_en),
+            ("funding", metadata.funding),
+        ):
+            if value:
+                lines.append(f"\\{command}{{{_latex_escape(value)}}}")
     return "\n".join((*lines, ""))
 
 
@@ -703,7 +929,9 @@ def generate_metadata(
 ) -> AuthorSelection:
     """Generate ephemeral LaTeX metadata inside an isolated build directory."""
     metadata = load_meta(round_dir / "meta.yaml")
-    library = load_author_library(manuscript_root / "references" / "authors.yaml")
+    library = load_author_library(
+        resolve_workspace_author_library_path(manuscript_root)
+    )
     selection = resolve_authors(metadata, library)
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "author_metadata.tex").write_text(
