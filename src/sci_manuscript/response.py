@@ -652,8 +652,7 @@ def build_response(
     engine_override: str | None = None,
     allow_placeholders: bool = False,
 ) -> Path:
-    """Compile a response copy; incomplete responses remain visible placeholders."""
-    del allow_placeholders  # retained for API compatibility; audit is non-blocking.
+    """Compile a response copy with strict low-level validation by default."""
     version = config.round_dir(round_number)
     blocks = parse_reviews(version / "response" / "reviewer_comments.md")
     expected_ids = tuple(
@@ -668,7 +667,22 @@ def build_response(
         review_id: observed.get(review_id, f"\\ResponsePending{{{review_id}}}")
         for review_id in expected_ids
     }
+    pending = pending_response_ids(responses)
+    if pending and not allow_placeholders:
+        raise WorkflowError(
+            "Response source still contains unfinished responses: " + ", ".join(pending)
+        )
     revised_ids = _ids_from_sources(version).intersection(expected_ids)
+    missing_locations = sorted(
+        review_id
+        for review_id in revised_ids
+        if review_id not in locations or locations[review_id] == "Location unavailable"
+    )
+    if missing_locations and not allow_placeholders:
+        raise WorkflowError(
+            "Marked manuscript locations are missing for: "
+            + ", ".join(missing_locations)
+        )
     stage = run_dir / "response_source"
     stage.mkdir(parents=True)
     if config.language == "zh":
