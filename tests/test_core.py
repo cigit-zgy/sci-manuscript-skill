@@ -31,6 +31,7 @@ from sci_manuscript.metadata import (
     resolve_authors,
 )
 from sci_manuscript.response import (
+    parse_response_entries,
     parse_responses,
     parse_reviews,
     pending_response_ids,
@@ -410,11 +411,11 @@ def test_response_source_uses_authoritative_ids_and_preserves_user_edits(
     config = _revision(_workspace(tmp_path), reviews)
     source = config.round_dir(1) / "response" / "responses.tex"
     text = source.read_text(encoding="utf-8")
-    assert text.count("\\Response{E-1}{") == 1
-    assert text.count("\\Response{1-1}{") == 1
+    assert parse_response_entries(source) == {"E-1": "", "1-1": ""}
     assert "Clarify scope" not in text
     assert "Revise text" not in text
     assert "\\documentclass" not in text
+    assert "\\ResponsePending" not in text
     assert not (source.parent / "response_letter.tex").exists()
     source.write_text(text + "\n% user-owned edit\n", encoding="utf-8")
     from sci_manuscript.response import init_response
@@ -513,6 +514,43 @@ def test_response_build_uses_current_package_template_without_editing_content(
     assert responses.read_bytes() == original
     assert not (responses.parent / "response_letter.tex").exists()
     assert (run_dir / "response_source" / "response_letter.tex").is_file()
+
+
+def test_response_build_accepts_missing_response_without_placeholder_macro(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sci_manuscript.response as response_module
+
+    reviews = tmp_path / "unanswered.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n## 1-1 | response_only\n\nPlease clarify.\n",
+        encoding="utf-8",
+    )
+    config = _revision(_workspace(tmp_path), reviews)
+    responses = config.round_dir(1) / "response" / "responses.tex"
+    responses.write_text("", encoding="utf-8")
+
+    def fake_compile(
+        source: Path,
+        build_dir: Path,
+        _config: ProjectConfig,
+        _engine: str | None = None,
+    ) -> CompileResult:
+        assembled = source.read_text(encoding="utf-8")
+        assert "Please clarify." in assembled
+        assert "\\ResponsePending" not in assembled
+        build_dir.mkdir(parents=True)
+        pdf = build_dir / "response_letter.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        return CompileResult(pdf, "")
+
+    monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+
+    result = response_module.build_response(config, 1, {}, tmp_path / "run")
+
+    assert result.is_file()
+    assert responses.read_text(encoding="utf-8") == ""
 
 
 def test_response_build_rejects_missing_marked_location(tmp_path: Path) -> None:

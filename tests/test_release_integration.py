@@ -94,10 +94,13 @@ Please refine the explicitly approved example once more.
 def _complete_responses(source: Path, review_ids: tuple[str, ...]) -> None:
     text = source.read_text(encoding="utf-8")
     for review_id in review_ids:
-        text = text.replace(
-            f"\\ResponsePending{{{review_id}}}",
-            f"Anonymous response for {review_id}.",
+        pattern = re.compile(
+            rf"(\\Response\{{{re.escape(review_id)}\}}\{{)\s*(\}})",
         )
+        text, count = pattern.subn(
+            rf"\g<1>Anonymous response for {review_id}.\g<2>", text
+        )
+        assert count == 1
     source.write_text(text, encoding="utf-8")
 
 

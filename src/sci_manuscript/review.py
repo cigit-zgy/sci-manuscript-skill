@@ -23,6 +23,10 @@ EXPLICIT_COMMENT = re.compile(
     re.I,
 )
 NUMBERED_COMMENT = re.compile(r"^\s*([1-9]\d*)[.)]\s*(.*)$")
+USER_SECTION_HEADING = re.compile(
+    r"^##\s*(?:Main comment|Specific comments|主意见|具体意见)\s*$",
+    re.I,
+)
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 PENDING_RESPONSE = re.compile(r"\\ResponsePending\{([^}]+)\}")
 REVIEW_MACRO = re.compile(r"\\review\s*\{([^}]+)\}")
@@ -177,6 +181,9 @@ def parse_reviews(path: Path) -> tuple[ReviewBlock, ...]:
                 raise WorkflowError(
                     f"Text appears before the first review heading: {path}"
                 )
+            continue
+        if USER_SECTION_HEADING.fullmatch(stripped):
+            finish_comment()
             continue
         explicit = EXPLICIT_COMMENT.fullmatch(stripped)
         numbered = NUMBERED_COMMENT.fullmatch(raw) if not raw.startswith("#") else None
@@ -408,6 +415,7 @@ def audit_reviews(
         )
 
     for review_id in comments:
+        response_exists = review_id in responses
         body = responses.get(review_id, "").strip()
         has_response = bool(body) and review_id not in pending
         has_revision = review_id in provenance
@@ -417,21 +425,25 @@ def audit_reviews(
             state = "response_only"
         elif has_revision:
             state = "manuscript_changed_but_unanswered"
+            code = "EMPTY_RESPONSE" if response_exists else "MISSING_RESPONSE"
+            detail = "empty" if response_exists else "missing"
             issues.append(
                 ReviewAuditIssue(
-                    "MISSING_RESPONSE",
+                    code,
                     review_id,
-                    "The manuscript cites this review ID, but its response is unfinished.",
+                    f"The manuscript cites this review ID, but its response is {detail}.",
                     (comment_path, response_path, *sorted(provenance[review_id])),
                 )
             )
         else:
             state = "unanswered"
+            code = "EMPTY_RESPONSE" if response_exists else "MISSING_RESPONSE"
+            detail = "an empty response" if response_exists else "no response entry"
             issues.append(
                 ReviewAuditIssue(
-                    "MISSING_RESPONSE",
+                    code,
                     review_id,
-                    "This reviewer comment has no completed response.",
+                    f"This reviewer comment has {detail}.",
                     (comment_path, response_path),
                 )
             )

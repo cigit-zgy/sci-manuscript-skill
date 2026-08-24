@@ -91,39 +91,66 @@ def init_response(config: ProjectConfig, round_number: int) -> Path:
     target = response_dir / "responses.tex"
     if target.exists():
         raise WorkflowError(f"Response source already exists: {target}")
-    entries = [
-        f"\\Response{{{comment.review_id}}}{{\n"
-        f"\\ResponsePending{{{comment.review_id}}}\n"
-        "}"
-        for block in blocks
-        for comment in block.comments
-    ]
     if config.language == "zh":
         instructions = """% 回复审稿意见文件。
 %
 % 使用说明：
-% 1. 每条回复应对应 reviewer_comments.md 中的一条审稿意见。
-% 2. review ID 由系统管理，请勿随意修改。
-% 3. manuscript 中的 \\review{} 用于关联审稿意见与实际修改。
-% 4. 修改位置由系统自动计算。
-% 5. 未完成回复请保留系统规定的 \\ResponsePending{} 状态。
-% 6. 这些 LaTeX 注释不会出现在最终 PDF 中。
+% 1. 每条回复应对应 reviewer_comments.md 中的一条具体意见。
+% 2. 请按照审稿意见编号填写对应回复。
+% 3. manuscript 中的 \\review{} 用于关联审稿意见与实际修改位置。
+% 4. LaTeX 注释不会显示在最终 PDF 中。
+%
+% 示例：
+%
+% \\Response{1-1}{
+% 感谢审稿人的意见。我们已根据建议进行了修改。
+% }
+%
+% 编辑意见回复（如有）：
+%
+% \\Response{E-1}{
+% }
 """  # noqa: RUF001
     else:
         instructions = """% Reviewer-response source.
 %
 % Instructions:
-% 1. Match every response to one review comment in reviewer_comments.md.
-% 2. Review IDs are managed by the system; do not change them arbitrarily.
-% 3. Use \\review{} in the manuscript to link a comment to the actual revision.
-% 4. Revision locations are calculated automatically.
-% 5. Keep the required \\ResponsePending{} state for unfinished responses.
-% 6. These LaTeX comments are not rendered in the final PDF.
+% 1. Match every response to one specific comment in reviewer_comments.md.
+% 2. Fill each response under its corresponding review-comment number.
+% 3. Use \\review{} in the manuscript to link a comment to its revision location.
+% 4. These LaTeX comments are not rendered in the final PDF.
+%
+% Example:
+%
+% \\Response{1-1}{
+% Thank you for the comment. We revised the manuscript accordingly.
+% }
+%
+% Editor response (if applicable):
+%
+% \\Response{E-1}{
+% }
 """
+    sections: list[str] = []
+    for block in blocks:
+        review_ids = [comment.review_id for comment in block.comments]
+        if not review_ids and block.prefix not in {"E", "AE"}:
+            review_ids = [f"{block.prefix}-1"]
+        if not review_ids:
+            continue
+        if config.language == "zh":
+            title = {"E": "编辑", "AE": "副编辑"}.get(
+                block.prefix, f"审稿人 #{block.prefix}"
+            )
+        else:
+            title = block.title
+        entries = "\n\n".join(
+            f"\\Response{{{review_id}}}{{\n}}" for review_id in review_ids
+        )
+        sections.append(f"% {title}\n\n{entries}")
+    body = "\n\n".join(sections)
     target.write_text(
-        instructions
-        + (("\n".join(("", "\n\n".join(entries))) + "\n") if entries else ""),
-        encoding="utf-8",
+        instructions + (("\n" + body + "\n") if body else ""), encoding="utf-8"
     )
     return target
 
@@ -190,15 +217,11 @@ def build_response(
             f"No reviewer comments are available: {response_dir / 'reviewer_comments.md'}"
         )
     observed = parse_response_entries(response_dir / "responses.tex")
+    pending = set(pending_response_ids(observed))
     responses = {
-        review_id: observed.get(review_id, f"\\ResponsePending{{{review_id}}}")
+        review_id: "" if review_id in pending else observed.get(review_id, "")
         for review_id in expected_ids
     }
-    pending = pending_response_ids(responses)
-    if pending and not allow_placeholders:
-        raise WorkflowError(
-            "Response source still contains unfinished responses: " + ", ".join(pending)
-        )
     revised_ids = review_ids_from_sources(config, round_number).intersection(
         expected_ids
     )

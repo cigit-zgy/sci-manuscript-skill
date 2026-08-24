@@ -187,12 +187,23 @@ def _print_lifecycle(
     audit = result.review_audit
     if audit is None:
         return
-    print("Review audit:")
+    print("Review response audit:")
     for entry in audit.entries:
         print(f"  {entry.review_id:<8} {entry.state}")
+    unreplied = tuple(
+        issue
+        for issue in audit.issues
+        if issue.review_id is not None
+        and issue.code in {"MISSING_RESPONSE", "EMPTY_RESPONSE"}
+    )
+    if unreplied:
+        print("Unreplied comments:")
+        for issue in unreplied:
+            print(f"- {issue.review_id} ({issue.code})")
+        print("Please complete these responses before submission.")
     for issue in audit.issues:
         label = issue.review_id or "review"
-        print(f"  WARNING {label}: {issue.message}")
+        print(f"  WARNING {issue.code} {label}: {issue.message}")
         for path in issue.paths:
             print(f"    Path: {path}")
     state = "COMPLETE" if audit.is_complete else "INCOMPLETE"

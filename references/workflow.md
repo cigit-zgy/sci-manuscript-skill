@@ -125,19 +125,28 @@ automatically creates `revision_NN/response/reviewer_comments.md` from the
 project language. The Chinese template contains `编辑`, `审稿人 #1`, and
 `审稿人 #2`; the English template contains the corresponding `Editor` and
 `Reviewer` headings. Each specific comment is entered as one numbered list
-item. Empty template items are ignored and users may add or remove list items or
-reviewer sections.
+item under `Specific comments` or `具体意见`; the unnumbered `Main comment` or
+`主意见` records the overall assessment. Empty template items and empty main
+comments are ignored, and users may add or remove list items or reviewer sections.
 
 Example:
 
 ```text
 # Editor
 
+## Main comment
+
+## Specific comments
+
 1. Please clarify the scope.
 
 # Reviewer #1
 
+## Main comment
+
 General assessment from Reviewer 1.
+
+## Specific comments
 
 1. First specific comment.
 2. Second specific comment.
@@ -159,11 +168,10 @@ are retained in a sidecar map. Actual additions are classified against that map
 after structural comparison. Therefore unchanged reviewer-scoped text remains
 unmarked.
 
-`response/responses.tex` stores editable response prose. When a revision is
-created from an already populated review file, one pending response entry is
-created for each parsed comment. When the generated review template is still
-empty, the response source is initially empty. Review completeness is therefore
-derived at build time rather than encoded in `reviewer_comments.md`.
+`response/responses.tex` stores editable response prose. It contains empty
+`\Response{ID}{...}` entries and concise commented examples; no special pending
+macro is required. Review completeness is derived at build time rather than
+encoded in either user-editable file.
 
 ### Review audit
 
@@ -178,12 +186,13 @@ The audit computes these states:
 - `manuscript_revised`: completed response plus matching manuscript provenance;
 - `response_only`: completed response without manuscript provenance;
 - `manuscript_changed_but_unanswered`: manuscript provenance exists but the
-  response is missing or pending;
+  response is missing or empty;
 - `unanswered`: the comment has neither a completed response nor manuscript
   provenance.
 
-It also reports empty or invalid comment files, orphan response IDs, orphan
-`\review` IDs, and review-ID drift after list reordering. These are
+It separately reports missing, empty, and orphan response entries, as well as
+empty or invalid comment files, orphan `\review` IDs, and review-ID drift after
+list reordering. These are
 non-blocking review-completeness warnings: clean and marked rendering continues.
 Each warning prints the concrete path or paths that require attention.
 
@@ -198,10 +207,10 @@ sci-manuscript submission --project /absolute/path/to/project --round r01
 ```
 
 A revision build publishes clean and marked manuscript PDFs. Submission also
-publishes the available correspondence and package artifacts. If comments are
-present while some valid responses remain unfinished, the response PDF may
-contain visible pending placeholders and the audit remains `INCOMPLETE`. A
-malformed response source instead produces `RESPONSES_INVALID` with its absolute
+publishes the available correspondence and package artifacts. Missing or empty
+responses keep the audit `INCOMPLETE` without introducing placeholder macros or
+blocking manuscript rendering. A malformed response source instead produces
+`RESPONSES_INVALID` with its absolute
 path: clean and marked manuscripts still build, the checklist remains
 `INCOMPLETE`, and no untrusted response PDF is generated. If the comment template
 is still empty, the manuscript PDFs can still be built and the audit points
