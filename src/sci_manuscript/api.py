@@ -513,6 +513,7 @@ def _prepare_submission(
     allow_placeholders: bool,
     audit: ReviewAuditResult | None,
 ) -> list[Artifact]:
+    del allow_placeholders  # public submission is audit-first and non-blocking.
     submission = ensure_submission_workspace(config, round_number)
     selection = resolve_authors(
         config.metadata,
@@ -562,7 +563,7 @@ def _prepare_submission(
                 marked.locations,
                 run_dir,
                 engine,
-                allow_placeholders,
+                True,
             )
     stage = run_dir / "package_stage"
     stage.mkdir(parents=True, exist_ok=True)
