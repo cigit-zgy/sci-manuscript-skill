@@ -15,13 +15,9 @@ from .metadata import generate_metadata
 from .workspace import ProjectConfig, WorkflowError, resources_root
 
 REVIEW_ID = re.compile(r"^(?:E|AE|[1-9]\d*)-[1-9]\d*$")
-REVIEWER_HEADING = re.compile(
-    r"^#\s*(?:Reviewer|审稿人)\s*#?\s*([1-9]\d*)\s*$", re.I
-)
+REVIEWER_HEADING = re.compile(r"^#\s*(?:Reviewer|审稿人)\s*#?\s*([1-9]\d*)\s*$", re.I)
 EDITOR_HEADING = re.compile(r"^#\s*(?:Editor|编辑)\s*$", re.I)
-ASSOCIATE_EDITOR_HEADING = re.compile(
-    r"^#\s*(?:Associate\s+Editor|副编辑)\s*$", re.I
-)
+ASSOCIATE_EDITOR_HEADING = re.compile(r"^#\s*(?:Associate\s+Editor|副编辑)\s*$", re.I)
 EXPLICIT_COMMENT = re.compile(
     r"^##\s*((?:E|AE|[1-9]\d*)-[1-9]\d*)\s*"
     r"(?:\|\s*|\[)(response_only|manuscript_revised)\]?\s*$",
@@ -672,15 +668,7 @@ def build_response(
         raise WorkflowError(
             "Response source still contains unfinished responses: " + ", ".join(pending)
         )
-    legacy_revised_ids = {
-        comment.review_id
-        for block in blocks
-        for comment in block.comments
-        if comment.status == "manuscript_revised"
-    }
-    revised_ids = (
-        _ids_from_sources(version) | legacy_revised_ids
-    ).intersection(expected_ids)
+    revised_ids = _ids_from_sources(version).intersection(expected_ids)
     missing_locations = sorted(
         review_id
         for review_id in revised_ids
