@@ -46,6 +46,7 @@ select = ["E4", "E7", "E9", "F", "W", "I", "B", "C4", "PIE", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 "tests/test_core.py" = ["RUF043"]
 "tests/test_release_integration.py" = ["RUF001"]
+"tests/test_review_audit.py" = ["RUF001"]
 "tests/test_revision_mark_continuity.py" = ["I001", "RUF001"]
 "tests/test_revision_style.py" = ["I001"]
 
