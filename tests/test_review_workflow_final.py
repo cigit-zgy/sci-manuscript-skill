@@ -272,6 +272,16 @@ def test_response_templates_own_localized_automatic_location_labels() -> None:
     assert "Response to the Editor" not in en
     assert "%%RESPONSE_LETTER%%" in zh
     assert "%%RESPONSE_LETTER%%" in en
+    assert zh.count(r"\clearpage") == 1
+    assert en.count(r"\clearpage") == 1
+    assert r"\newcommand{\ResponseSection}[1]{\section*{#1}}" in zh
+    assert r"\newcommand{\ResponseSection}[1]{\section*{#1}}" in en
+    assert "谨代表全体作者" not in zh
+    assert "on behalf of all authors" not in en
+    assert "0.6\\baselineskip" in zh
+    assert "0.6\\baselineskip" in en
+    assert "稿件题目" in zh
+    assert "Manuscript ID" in en
 
 
 def test_response_parser_preserves_multiline_latex_body_semantics(

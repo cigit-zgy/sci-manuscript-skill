@@ -87,6 +87,15 @@ def _parser() -> argparse.ArgumentParser:
     sync = commands.add_parser("sync-bib", help="Replace shared references.bib.")
     sync.add_argument("--project", type=Path, required=True)
     sync.add_argument("--bib", type=Path, required=True)
+    rebuild_bib = commands.add_parser(
+        "rebuild-bib-state",
+        help="Rebuild one citation-resolved historical bibliography snapshot.",
+    )
+    rebuild_bib.add_argument("--project", type=Path, required=True)
+    rebuild_bib.add_argument("--round")
+    rebuild_bib.add_argument("--engine", choices=SUPPORTED_ENGINES)
+    rebuild_bib.add_argument("--keep-temp", action="store_true")
+    rebuild_bib.add_argument("--yes", action="store_true")
     return parser
 
 
@@ -342,6 +351,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         elif args.command == "sync-bib":
             lifecycle_result = project.sync_bib(args.bib)
+        elif args.command == "rebuild-bib-state":
+            lifecycle_result = project.rebuild_bibliography_state(
+                args.round,
+                engine=args.engine,
+                confirmed=_confirm("bibliography-state rebuild", args.yes),
+                keep_temp=args.keep_temp,
+            )
         else:  # pragma: no cover
             raise ManuscriptError(f"Unknown command: {args.command}")
         _print_lifecycle(lifecycle_result, project.root)

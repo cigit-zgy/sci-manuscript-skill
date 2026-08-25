@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
@@ -16,7 +17,12 @@ from .compile import (
 )
 from .errors import WorkflowError
 from .locations import build_review_locations
-from .provenance import ProvenanceSource, extract_provenance, split_by_review_provenance
+from .provenance import (
+    ProvenanceSource,
+    ReviewSpan,
+    extract_provenance,
+    split_by_review_provenance,
+)
 from .review import parse_response_source
 from .templates import resources_root
 from .tex import (
@@ -31,10 +37,17 @@ from .workspace import ProjectConfig, strip_provenance_wrappers
 
 DIF_COMMENT_PATTERN = re.compile(r"(?m)^%DIF[^\n]*(?:\n|$)")
 DIF_CONTROL_PATTERN = re.compile(r"\\DIF(?:add|del|mod)(?:begin|end)(?:FL)?\s*")
-DIF_COMMAND_COMMENT_GAP_PATTERN = re.compile(
-    r"(?m)(%DIF(?:DEL|AUX)CMD[^\n]*\n)((?:[ \t]*\n)+)"
-    r"(?=%DIF(?:DEL|AUX)CMD)"
+PARAGRAPH_BREAK_PATTERN = re.compile(r"\n(?:[ \t]*\n)+")
+IMPLICIT_BLANK_LINE_PATTERN = re.compile(r"(?m)^[ \t]*(?=\r?$)")
+PARENT_PARAGRAPH_BOUNDARY = "SCIParentParagraphBoundary"
+CURRENT_PARAGRAPH_BOUNDARY = "SCICurrentParagraphBoundary"
+PARENT_PARAGRAPH_BOUNDARY_PATTERN = re.compile(
+    rf"\\{PARENT_PARAGRAPH_BOUNDARY}\{{(\d+)\}}"
 )
+CURRENT_PARAGRAPH_BOUNDARY_PATTERN = re.compile(
+    rf"\\{CURRENT_PARAGRAPH_BOUNDARY}\{{(\d+)\}}"
+)
+MATERIALIZED_PARAGRAPH_BOUNDARY = r"\SCIParagraphBoundary{}"
 STYLE_BEGIN = "% SCI_DIFF_STYLE_BEGIN"
 STYLE_END = "% SCI_DIFF_STYLE_END"
 CHARACTER_REFINEMENT_THRESHOLD = 0.70
@@ -129,6 +142,52 @@ class _DisplayEquation:
     start: int
     end: int
     body_without_label: str
+
+
+def _paragraph_boundary_matches(text: str) -> tuple[re.Match[str], ...]:
+    """Return source-owned physical boundaries in the document body.
+
+    A materialized ``.bbl`` contains formatter whitespace that is not part of
+    the manuscript's prose topology.  In particular, a blank line before the
+    first ``\\bibitem`` must remain structural list whitespace rather than be
+    converted into an explicit paragraph command.
+    """
+    begin = text.find(r"\begin{document}")
+    if begin < 0:
+        return tuple(PARAGRAPH_BREAK_PATTERN.finditer(text))
+    begin += len(r"\begin{document}")
+    end = text.rfind(r"\end{document}")
+    if end < begin:
+        raise WorkflowError("Manuscript source has an unbalanced document body.")
+    bibliography_ranges: list[tuple[int, int]] = []
+    open_bibliographies: dict[str, list[int]] = {}
+    try:
+        environment_commands = scan_tex_commands(
+            text[begin:end], ("begin", "end"), field_count=1
+        )
+    except ValueError as exc:
+        raise WorkflowError("Malformed environment in manuscript body.") from exc
+    for command in environment_commands:
+        environment = command.fields[0].strip()
+        if not environment.endswith("bibliography"):
+            continue
+        absolute_start = begin + command.start
+        absolute_end = begin + command.end
+        if command.name == "begin":
+            open_bibliographies.setdefault(environment, []).append(absolute_start)
+            continue
+        openings = open_bibliographies.get(environment)
+        if not openings:
+            raise WorkflowError("Unbalanced bibliography environment.")
+        bibliography_ranges.append((openings.pop(), absolute_end))
+    if any(openings for openings in open_bibliographies.values()):
+        raise WorkflowError("Unbalanced bibliography environment.")
+
+    return tuple(
+        match
+        for match in PARAGRAPH_BREAK_PATTERN.finditer(text, begin, end)
+        if not any(start <= match.start() < stop for start, stop in bibliography_ranges)
+    )
 
 
 def _optional_field_end(text: str, start: int) -> int:
@@ -607,22 +666,113 @@ def _separator_is_diff_only(text: str) -> bool:
     return not stripped.strip()
 
 
-def _preserve_current_paragraph_topology(latexdiff_output: str) -> str:
-    """Neutralize blank lines internal to latexdiff command comments.
+def _encode_paragraph_boundaries(text: str, command: str) -> str:
+    """Replace active physical paragraph breaks with ordered semantic markers."""
+    replacements = [
+        (match.start(), match.end(), f"\n\\{command}{{{index}}}\n")
+        for index, match in enumerate(_paragraph_boundary_matches(text))
+    ]
+    return _replace_spans(text, replacements)
 
-    ``latexdiff`` represents deleted TeX commands with consecutive
-    ``%DIFDELCMD``/``%DIFAUXCMD`` lines.  A blank physical line between two
-    such comments is an internal serialization gap, not whitespace owned by
-    the current manuscript.  Leaving it active makes TeX start a paragraph
-    that does not exist in the current source.  Convert only those internal
-    blank lines to ordinary comment lines; genuine current-source paragraph
-    breaks remain untouched.
+
+def _map_boundary_offset(
+    position: int,
+    replacements: tuple[tuple[int, int, str], ...],
+) -> int:
+    delta = 0
+    for start, end, replacement in replacements:
+        if position <= start:
+            break
+        if position < end:
+            raise WorkflowError("Reviewer provenance bisected a paragraph boundary.")
+        delta += len(replacement) - (end - start)
+    return position + delta
+
+
+def _encode_provenance_paragraph_boundaries(
+    source: ProvenanceSource,
+) -> ProvenanceSource:
+    """Encode current boundaries while keeping markers outside review ownership."""
+    replacements = tuple(
+        (
+            match.start(),
+            match.end(),
+            f"\n\\{CURRENT_PARAGRAPH_BOUNDARY}{{{index}}}\n",
+        )
+        for index, match in enumerate(_paragraph_boundary_matches(source.text))
+    )
+    encoded = _replace_spans(source.text, list(replacements))
+    spans: list[ReviewSpan] = []
+    for span in source.review_spans:
+        cursor = span.start
+        for start, end, _ in replacements:
+            if end <= cursor or start >= span.end:
+                continue
+            if cursor < start:
+                spans.append(
+                    ReviewSpan(
+                        span.review_ids,
+                        _map_boundary_offset(cursor, replacements),
+                        _map_boundary_offset(start, replacements),
+                    )
+                )
+            cursor = max(cursor, end)
+        if cursor < span.end:
+            spans.append(
+                ReviewSpan(
+                    span.review_ids,
+                    _map_boundary_offset(cursor, replacements),
+                    _map_boundary_offset(span.end, replacements),
+                )
+            )
+    return ProvenanceSource(encoded, tuple(spans))
+
+
+def _neutralize_unowned_paragraph_breaks(latexdiff_output: str) -> str:
+    """Make every unmarked blank physical line TeX-inert.
+
+    Both parent and current sources have already made their paragraph topology
+    explicit.  Any blank line created by ``latexdiff`` is therefore internal
+    serialization whitespace and cannot own manuscript structure.
     """
+    return IMPLICIT_BLANK_LINE_PATTERN.sub("%", latexdiff_output)
 
-    def comment_gap(match: re.Match[str]) -> str:
-        return match.group(1) + "%\n" * match.group(2).count("\n")
 
-    return DIF_COMMAND_COMMENT_GAP_PATTERN.sub(comment_gap, latexdiff_output)
+def _materialize_current_paragraph_boundaries(
+    text: str,
+    expected_count: int,
+) -> tuple[str, dict[str, int]]:
+    """Restore only ordered current boundaries and verify the final topology."""
+    current_ids = tuple(
+        int(value) for value in CURRENT_PARAGRAPH_BOUNDARY_PATTERN.findall(text)
+    )
+    expected_ids = tuple(range(expected_count))
+    if current_ids != expected_ids:
+        missing = len(set(expected_ids) - set(current_ids))
+        invented = len(set(current_ids) - set(expected_ids))
+        raise WorkflowError(
+            "Marked paragraph topology diverged from the current manuscript: "
+            f"missing={missing}, invented={invented}."
+        )
+    materialized = PARENT_PARAGRAPH_BOUNDARY_PATTERN.sub("%", text)
+    materialized = CURRENT_PARAGRAPH_BOUNDARY_PATTERN.sub(
+        lambda _: MATERIALIZED_PARAGRAPH_BOUNDARY,
+        materialized,
+    )
+    marked_count = materialized.count(MATERIALIZED_PARAGRAPH_BOUNDARY)
+    missing = max(0, expected_count - marked_count)
+    invented = max(0, marked_count - expected_count)
+    if missing or invented:
+        raise WorkflowError(
+            "Marked paragraph topology diverged from the current manuscript: "
+            f"missing={missing}, invented={invented}."
+        )
+    return materialized, {
+        "current_paragraph_boundaries": expected_count,
+        "marked_current_paragraph_boundaries": marked_count,
+        "missing_boundaries": missing,
+        "invented_boundaries": invented,
+    }
 
 
 def _character_refinement_matcher(old: str, new: str) -> SequenceMatcher[str] | None:
@@ -654,13 +804,25 @@ class _AdditionLocator:
         if not content:
             return self.cursor, self.cursor
         index = self.source.text.find(content, self.cursor)
+        matched_end: int | None = None
+        if index < 0 and CURRENT_PARAGRAPH_BOUNDARY_PATTERN.search(content):
+            tokens = re.split(r"(\s+)", content)
+            pattern = "".join(
+                r"\s*" if token.isspace() else re.escape(token)
+                for token in tokens
+                if token
+            )
+            match = re.search(pattern, self.source.text[self.cursor :])
+            if match is not None:
+                index = self.cursor + match.start()
+                matched_end = self.cursor + match.end()
         if index < 0:
             sample = " ".join(content.strip().split())[:120]
             raise WorkflowError(
                 "Could not map a latexdiff addition back to the provenance-free "
                 f"revision source: {sample!r}."
             )
-        end = index + len(content)
+        end = matched_end if matched_end is not None else index + len(content)
         self.cursor = end
         return index, end
 
@@ -672,6 +834,26 @@ def _render_addition(
     *,
     full_document: bool,
 ) -> str:
+    def render_content(content: str, macro: str, owner: tuple[str, ...] | None) -> str:
+        rendered_parts: list[str] = []
+        cursor = 0
+        for marker in CURRENT_PARAGRAPH_BOUNDARY_PATTERN.finditer(content):
+            ordinary = content[cursor : marker.start()]
+            if ordinary:
+                rendered = f"{macro}{{{ordinary}}}"
+                if owner:
+                    rendered = f"\\SCIReviewSpan{{{','.join(owner)}}}{{{rendered}}}"
+                rendered_parts.append(rendered)
+            rendered_parts.append(marker.group(0))
+            cursor = marker.end()
+        ordinary = content[cursor:]
+        if ordinary:
+            rendered = f"{macro}{{{ordinary}}}"
+            if owner:
+                rendered = f"\\SCIReviewSpan{{{','.join(owner)}}}{{{rendered}}}"
+            rendered_parts.append(rendered)
+        return "".join(rendered_parts)
+
     pieces: list[str] = []
     for left, right, owner in split_by_review_provenance(provenance, start, end):
         content = provenance.text[left:right]
@@ -684,10 +866,7 @@ def _render_addition(
             macro = r"\DIFaddReviewFL" if full_document else r"\DIFaddReview"
         else:
             macro = r"\DIFaddFL" if full_document else r"\DIFadd"
-        rendered = f"{macro}{{{content}}}"
-        if owner:
-            rendered = f"\\SCIReviewSpan{{{','.join(owner)}}}{{{rendered}}}"
-        pieces.append(rendered)
+        pieces.append(render_content(content, macro, owner))
     return "".join(pieces)
 
 
@@ -717,6 +896,62 @@ def _refine_replacement(
                     full_document=full_document,
                 )
             )
+    return "".join(pieces)
+
+
+def _refine_topology_aligned_replacement(
+    old: str,
+    new: str,
+    provenance: ProvenanceSource,
+    new_start: int,
+    *,
+    full_document: bool,
+) -> str | None:
+    """Refine prose between aligned topology markers, never through markers."""
+    parent_markers = tuple(PARENT_PARAGRAPH_BOUNDARY_PATTERN.finditer(old))
+    current_markers = tuple(CURRENT_PARAGRAPH_BOUNDARY_PATTERN.finditer(new))
+    if not parent_markers and not current_markers:
+        return None
+    if len(parent_markers) != len(current_markers):
+        return None
+
+    old_starts = (0, *(marker.end() for marker in parent_markers))
+    old_stops = (*(marker.start() for marker in parent_markers), len(old))
+    new_starts = (0, *(marker.end() for marker in current_markers))
+    new_stops = (*(marker.start() for marker in current_markers), len(new))
+    pieces: list[str] = []
+    for index, (old_left, old_right, new_left, new_right) in enumerate(
+        zip(old_starts, old_stops, new_starts, new_stops, strict=True)
+    ):
+        old_part = old[old_left:old_right]
+        new_part = new[new_left:new_right]
+        matcher = _character_refinement_matcher(old_part, new_part)
+        if matcher is None:
+            if old_part:
+                macro = r"\DIFdelFL" if full_document else r"\DIFdel"
+                pieces.append(f"{macro}{{{old_part}}}")
+            if new_part:
+                pieces.append(
+                    _render_addition(
+                        provenance,
+                        new_start + new_left,
+                        new_start + new_right,
+                        full_document=full_document,
+                    )
+                )
+        else:
+            pieces.append(
+                _refine_replacement(
+                    old_part,
+                    new_part,
+                    provenance,
+                    new_start + new_left,
+                    matcher,
+                    full_document=full_document,
+                )
+            )
+        if index < len(current_markers):
+            pieces.append(current_markers[index].group(0))
     return "".join(pieces)
 
 
@@ -756,8 +991,17 @@ def _classify_region(
             addition = segments[addition_index]
             start, end = locator.locate(addition.content)
             full_document = addition.macro.endswith("FL")
+            topology_refinement = _refine_topology_aligned_replacement(
+                segment.content,
+                addition.content,
+                provenance,
+                start,
+                full_document=full_document,
+            )
             matcher = _character_refinement_matcher(segment.content, addition.content)
-            if matcher is not None:
+            if topology_refinement is not None:
+                output.append(topology_refinement)
+            elif matcher is not None:
                 output.append(
                     _refine_replacement(
                         segment.content,
@@ -1036,6 +1280,17 @@ def build_marked_manuscript(
     new_source = source_dir / "new.tex"
     old_source.write_text(old_text, encoding="utf-8")
     new_source.write_text(provenance.text, encoding="utf-8")
+    old_encoded_source = source_dir / "old_topology_encoded.tex"
+    new_encoded_source = source_dir / "new_topology_encoded.tex"
+    old_encoded_source.write_text(
+        _encode_paragraph_boundaries(old_text, PARENT_PARAGRAPH_BOUNDARY),
+        encoding="utf-8",
+    )
+    encoded_provenance = _encode_provenance_paragraph_boundaries(provenance)
+    new_encoded_source.write_text(encoded_provenance.text, encoding="utf-8")
+    expected_paragraph_count = len(
+        CURRENT_PARAGRAPH_BOUNDARY_PATTERN.findall(encoded_provenance.text)
+    )
 
     style = source_dir / "revision_preamble.tex"
     user_style = (config.references / "revision_style.tex").read_text(encoding="utf-8")
@@ -1056,23 +1311,31 @@ def build_marked_manuscript(
         f"--preamble={style}",
         "--append-context2cmd=" + ",".join(PUBLISHER_METADATA_CONTEXT_COMMANDS),
         "--append-textcmd=" + ",".join(text_commands),
-        "--append-safecmd=latin,nolinkurl",
+        "--append-safecmd=latin,nolinkurl,"
+        f"{PARENT_PARAGRAPH_BOUNDARY},{CURRENT_PARAGRAPH_BOUNDARY}",
         "--disable-citation-markup",
         "--ignore-warnings",
-        str(old_source),
-        str(new_source),
+        str(old_encoded_source),
+        str(new_encoded_source),
     ]
     result = run_command(command, cwd=source_dir)
     (source_dir / "latexdiff_raw.tex").write_text(result.stdout, encoding="utf-8")
-    structurally_normalized = _preserve_current_paragraph_topology(result.stdout)
+    structurally_normalized = _neutralize_unowned_paragraph_breaks(result.stdout)
     (source_dir / "latexdiff_structure_normalized.tex").write_text(
         structurally_normalized, encoding="utf-8"
     )
-    classified = _classify_reviewer_additions(structurally_normalized, provenance)
-    classified = _replace_materialized_bibliography_entries(
-        classified, visible_bibliography
+    classified = _classify_reviewer_additions(
+        structurally_normalized, encoded_provenance
     )
     (source_dir / "manuscript_classified.tex").write_text(classified, encoding="utf-8")
+    classified, paragraph_topology = _materialize_current_paragraph_boundaries(
+        classified,
+        expected_paragraph_count,
+    )
+    (run_dir / "paragraph_topology.json").write_text(
+        json.dumps(paragraph_topology, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     marked_source = source_dir / "manuscript_marked.tex"
     marked_source.write_text(
         _lift_review_spans_from_moving_arguments(

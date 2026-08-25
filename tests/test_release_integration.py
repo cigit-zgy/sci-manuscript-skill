@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -175,6 +176,16 @@ def _pdf_text(path: Path) -> str:
     )
     assert result.stdout.strip(), path
     return result.stdout
+
+
+def _rendered_bibliography_source(marked_source: str) -> str:
+    match = re.search(r"\\begin\{(?:mcite)?thebibliography\}", marked_source)
+    assert match is not None
+    environment = re.search(r"\\begin\{([^}]*bibliography)\}", match.group(0))
+    assert environment is not None
+    ending = rf"\end{{{environment.group(1)}}}"
+    stop = marked_source.index(ending, match.end()) + len(ending)
+    return marked_source[match.start() : stop]
 
 
 def _pdf_word_x(path: Path, token: str) -> float:
@@ -579,7 +590,7 @@ def test_non_chinese_initial_workflows_own_scientific_frontmatter(
         marked_source = (
             retained_runs[0] / "marked_source" / "manuscript_marked.tex"
         ).read_text(encoding="utf-8")
-        bibliography_source = marked_source[marked_source.index(r"\bibitem") :]
+        bibliography_source = _rendered_bibliography_source(marked_source)
         assert "Corrected visible" in bibliography_source
         assert "Replace this example" not in bibliography_source
         assert r"\DIFdel{" not in bibliography_source
@@ -631,9 +642,9 @@ def test_custom_publisher_initial_and_revision_workflow(tmp_path: Path) -> None:
         "Marked manuscript",
         "Response letter",
     }
-    assert "Custom revised body" in _pdf_text(
-        revision / "output" / "manuscript_marked.pdf"
-    )
+    marked_text = _pdf_text(revision / "output" / "manuscript_marked.pdf")
+    assert "Custom body." in marked_text
+    assert "revised body." in marked_text
     assert (manuscript / "state" / "revision_01" / "build_manifest.yaml").is_file()
     assert not (manuscript / "tmp").exists()
 
@@ -973,14 +984,9 @@ def test_review_provenance_preserves_rendered_paragraph_topology(
     normalized = (
         run / "marked_source" / "latexdiff_structure_normalized.tex"
     ).read_text(encoding="utf-8")
-    assert re.search(
-        r"%DIF(?:DEL|AUX)CMD[^\n]*\n[ \t]*\n%DIF(?:DEL|AUX)CMD",
-        raw,
-    )
-    assert not re.search(
-        r"%DIF(?:DEL|AUX)CMD[^\n]*\n[ \t]*\n%DIF(?:DEL|AUX)CMD",
-        normalized,
-    )
+    assert r"\SCIParentParagraphBoundary{" in raw
+    assert r"\SCICurrentParagraphBoundary{" in raw
+    assert not re.search(r"(?m)^[ \t]*$", normalized)
     marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
         encoding="utf-8"
     )
@@ -988,6 +994,19 @@ def test_review_provenance_preserves_rendered_paragraph_topology(
         marked_source.index("PARAGRAPHA") : marked_source.index("PARAGRAPHB")
     ]
     assert "\n\n" not in boundary
+    assert r"\SCIParagraphBoundary{}" not in boundary
+    report = json.loads((run / "paragraph_topology.json").read_text(encoding="utf-8"))
+    assert report["current_paragraph_boundaries"] > 0
+    assert (
+        report["marked_current_paragraph_boundaries"]
+        == report["current_paragraph_boundaries"]
+    )
+    assert report["missing_boundaries"] == 0
+    assert report["invented_boundaries"] == 0
+    assert (
+        marked_source.count(r"\SCIParagraphBoundary{}")
+        == report["current_paragraph_boundaries"]
+    )
     assert "PARAGRAPHB" in _pdf_text(marked)
     assert "PARAGRAPHC" in _pdf_text(marked)
     shutil.rmtree(manuscript / "tmp")
@@ -1114,7 +1133,7 @@ def test_chinese_bibliography_doi_and_visible_revision_semantics(
     assert r"DOI: \nolinkurl{10.1038/s42256-024-00832-8}" in " ".join(
         current_bbl.split()
     )
-    bibliography_source = marked_source[marked_source.index(r"\bibitem") :]
+    bibliography_source = _rendered_bibliography_source(marked_source)
     assert r"\DIFadd{" not in bibliography_source
     assert r"\DIFdel{" not in bibliography_source
     assert r"\SCIDeletedBibItem" not in bibliography_source

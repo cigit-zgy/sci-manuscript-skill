@@ -18,6 +18,11 @@ from typing import Iterator
 
 import yaml
 
+from .bibliography import (
+    citation_only_bibliography,
+    resolved_citation_keys,
+    source_citation_keys,
+)
 from .errors import WorkflowError
 from .metadata import (
     ManuscriptMetadata,
@@ -463,15 +468,64 @@ def _copy_file_atomically(source: Path, target: Path) -> Path:
     return target
 
 
-def snapshot_bibliography(config: ProjectConfig, round_number: int) -> Path:
-    """Atomically freeze the shared bibliography as one round's visible state."""
+def snapshot_bibliography(
+    config: ProjectConfig,
+    round_number: int,
+    aux_path: Path | None = None,
+    *,
+    rebuild_historical: bool = False,
+) -> Path:
+    """Write one citation-only round snapshot from resolved build evidence.
+
+    Existing snapshots are immutable unless the latest round is refreshed from
+    a successful build, or an explicit historical migration requests a rebuild.
+    """
     source = config.references / "references.bib"
     if not source.is_file():
         raise WorkflowError(f"Bibliography is missing: {source}")
-    return _copy_file_atomically(
-        source,
-        config.bibliography_snapshot_path(round_number),
+    target = config.bibliography_snapshot_path(round_number)
+    rounds = _round_numbers(config.project)
+    latest = rounds[-1]
+    if target.is_file() and aux_path is None and not rebuild_historical:
+        return target
+    if round_number != latest and not rebuild_historical:
+        if target.is_file():
+            return target
+        raise WorkflowError(
+            f"Historical bibliography snapshot is frozen for {round_name(round_number)}."
+        )
+    if aux_path is not None:
+        citation_keys = resolved_citation_keys(aux_path)
+    else:
+        version = config.round_dir(round_number)
+        citation_keys = source_citation_keys(
+            tuple(
+                path
+                for path in (
+                    version / "manuscript.tex",
+                    *sorted((version / "sections").rglob("*.tex")),
+                )
+                if path.is_file()
+            )
+        )
+    bibliography_text = (
+        target.read_text(encoding="utf-8")
+        if rebuild_historical and target.is_file()
+        else source.read_text(encoding="utf-8")
     )
+    filtered = citation_only_bibliography(
+        bibliography_text,
+        citation_keys,
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".bib.new")
+    try:
+        temporary.write_text(filtered, encoding="utf-8")
+        os.replace(temporary, target)
+    finally:
+        if temporary.is_file():
+            temporary.unlink()
+    return target
 
 
 def bibliography_source_for_round(

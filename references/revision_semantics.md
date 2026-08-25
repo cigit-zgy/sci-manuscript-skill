@@ -28,6 +28,12 @@ marked source must recover the current manuscript's paragraph, whitespace,
 section, list, and display-math topology. Internal `latexdiff` segment or
 deleted-command comment boundaries never own TeX whitespace and must not create
 a blank line, `\par`, indentation, or other document-structure change.
+Before comparison, ordered semantic markers encode every current source-owned
+physical paragraph boundary. All unowned serialization blank lines are made
+TeX-inert; only the ordered current markers are restored. Each retained run
+writes `paragraph_topology.json` with current/marked counts and zero-tolerance
+missing/invented diagnostics. Formatter whitespace inside a materialized
+bibliography is excluded because it is not manuscript prose topology.
 
 `\ReviewReference{ID}{key[,keys...]}` is declared in `responses.tex`. It links
 real rendered bibliography changes to reviewer provenance and response

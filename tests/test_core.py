@@ -748,9 +748,9 @@ def test_sync_bib_uses_only_the_explicit_export(tmp_path: Path) -> None:
 def test_round_bibliography_snapshots_preserve_visible_history(tmp_path: Path) -> None:
     r00 = _workspace(tmp_path)
     shared = r00.references / "references.bib"
-    bibliography_a = b"@article{a, title={Parent bibliography}}\n"
-    bibliography_b = b"@article{a, title={First revision bibliography}}\n"
-    bibliography_c = b"@article{a, title={Second revision bibliography}}\n"
+    bibliography_a = b"@article{replace_me, title={Parent bibliography}}\n"
+    bibliography_b = b"@article{replace_me, title={First revision bibliography}}\n"
+    bibliography_c = b"@article{replace_me, title={Second revision bibliography}}\n"
     shared.write_bytes(bibliography_a)
 
     r01 = _revision(r00)
@@ -774,7 +774,7 @@ def test_round_bibliography_snapshots_preserve_visible_history(tmp_path: Path) -
 def test_rollback_success_and_refusal(tmp_path: Path) -> None:
     revision = _revision(_workspace(tmp_path))
     parent_bibliography = revision.bibliography_snapshot_path(0).read_bytes()
-    current_bibliography = b"@article{current, title={Current revision}}\n"
+    current_bibliography = b"@article{replace_me, title={Current revision}}\n"
     (revision.references / "references.bib").write_bytes(current_bibliography)
     project = ManuscriptProject(revision.project)
     result = project.rollback(confirmed=True)

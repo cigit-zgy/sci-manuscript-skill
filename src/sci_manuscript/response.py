@@ -83,10 +83,6 @@ def init_response(config: ProjectConfig, round_number: int) -> Path | None:
 感谢您给予我们修改稿件《\ManuscriptTitle》的机会，并考虑将其发表于\JournalName。衷心感谢编辑和审稿人对本稿件的认真评阅以及富有建设性的建议。
 
 以下按照编辑和审稿人的意见列出相应回复；涉及正文修改的意见，其修改位置也在相应回复里标注。
-
-此致
-
-敬礼！
 }
 """  # noqa: RUF001
     else:
@@ -105,8 +101,6 @@ Dear Editor,
 Thank you for the opportunity to revise our manuscript entitled ``\ManuscriptTitle'' and for considering it for publication in \JournalName. We sincerely appreciate the careful evaluation and constructive comments provided by the Editor and Reviewers.
 
 Our point-by-point responses are provided below. For comments involving revisions to the manuscript, the corresponding locations are also indicated in the respective responses.
-
-Sincerely,
 }
 """
     sections: list[str] = []

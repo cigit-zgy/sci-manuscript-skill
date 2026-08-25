@@ -8,7 +8,10 @@ from sci_manuscript.diff import (
     CHARACTER_REFINEMENT_THRESHOLD,
     MAX_CHARACTER_REFINEMENT_CHARS,
     _classify_reviewer_additions,
-    _preserve_current_paragraph_topology,
+    _encode_paragraph_boundaries,
+    _encode_provenance_paragraph_boundaries,
+    _materialize_current_paragraph_boundaries,
+    _neutralize_unowned_paragraph_breaks,
     _safe_character_refinement,
 )
 from sci_manuscript.provenance import (
@@ -44,6 +47,32 @@ def test_nested_review_scope_inherits_and_canonicalizes_effective_ids() -> None:
         (1, 2, ("1-1", "2-1")),
         (2, 3, ("1-1",)),
     )
+
+
+def test_adjacent_review_wrappers_do_not_invent_a_paragraph() -> None:
+    source = extract_provenance(
+        "\\review{1-1}{\n    First sentence.\n}\\review{1-2}{\n    Second sentence.\n}"
+    )
+
+    assert "First sentence.\nSecond sentence." in source.text
+    assert "First sentence.\n\n" not in source.text
+    assert tuple(span.review_ids for span in source.review_spans) == (
+        ("1-1",),
+        ("1-2",),
+    )
+    assert all(
+        source.text[span.start : span.end].strip() for span in source.review_spans
+    )
+
+
+def test_real_paragraph_inside_or_between_review_wrappers_is_preserved() -> None:
+    inside = extract_provenance("\\review{1-1}{First paragraph.\n\nSecond paragraph.}")
+    between = extract_provenance(
+        "\\review{1-1}{First paragraph.}\n\n\\review{1-2}{Second paragraph.}"
+    )
+
+    assert inside.text.count("\n\n") == 1
+    assert between.text.count("\n\n") == 1
 
 
 @pytest.mark.parametrize(
@@ -103,28 +132,56 @@ def test_review_provenance_is_paragraph_transparent(
     assert classified.count("\n\n") == provenance.text.count("\n\n")
 
 
-def test_latexdiff_deleted_command_gap_cannot_create_a_paragraph() -> None:
-    raw = (
-        "前句\\DIFadd{进一步评价}。\\DIFdelbegin %DIFDELCMD < \n"
-        "\n"
-        "%DIFDELCMD < %%%\n"
-        "\\DIFdel{旧段开头}\\DIFdelend \\DIFaddbegin "
-        "\\DIFadd{这类基于特定数据的评价}。"
-    )
-    normalized = _preserve_current_paragraph_topology(raw)
-
-    assert "%DIFDELCMD < \n%\n%DIFDELCMD < %%%" in normalized
-    assert "\n\n%DIFDELCMD" not in normalized
-    assert _preserve_current_paragraph_topology(
-        "%DIFDELCMD < deleted command\n\nA genuine current paragraph."
-    ).endswith("\n\nA genuine current paragraph.")
-
+def test_current_topology_owns_all_paragraph_boundaries() -> None:
     provenance = extract_provenance(
-        r"前句\review{1-1}{进一步评价。这类基于特定数据的评价}。"
+        "\\review{1-1}{Current first paragraph.}\n\nCurrent second paragraph."
     )
-    classified = _classify_reviewer_additions(normalized, provenance)
-    boundary = classified[classified.index("进一步评价") : classified.index("这类")]
-    assert "\n\n" not in boundary
+    encoded = _encode_provenance_paragraph_boundaries(provenance)
+    raw = encoded.text.replace(
+        "Current first paragraph.",
+        "Current first\n\nparagraph.",
+    )
+    normalized = _neutralize_unowned_paragraph_breaks(raw)
+    classified = _classify_reviewer_additions(normalized, encoded)
+    materialized, report = _materialize_current_paragraph_boundaries(classified, 1)
+
+    assert "Current first\n\nparagraph" not in materialized
+    assert "paragraph.\n\\SCIParagraphBoundary{}\nCurrent second" in materialized
+    assert report == {
+        "current_paragraph_boundaries": 1,
+        "marked_current_paragraph_boundaries": 1,
+        "missing_boundaries": 0,
+        "invented_boundaries": 0,
+    }
+
+
+def test_materialized_bibliography_whitespace_is_not_prose_topology() -> None:
+    source = """\\begin{document}
+First paragraph.
+
+Second paragraph.
+
+\\begin{thebibliography}{1}
+
+\\bibitem{key}
+Reference text.
+
+\\end{thebibliography}
+\\end{document}
+"""
+
+    encoded = _encode_paragraph_boundaries(source, "SCIParagraph")
+
+    assert encoded.count(r"\SCIParagraph{") == 2
+    assert "\\begin{thebibliography}{1}\n\n\\bibitem{key}" in encoded
+
+
+def test_topology_normalization_is_not_tied_to_dif_comment_names() -> None:
+    raw = "A\n\n%DIFDELCMD old\n\n%DIFAUXCMD old\n\nB"
+    normalized = _neutralize_unowned_paragraph_breaks(raw)
+
+    assert "\n\n" not in normalized
+    assert normalized.count("\n%\n") == 3
 
 
 def test_character_refinement_colors_only_real_reviewer_change() -> None:

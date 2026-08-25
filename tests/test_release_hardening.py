@@ -650,8 +650,17 @@ def test_failed_submission_manifest_restores_previous_final_artifacts(
         path.write_bytes(content)
 
     def publish_then_return(
-        *_args: object, **_kwargs: object
+        _config: ProjectConfig,
+        _round_number: int,
+        run_dir: Path,
+        _engine: str | None,
+        _audit: object,
     ) -> list[SubmissionArtifact]:
+        build_dir = run_dir / "clean_build"
+        build_dir.mkdir(parents=True)
+        (build_dir / "manuscript.aux").write_text(
+            "\\citation{replace_me}\n", encoding="utf-8"
+        )
         (output / "manuscript.pdf").write_bytes(b"new output")
         (submission / "manuscript.pdf").write_bytes(b"new package")
         (submission / "checklist.md").write_bytes(b"new checklist\n")

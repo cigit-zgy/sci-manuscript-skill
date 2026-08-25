@@ -66,6 +66,10 @@
 \providecommand{\DIFdelendFL}{}
 \providecommand{\review}[2]{#2}
 \providecommand{\SCIReviewSpan}[2]{#2}
+% A source blank line ends a running paragraph, but is inert while TeX is
+% already in vertical mode (for example immediately before the first
+% \bibitem).  Preserve that distinction when materializing topology markers.
+\providecommand{\SCIParagraphBoundary}{\ifhmode\par\fi}
 \providecommand{\SCIDeletedEquation}[1]{%
   \par\noindent\[\DIFdelMath{#1}\]\par
 }

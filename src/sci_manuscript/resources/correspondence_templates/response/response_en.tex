@@ -22,11 +22,11 @@
 \setlength{\emergencystretch}{2em}
 \pagestyle{plain}
 
-\newcommand{\ResponseSection}[1]{\section*{Response to #1}}
+\newcommand{\ResponseSection}[1]{\section*{#1}}
 \newenvironment{generalcomment}[1][General comment]
   {\begin{tcolorbox}[
     enhanced,breakable,frame hidden,colback=quotegray,
-    borderline west={3pt}{0pt}{graytext},
+    borderline west={2pt}{0pt}{graytext!55},
     sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
     before skip=10pt,after skip=12pt]
    {\color{navy}\bfseries #1}\par\smallskip\normalfont}
@@ -41,22 +41,29 @@
   {\end{tcolorbox}}
 \newenvironment{response}
   {\par\noindent{\color{green}\bfseries Response}\par\smallskip}
-  {\par\medskip}
+  {\par\smallskip}
 \newcommand{\reviewlocation}[1]{%
   \par\noindent{\color{graytext}\bfseries Location of revisions: #1.}\par
-  \addvspace{1.2\baselineskip}}
+  \addvspace{0.6\baselineskip}}
 \newcommand{\ReviewLocation}[1]{#1}
 \newcommand{\ReviewerComment}[1]{#1\par\medskip}
 \begin{document}
+
+\begin{center}
+  {\Large\bfseries Response Letter}\par
+\end{center}
+\textbf{Manuscript: }\ManuscriptTitle\par
+\textbf{Journal: }\JournalName\par
+\ifx\ManuscriptID\empty\else\textbf{Manuscript ID: }\ManuscriptID\par\fi
+\vspace{0.2in}
 
 %%RESPONSE_LETTER%%
 
 \vspace{0.25in}
 \CorrespondenceAuthorName\par
-on behalf of all authors\par
 \href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
 
-\vspace{0.35in}
+\clearpage
 
 %%RESPONSE_BODY%%
 

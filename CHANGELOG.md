@@ -15,7 +15,16 @@
   addition, and deletion changes.
 - Machine-owned per-round bibliography snapshots preserve visible history
   across `sync-bib`, revision creation, rollback, reindex, build, and
-  submission transactions.
+  submission transactions. Snapshots now retain only build-resolved citations
+  and recursive BibTeX dependencies; `rebuild-bib-state` provides an explicit
+  confirmed migration for existing round state, while local attachment paths
+  are excluded from machine-owned snapshots.
+- Marked builds encode current-source paragraph topology before `latexdiff`,
+  neutralize generated serialization whitespace, and emit a zero-tolerance
+  current/marked/missing/invented topology report.
+- Response letters use a single title/contact page break, exact editor/reviewer
+  section titles, compact location spacing, and visually distinct neutral-gray
+  general comments without generated ceremonial closings.
 
 ## 2.0.0
 

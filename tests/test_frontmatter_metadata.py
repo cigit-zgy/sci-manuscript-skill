@@ -196,9 +196,14 @@ correspondence: {}
         run_dir: Path,
         engine: str | None,
     ) -> Path:
-        del run_dir, engine
+        del engine
         source = config.round_dir(round_number) / "manuscript.tex"
         assert source.is_file()
+        build_dir = run_dir / "clean_build"
+        build_dir.mkdir(parents=True)
+        (build_dir / "manuscript.aux").write_text(
+            "\\citation{replace_me}\n", encoding="utf-8"
+        )
         output = config.output_dir(round_number) / "manuscript.pdf"
         output.write_bytes(b"pdf")
         return output

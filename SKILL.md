@@ -49,7 +49,12 @@ publisher resource only to diagnose that exact publisher build.
 - `manuscript/references/` contains `references.bib` and `revision_style.tex`.
   The BibTeX file is the editable latest state; immutable historical copies live
   only in machine-owned `state/<round>/bibliography.bib` and are never edited by
-  `sync-bib`.
+  `sync-bib`. A round snapshot contains only keys resolved from that round's
+  successful build AUX (plus recursive BibTeX dependencies and declarations),
+  rather than a full export. Existing historical snapshots remain frozen unless
+  the explicit confirmed `rebuild-bib-state` migration is requested. Local
+  attachment fields are omitted from machine state so snapshots contain no
+  private filesystem paths; the editable export is never rewritten.
   Builds resolve the configured user author library, then the bundled
   Skill-level library. Projects and revision directories never contain an
   author library or version-local `references/`.
@@ -151,6 +156,7 @@ sci-manuscript rollback --project /path/to/project --yes
 sci-manuscript reindex --project /path/to/project --yes
 sci-manuscript submission --project /path/to/project
 sci-manuscript sync-bib --project /path/to/project --bib export.bib
+sci-manuscript rebuild-bib-state --project /path/to/project --round r01 --yes
 ```
 
 A pre-existing reviewer-comment file may still be supplied with

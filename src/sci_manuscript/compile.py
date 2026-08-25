@@ -489,7 +489,13 @@ def build_clean_manuscript(
     source = stage_runtime_resources(
         config, round_number, source_dir, include_manuscript=True
     )
-    compiled = compile_tex(source, run_dir / "clean_build", config, engine_override)
+    compiled = compile_tex(
+        source,
+        run_dir / "clean_build",
+        config,
+        engine_override,
+        keep_intermediates=True,
+    )
     output_dir = config.output_dir(round_number)
     filename = "manuscript.pdf" if round_number == 0 else "manuscript_clean.pdf"
     target = output_dir / filename

@@ -23,11 +23,11 @@
 \setlength{\emergencystretch}{2em}
 \pagestyle{plain}
 
-\newcommand{\ResponseSection}[1]{\section*{对#1的回复}}
+\newcommand{\ResponseSection}[1]{\section*{#1}}
 \newenvironment{generalcomment}[1][总体意见]
   {\begin{tcolorbox}[
     enhanced,breakable,frame hidden,colback=quotegray,
-    borderline west={3pt}{0pt}{graytext},
+    borderline west={2pt}{0pt}{graytext!55},
     sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
     before skip=10pt,after skip=12pt]
    {\color{navy}\bfseries #1}\par\smallskip\normalfont}
@@ -42,22 +42,29 @@
   {\end{tcolorbox}}
 \newenvironment{response}
   {\par\noindent{\color{green}\bfseries 回复}\par\smallskip}
-  {\par\medskip}
+  {\par\smallskip}
 \newcommand{\reviewlocation}[1]{%
   \par\noindent{\color{graytext}\bfseries 修改位置：#1。}\par
-  \addvspace{1.2\baselineskip}}
+  \addvspace{0.6\baselineskip}}
 \newcommand{\ReviewLocation}[1]{#1}
 \newcommand{\ReviewerComment}[1]{#1\par\medskip}
 \begin{document}
+
+\begin{center}
+  {\Large\bfseries 回复信}\par
+\end{center}
+\textbf{稿件题目：}\ManuscriptTitle\par
+\textbf{期刊：}\JournalName\par
+\ifx\ManuscriptID\empty\else\textbf{稿件编号：}\ManuscriptID\par\fi
+\vspace{0.2in}
 
 %%RESPONSE_LETTER%%
 
 \vspace{0.25in}
 \CorrespondenceAuthorNameZh\par
-谨代表全体作者\par
 \href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
 
-\vspace{0.35in}
+\clearpage
 
 %%RESPONSE_BODY%%
 

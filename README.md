@@ -160,7 +160,7 @@ the light-gray strikeout.
 and keywords. These visible fields participate in the same direct-parent
 revision comparison as body sections; generated visible funding metadata is
 included in that comparison as well. Historical bibliography state is frozen
-under `state/<round>/` for key-based machine comparison, while marked output
+as the build-resolved cited subset under `state/<round>/` for key-based machine comparison, while marked output
 always renders the current bibliography only. `\ReviewReference{ID}{key[,keys...]}`
 adds eligible current-entry lines to the same response-location set as
 manuscript `\review` additions.

@@ -2,12 +2,39 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from itertools import pairwise
 
 from .errors import WorkflowError
 from .review_ids import validate_review_id_list
 from .tex import command_at, extract_braced, is_escaped
+
+
+def _provenance_seam_value(left: str, right: str) -> tuple[str, int]:
+    r"""Join parser fragments without turning wrapper layout into ``\par``.
+
+    A line break on each side of a removed ``\review`` delimiter is still only
+    TeX inter-token whitespace in the wrapped source.  Concatenating the raw
+    fragments can otherwise create a new blank physical line.  Preserve a
+    paragraph boundary that already exists wholly on either side of the seam,
+    but collapse seam-only whitespace to one ordinary space.
+    """
+    if not left or not right:
+        return right, 0
+    trailing = re.search(r"[ \t\r\n]+$", left)
+    leading = re.match(r"[ \t\r\n]+", right)
+    if trailing is None or leading is None:
+        return right, 0
+    left_space = trailing.group(0)
+    right_space = leading.group(0)
+    normalized_left = left_space.replace("\r\n", "\n")
+    normalized_right = right_space.replace("\r\n", "\n")
+    if "\n\n" in normalized_left or "\n\n" in normalized_right:
+        return right, 0
+    if normalized_left.count("\n") + normalized_right.count("\n") < 2:
+        return right, 0
+    return right[leading.end() :], leading.end()
 
 
 @dataclass(frozen=True)
@@ -61,10 +88,18 @@ def extract_provenance(text: str) -> ProvenanceSource:
         length = 0
         cursor = 0
 
-        def append(value: str) -> None:
+        def append(value: str) -> tuple[int, int, int]:
             nonlocal length
-            pieces.append(value)
-            length += len(value)
+            if not value:
+                return length, length, 0
+            removed = 0
+            if pieces:
+                value, removed = _provenance_seam_value(pieces[-1], value)
+            start = length
+            if value:
+                pieces.append(value)
+                length += len(value)
+            return start, length, removed
 
         while cursor < len(fragment):
             if fragment[cursor] == "%" and not is_escaped(fragment, cursor):
@@ -84,10 +119,15 @@ def extract_provenance(text: str) -> ProvenanceSource:
                 ids = union_ids(inherited, _parse_review_ids(ids_raw))
                 parsed = parse(body, inherited=ids)
                 start = length
-                append(parsed.text)
+                _, _, removed = append(parsed.text)
                 spans.extend(
-                    ReviewSpan(span.review_ids, span.start + start, span.end + start)
+                    ReviewSpan(
+                        span.review_ids,
+                        max(0, span.start - removed) + start,
+                        max(0, span.end - removed) + start,
+                    )
                     for span in parsed.review_spans
+                    if span.end > removed
                 )
                 cursor = end
                 continue
@@ -101,11 +141,9 @@ def extract_provenance(text: str) -> ProvenanceSource:
                 ):
                     break
                 cursor += 1
-            append(fragment[plain_start:cursor])
-            if inherited and plain_start != cursor:
-                spans.append(
-                    ReviewSpan(inherited, length - (cursor - plain_start), length)
-                )
+            appended_start, appended_end, _ = append(fragment[plain_start:cursor])
+            if inherited and appended_start != appended_end:
+                spans.append(ReviewSpan(inherited, appended_start, appended_end))
 
         merged: list[ReviewSpan] = []
         for span in sorted(spans, key=lambda item: (item.start, item.end)):

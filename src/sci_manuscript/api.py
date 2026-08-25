@@ -457,7 +457,11 @@ class ManuscriptProject:
                     elif response_output.exists():
                         response_output.unlink()
                 if selected == latest.current_round:
-                    snapshot_bibliography(config, selected)
+                    snapshot_bibliography(
+                        config,
+                        selected,
+                        run_dir / "clean_build" / "manuscript.aux",
+                    )
                 write_build_manifest(
                     config,
                     selected,
@@ -557,6 +561,50 @@ class ManuscriptProject:
             (Artifact("Bibliography", target),),
         )
 
+    def rebuild_bibliography_state(
+        self,
+        round: str | int | None = None,
+        *,
+        engine: str | None = None,
+        confirmed: bool = False,
+        keep_temp: bool = False,
+    ) -> LifecycleResult:
+        """Explicitly migrate one round to a citation-resolved bibliography state."""
+        if not confirmed:
+            raise WorkflowError(
+                "Bibliography-state rebuild requires explicit confirmation."
+            )
+        latest = load_project(self.root)
+        selected = parse_round(round, latest.current_round)
+        config = load_project(self.root, selected)
+        target = config.bibliography_snapshot_path(selected)
+        clean_output = config.output_dir(selected) / (
+            "manuscript.pdf" if selected == 0 else "manuscript_clean.pdf"
+        )
+        with temporary_run(self.root, keep_temp) as run_dir:
+            snapshot = _snapshot_files(
+                (target, clean_output), run_dir / "bibliography_state_rollback"
+            )
+            try:
+                clean = build_clean_manuscript(config, selected, run_dir, engine)
+                bibliography = snapshot_bibliography(
+                    config,
+                    selected,
+                    run_dir / "clean_build" / "manuscript.aux",
+                    rebuild_historical=True,
+                )
+            except Exception:
+                _restore_files(snapshot)
+                raise
+        return LifecycleResult(
+            "rebuild-bib-state",
+            revision_directory_name(selected),
+            (
+                Artifact("Clean manuscript", clean),
+                Artifact("Bibliography state", bibliography),
+            ),
+        )
+
     def prepare_submission(
         self,
         round: str | int | None = None,
@@ -611,7 +659,11 @@ class ManuscriptProject:
                     audit,
                 )
                 if selected == latest.current_round:
-                    snapshot_bibliography(config, selected)
+                    snapshot_bibliography(
+                        config,
+                        selected,
+                        run_dir / "clean_build" / "manuscript.aux",
+                    )
                 write_build_manifest(
                     config,
                     selected,

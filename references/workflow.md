@@ -179,6 +179,13 @@ derived from authoritative `reviewer_comments.md`; summaries receive no
 response ID. User letter, response, and reference bodies are never overwritten
 by build or submission. Users never enter line-number fields.
 
+The generated response document has one title/contact page followed by exactly
+one page break. Editor and reviewer section titles are rendered verbatim (no
+generated `Response to` prefix and no forced break between sections). General
+comments use a neutral light-gray panel distinct from specific-comment panels;
+automatic location lines use compact half-spacing. Templates do not add
+ceremonial closings or `on behalf of` language.
+
 ### Review audit
 
 Every revision `build` and `submission` performs a three-way audit of:
@@ -322,8 +329,10 @@ round. Rollback archives the removed round together with its current
 bibliography and atomically restores the previous round's frozen bibliography
 as the editable shared latest state.
 
-Each successful latest-round build or submission also freezes the effective
-bibliography in `state/<round>/bibliography.bib`. Each successful build or
+Each successful latest-round build or submission freezes the AUX-resolved
+cited entries, recursive `crossref`/`xdata` dependencies, and required BibTeX
+declarations in `state/<round>/bibliography.bib`. Uncited export entries are not
+copied into round state. Each successful build or
 submission atomically updates
 `state/<round>/build_manifest.yaml`. The manifest records the round and parent,
 package/Python/engine/tool identities, effective author source, fonts,
@@ -346,7 +355,10 @@ sci-manuscript sync-bib --project /absolute/path/to/project \
 ```
 
 No Zotero process or network service is contacted, and no historical snapshot
-is changed. Rebuild after synchronizing a changed bibliography. The visible
+is changed. An intentional migration of an existing snapshot requires the
+confirmed command `sci-manuscript rebuild-bib-state --project PROJECT --round
+ROUND --yes`; it rebuilds from that round's own frozen data and citations rather
+than substituting the latest export. Rebuild after synchronizing a changed bibliography. The visible
 reference list is compared from parent/current generated `.bbl` output rather
 than raw BibTeX fields.
 
