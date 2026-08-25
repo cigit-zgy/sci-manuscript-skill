@@ -31,6 +31,10 @@ from .workspace import ProjectConfig, strip_provenance_wrappers
 
 DIF_COMMENT_PATTERN = re.compile(r"(?m)^%DIF[^\n]*(?:\n|$)")
 DIF_CONTROL_PATTERN = re.compile(r"\\DIF(?:add|del|mod)(?:begin|end)(?:FL)?\s*")
+DIF_COMMAND_COMMENT_GAP_PATTERN = re.compile(
+    r"(?m)(%DIF(?:DEL|AUX)CMD[^\n]*\n)((?:[ \t]*\n)+)"
+    r"(?=%DIF(?:DEL|AUX)CMD)"
+)
 STYLE_BEGIN = "% SCI_DIFF_STYLE_BEGIN"
 STYLE_END = "% SCI_DIFF_STYLE_END"
 CHARACTER_REFINEMENT_THRESHOLD = 0.70
@@ -603,6 +607,24 @@ def _separator_is_diff_only(text: str) -> bool:
     return not stripped.strip()
 
 
+def _preserve_current_paragraph_topology(latexdiff_output: str) -> str:
+    """Neutralize blank lines internal to latexdiff command comments.
+
+    ``latexdiff`` represents deleted TeX commands with consecutive
+    ``%DIFDELCMD``/``%DIFAUXCMD`` lines.  A blank physical line between two
+    such comments is an internal serialization gap, not whitespace owned by
+    the current manuscript.  Leaving it active makes TeX start a paragraph
+    that does not exist in the current source.  Convert only those internal
+    blank lines to ordinary comment lines; genuine current-source paragraph
+    breaks remain untouched.
+    """
+
+    def comment_gap(match: re.Match[str]) -> str:
+        return match.group(1) + "%\n" * match.group(2).count("\n")
+
+    return DIF_COMMAND_COMMENT_GAP_PATTERN.sub(comment_gap, latexdiff_output)
+
+
 def _character_refinement_matcher(old: str, new: str) -> SequenceMatcher[str] | None:
     """Return a matcher only for bounded, structurally safe, similar prose."""
     unsafe = set(r"\{}$%&#_^~")
@@ -1041,10 +1063,16 @@ def build_marked_manuscript(
         str(new_source),
     ]
     result = run_command(command, cwd=source_dir)
-    classified = _classify_reviewer_additions(result.stdout, provenance)
+    (source_dir / "latexdiff_raw.tex").write_text(result.stdout, encoding="utf-8")
+    structurally_normalized = _preserve_current_paragraph_topology(result.stdout)
+    (source_dir / "latexdiff_structure_normalized.tex").write_text(
+        structurally_normalized, encoding="utf-8"
+    )
+    classified = _classify_reviewer_additions(structurally_normalized, provenance)
     classified = _replace_materialized_bibliography_entries(
         classified, visible_bibliography
     )
+    (source_dir / "manuscript_classified.tex").write_text(classified, encoding="utf-8")
     marked_source = source_dir / "manuscript_marked.tex"
     marked_source.write_text(
         _lift_review_spans_from_moving_arguments(

@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -174,6 +175,25 @@ def _pdf_text(path: Path) -> str:
     )
     assert result.stdout.strip(), path
     return result.stdout
+
+
+def _pdf_word_x(path: Path, token: str) -> float:
+    """Return the unique horizontal coordinate of one PDF word token."""
+    result = subprocess.run(
+        [shutil.which("pdftotext") or "pdftotext", "-bbox", str(path), "-"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    root = ElementTree.fromstring(result.stdout)
+    positions = [
+        float(element.attrib["xMin"])
+        for element in root.iter()
+        if element.tag.endswith("word") and element.text == token
+    ]
+    assert len(positions) == 1, (token, positions)
+    return positions[0]
 
 
 def _pdf_urls(path: Path) -> str:
@@ -891,6 +911,85 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     cover_source = revision / "submission" / "cover_letter_body.tex"
     assert cover_source.is_file()
     assert "\\documentclass" not in cover_source.read_text(encoding="utf-8")
+    shutil.rmtree(manuscript / "tmp")
+
+
+def test_review_provenance_preserves_rendered_paragraph_topology(
+    tmp_path: Path,
+) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "Paragraph Transparent Revision"
+    initialize_manuscript(
+        project_dir,
+        title="段落透明性测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    initial = manuscript / "initial_submission" / "sections" / "01_manuscript.tex"
+    old = (
+        "PARAGRAPHA establishes the old premise.\\hfill\\break\n\n"
+        "PARAGRAPHOLD uses diagnostics to correct objects.\n\n"
+        "PARAGRAPHC remains a true separate paragraph."
+    )
+    _replace_once(initial, "Replace this placeholder with the manuscript body.", old)
+    reviews = tmp_path / "paragraph_reviews.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Revise the paragraph without changing its structure.\n",
+        encoding="utf-8",
+    )
+    project = ManuscriptProject(manuscript)
+    project.start_revision(reviews=reviews, confirmed=True)
+    revision = manuscript / "revision_01"
+    current = revision / "sections" / "01_manuscript.tex"
+    new = (
+        "\\review{1-1}{PARAGRAPHA establishes the revised premise."
+        "\\hfill\\break\n"
+        "PARAGRAPHB uses evidence to validate objects.}\n\n"
+        "PARAGRAPHC remains a true separate paragraph."
+    )
+    _replace_once(current, old, new)
+
+    project.build(engine="tectonic", keep_temp=True)
+
+    clean = revision / "output" / "manuscript_clean.pdf"
+    marked = revision / "output" / "manuscript_marked.pdf"
+    clean_b = _pdf_word_x(clean, "PARAGRAPHB")
+    marked_old = _pdf_word_x(marked, "PARAGRAPHOLD")
+    clean_c = _pdf_word_x(clean, "PARAGRAPHC")
+    marked_c = _pdf_word_x(marked, "PARAGRAPHC")
+    assert abs(marked_old - clean_b) < 2.0
+    assert clean_c - clean_b > 5.0
+    assert marked_c - marked_old > 5.0
+
+    run = next((manuscript / "tmp").glob("run_*"))
+    raw = (run / "marked_source" / "latexdiff_raw.tex").read_text(encoding="utf-8")
+    normalized = (
+        run / "marked_source" / "latexdiff_structure_normalized.tex"
+    ).read_text(encoding="utf-8")
+    assert re.search(
+        r"%DIF(?:DEL|AUX)CMD[^\n]*\n[ \t]*\n%DIF(?:DEL|AUX)CMD",
+        raw,
+    )
+    assert not re.search(
+        r"%DIF(?:DEL|AUX)CMD[^\n]*\n[ \t]*\n%DIF(?:DEL|AUX)CMD",
+        normalized,
+    )
+    marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
+    boundary = marked_source[
+        marked_source.index("PARAGRAPHA") : marked_source.index("PARAGRAPHB")
+    ]
+    assert "\n\n" not in boundary
+    assert "PARAGRAPHB" in _pdf_text(marked)
+    assert "PARAGRAPHC" in _pdf_text(marked)
     shutil.rmtree(manuscript / "tmp")
 
 

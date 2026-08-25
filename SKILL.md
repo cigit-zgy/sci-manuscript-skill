@@ -78,7 +78,9 @@ publisher resource only to diagnose that exact publisher build.
   structural comparison and stored as a sidecar character interval map. Only
   actual additions that fall inside those intervals become reviewer-red;
   unchanged text remains ordinary manuscript text. Deletions remain light gray;
-  additions outside reviewer intervals remain author-blue.
+  additions outside reviewer intervals remain author-blue. Provenance is
+  paragraph-transparent: it must not change current whitespace, indentation,
+  section/list structure, or display-math surroundings in the marked output.
 - Revision comparison follows the four-layer contract in
   `references/revision_semantics.md`: provenance extraction, provenance-free
   structural diff, conservative refinement, then semantic rendering.

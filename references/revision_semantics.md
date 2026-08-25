@@ -23,6 +23,12 @@ reviewer interval. Nested scopes inherit parent IDs and union child IDs in
 first-seen order. The sidecar is canonicalized to non-overlapping effective
 segments, merging adjacent segments with identical ID tuples.
 
+The wrapper is also paragraph-transparent. Removing revision styling from the
+marked source must recover the current manuscript's paragraph, whitespace,
+section, list, and display-math topology. Internal `latexdiff` segment or
+deleted-command comment boundaries never own TeX whitespace and must not create
+a blank line, `\par`, indentation, or other document-structure change.
+
 `\ReviewReference{ID}{key[,keys...]}` is declared in `responses.tex`. It links
 real rendered bibliography changes to reviewer provenance and response
 locations; it never controls bibliography color or modifies `.bib` data.
@@ -144,6 +150,10 @@ contiguous source substring.
 **Render fidelity** checks the compiled PDF. The current manuscript text must
 compile, reviewer/author/deletion colors must be present in rendered pixels, and
 marked rendering must introduce no layout overflow absent from the clean build.
+Current text that remains in one paragraph in the clean PDF must remain in one
+paragraph in the marked PDF; genuine current paragraph boundaries must remain
+distinct. Provenance may change styling and response locations, never scientific
+document structure.
 PDF text extraction is useful for ordinary current text but is not a fidelity
 oracle for deleted or character-refined text: strikeout, CJK
 font handling, and interleaved diff macros can change extraction order without

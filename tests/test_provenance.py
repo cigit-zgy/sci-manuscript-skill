@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from sci_manuscript.diff import (
     CHARACTER_REFINEMENT_THRESHOLD,
     MAX_CHARACTER_REFINEMENT_CHARS,
     _classify_reviewer_additions,
+    _preserve_current_paragraph_topology,
     _safe_character_refinement,
 )
 from sci_manuscript.provenance import (
@@ -41,6 +44,87 @@ def test_nested_review_scope_inherits_and_canonicalizes_effective_ids() -> None:
         (1, 2, ("1-1", "2-1")),
         (2, 3, ("1-1",)),
     )
+
+
+@pytest.mark.parametrize(
+    ("current", "latexdiff"),
+    (
+        (
+            r"Before \review{1-1}{reviewer addition} after.",
+            r"Before \DIFadd{reviewer addition} after.",
+        ),
+        (
+            r"Before \review{1-1}{new wording} after.",
+            r"Before \DIFdel{old wording}\DIFadd{new wording} after.",
+        ),
+        (
+            r"中文前文\review{1-1}{审稿新增内容}中文后文。",
+            r"中文前文\DIFadd{审稿新增内容}中文后文。",
+        ),
+        (
+            r"English before \review{1-1}{reviewed text} and after.",
+            r"English before \DIFadd{reviewed text} and after.",
+        ),
+        (
+            r"Math before \review{1-1}{formula $a+c$} and after.",
+            r"Math before \DIFadd{formula $a+c$} and after.",
+        ),
+        (
+            r"\review{1-1}{A complete reviewed paragraph.}",
+            r"\DIFadd{A complete reviewed paragraph.}",
+        ),
+        (
+            r"A \review{1-1}{B \review{2-1}{nested child} D} E.",
+            r"A \DIFadd{B nested child D} E.",
+        ),
+        (
+            "\\review{1-1}{First real paragraph.}\n\nSecond real paragraph.",
+            "\\DIFadd{First real paragraph.}\n\nSecond real paragraph.",
+        ),
+    ),
+    ids=(
+        "unchanged-then-reviewer-addition",
+        "deletion-reviewer-addition-unchanged",
+        "chinese-continuous-text",
+        "english-continuous-text",
+        "inline-math",
+        "whole-paragraph-scope",
+        "nested-same-paragraph",
+        "two-real-paragraphs",
+    ),
+)
+def test_review_provenance_is_paragraph_transparent(
+    current: str,
+    latexdiff: str,
+) -> None:
+    provenance = extract_provenance(current)
+    classified = _classify_reviewer_additions(latexdiff, provenance)
+
+    assert classified.count("\n\n") == provenance.text.count("\n\n")
+
+
+def test_latexdiff_deleted_command_gap_cannot_create_a_paragraph() -> None:
+    raw = (
+        "前句\\DIFadd{进一步评价}。\\DIFdelbegin %DIFDELCMD < \n"
+        "\n"
+        "%DIFDELCMD < %%%\n"
+        "\\DIFdel{旧段开头}\\DIFdelend \\DIFaddbegin "
+        "\\DIFadd{这类基于特定数据的评价}。"
+    )
+    normalized = _preserve_current_paragraph_topology(raw)
+
+    assert "%DIFDELCMD < \n%\n%DIFDELCMD < %%%" in normalized
+    assert "\n\n%DIFDELCMD" not in normalized
+    assert _preserve_current_paragraph_topology(
+        "%DIFDELCMD < deleted command\n\nA genuine current paragraph."
+    ).endswith("\n\nA genuine current paragraph.")
+
+    provenance = extract_provenance(
+        r"前句\review{1-1}{进一步评价。这类基于特定数据的评价}。"
+    )
+    classified = _classify_reviewer_additions(normalized, provenance)
+    boundary = classified[classified.index("进一步评价") : classified.index("这类")]
+    assert "\n\n" not in boundary
 
 
 def test_character_refinement_colors_only_real_reviewer_change() -> None:
