@@ -14,14 +14,16 @@ revision_01/          r01, parent r00
 revision_02/          r02, parent r01
 ```
 
-The project root contains the only `references/` tree: bibliography and
-revision style. Built-in publisher resources come from the
-installed package. No version may contain `references/`. `sci-manuscript
+The project root contains the only user-editable `references/` tree:
+bibliography and revision style. Built-in publisher resources come from the
+installed package. No version may contain `references/`. Historical
+bibliography state is machine-owned under `state/<round>/bibliography.bib` and
+is not a second editable bibliography system. `sci-manuscript
 revision` is the only normal revision creator. It copies manuscript state from
 the current highest version, removes inherited provenance wrappers from
-manuscript prose, resets outputs, and creates a response workspace. It never
-copies or regenerates shared references. Gaps, duplicates, `revision_0`, and
-non-adjacent parents are rejected.
+manuscript prose, freezes the parent bibliography, resets outputs, and creates a
+response workspace. It never copies references into a manuscript round. Gaps,
+duplicates, `revision_0`, and non-adjacent parents are rejected.
 
 ## Initialization
 
@@ -233,6 +235,15 @@ comparison, including title, abstract, and keywords supplied through
 funding, is compared in the same flattened runtime stream. This staging does not
 rewrite the user-owned composition root or any section source.
 
+The generated bibliography participates in that visible stream as well. Parent
+and current sources are staged separately, each bibliography is materialized by
+the real publisher style into `.bbl`, and entries are aligned by citation key.
+The aligned comparison uses current order and current `\bibitem` labels, so
+renumbering alone does not mark every reference and the marked PDF remains a
+readable current manuscript. Added or corrected bibliography content is
+author-blue; deleted content is light-gray strikeout; bibliography changes do
+not create reviewer locations or reviewer-red markup.
+
 ## Revision comparison contract
 
 The direct-parent marked comparison has four stages:
@@ -247,10 +258,11 @@ Character refinement is allowed only for TeX-structure-free prose when
 autojunk=False).ratio() >= 0.70`. Dissimilar, long, or TeX-bearing replacements
 stay atomic. These are release-level policy values, not per-project settings.
 
-Display mathematics is compared with `latexdiff --math-markup=FINE`. Math-aware
-diff commands mark only changed fragments. Inline and display additions use
-semantic color; deletion alone uses a strike overlay. Mathematics remains
-excluded from CJK/ulem text-decoration scanners.
+Mathematics is compared with `latexdiff --math-markup=WHOLE`. Math-aware
+diff commands mark the complete old and current formulas rather than internal
+fragments. Inline and display additions use semantic color; deletion alone uses
+a strike overlay. Mathematics remains excluded from CJK/ulem text-decoration
+scanners.
 
 Visible states are mutually exclusive:
 
@@ -305,8 +317,14 @@ known generated PDFs and hash-matching paths recorded in
 checklist source, graphical source/assets, and user-supplied PDFs are preserved.
 Publication is staged and installed atomically, so a failed operation restores
 the previous complete set rather than leaving mixed old/new final artifacts.
+Reindex moves each machine-owned bibliography snapshot with its corresponding
+round. Rollback archives the removed round together with its current
+bibliography and atomically restores the previous round's frozen bibliography
+as the editable shared latest state.
 
-Each successful build or submission atomically updates
+Each successful latest-round build or submission also freezes the effective
+bibliography in `state/<round>/bibliography.bib`. Each successful build or
+submission atomically updates
 `state/<round>/build_manifest.yaml`. The manifest records the round and parent,
 package/Python/engine/tool identities, effective author source, fonts,
 publisher-resource hashes, scientific input hashes, and final output hashes.
@@ -315,16 +333,22 @@ source, and never enters the submission directory.
 
 ## Bibliography synchronization
 
-Every version reads the single root `references/references.bib`. Explicit Better
-BibTeX synchronization atomically replaces that shared file:
+The latest version reads the single editable root
+`references/references.bib`. When a new revision is created, the parent value is
+atomically frozen under `state/<parent>/bibliography.bib`; historical builds
+read that snapshot and fail explicitly if it is missing rather than silently
+substituting the latest export. Explicit Better BibTeX synchronization
+atomically replaces only the shared latest file:
 
 ```bash
 sci-manuscript sync-bib --project /absolute/path/to/project \
   --bib /absolute/path/to/export.bib
 ```
 
-No Zotero process or network service is contacted. Rebuild packages after
-synchronizing a changed bibliography.
+No Zotero process or network service is contacted, and no historical snapshot
+is changed. Rebuild after synchronizing a changed bibliography. The visible
+reference list is compared from parent/current generated `.bbl` output rather
+than raw BibTeX fields.
 
 ## Temporary-file contract
 

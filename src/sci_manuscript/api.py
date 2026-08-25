@@ -18,6 +18,7 @@ from .compile import (
     probe_cjk_environment,
     publish_file_atomically,
     select_engine,
+    validate_revision_layout,
 )
 from .diff import build_marked_manuscript
 from .errors import WorkflowError
@@ -50,6 +51,7 @@ from .workspace import (
     revision_directory_name,
     rollback_revision,
     round_name,
+    snapshot_bibliography,
     start_revision,
     temporary_run,
     write_build_manifest,
@@ -396,15 +398,28 @@ class ManuscriptProject:
         if selected > 0:
             review_ids_from_sources(config, selected)
         with temporary_run(self.root, keep_temp) as run_dir:
-            snapshot = _snapshot_files(
-                _output_pdf_paths(config, selected), run_dir / "output_rollback"
-            )
+            publication_paths = _output_pdf_paths(config, selected)
+            if selected == latest.current_round:
+                publication_paths = (
+                    *publication_paths,
+                    config.bibliography_snapshot_path(selected),
+                )
+            snapshot = _snapshot_files(publication_paths, run_dir / "output_rollback")
             try:
                 clean = build_clean_manuscript(config, selected, run_dir, engine)
                 artifacts = [Artifact("Clean manuscript", clean)]
                 if selected > 0:
                     marked = build_marked_manuscript(config, selected, run_dir, engine)
                     artifacts.append(Artifact("Marked manuscript", marked.pdf))
+                    validate_revision_layout(
+                        (run_dir / "clean_build" / "manuscript.compiler.log").read_text(
+                            encoding="utf-8"
+                        ),
+                        (
+                            run_dir / "marked_build" / "manuscript_marked.compiler.log"
+                        ).read_text(encoding="utf-8"),
+                        run_dir / "revision_layout_qa.txt",
+                    )
                     ensure_response_source(config, selected)
                     audit = audit_reviews(config, selected, record_index=True)
                     malformed = any(
@@ -422,6 +437,8 @@ class ManuscriptProject:
                         artifacts.append(Artifact("Response letter", response))
                     elif response_output.exists():
                         response_output.unlink()
+                if selected == latest.current_round:
+                    snapshot_bibliography(config, selected)
                 write_build_manifest(
                     config,
                     selected,
@@ -554,12 +571,17 @@ class ManuscriptProject:
         else:
             audit = None
         with temporary_run(self.root, keep_temp) as run_dir:
+            publication_paths = (
+                *_output_pdf_paths(config, selected),
+                *_submission_publication_paths(config, selected),
+            )
+            if selected == latest.current_round:
+                publication_paths = (
+                    *publication_paths,
+                    config.bibliography_snapshot_path(selected),
+                )
             snapshot = _snapshot_files(
-                (
-                    *_output_pdf_paths(config, selected),
-                    *_submission_publication_paths(config, selected),
-                ),
-                run_dir / "publication_rollback",
+                publication_paths, run_dir / "publication_rollback"
             )
             try:
                 submission_artifacts = prepare_submission_artifacts(
@@ -569,6 +591,8 @@ class ManuscriptProject:
                     engine,
                     audit,
                 )
+                if selected == latest.current_round:
+                    snapshot_bibliography(config, selected)
                 write_build_manifest(
                     config,
                     selected,

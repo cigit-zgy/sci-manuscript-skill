@@ -47,6 +47,9 @@ publisher resource only to diagnose that exact publisher build.
 - Revision ancestry is adjacent and fixed-width:
   `initial_submission (r00) -> revision_01 (r01) -> revision_02 (r02)`.
 - `manuscript/references/` contains `references.bib` and `revision_style.tex`.
+  The BibTeX file is the editable latest state; immutable historical copies live
+  only in machine-owned `state/<round>/bibliography.bib` and are never edited by
+  `sync-bib`.
   Builds resolve the configured user author library, then the bundled
   Skill-level library. Projects and revision directories never contain an
   author library or version-local `references/`.
@@ -78,11 +81,20 @@ publisher resource only to diagnose that exact publisher build.
 - Revision comparison follows the four-layer contract in
   `references/revision_semantics.md`: provenance extraction, provenance-free
   structural diff, conservative refinement, then semantic rendering.
+- Visible manuscript state includes user scientific TeX, user frontmatter,
+  generated visible metadata, and the publisher-rendered bibliography. Parent
+  and current bibliographies are materialized independently from their own
+  citation sets and BibTeX state. Generated `\bibitem` entries are aligned by
+  citation key, while the marked PDF retains current ordering and numbering.
+- Bibliography metadata changes are ordinary author revisions: additions are
+  blue and deletions are light-gray strikeout, never reviewer-red. Citation
+  keys remain machine identity and must not appear in the PDF.
 - Character refinement is permitted only for TeX-structure-free prose with
   `SequenceMatcher` similarity at least `0.70` and a maximum replacement size
   of `2000` characters. Otherwise the replacement remains atomic.
 - Display and inline mathematics use fine-grained structural comparison with
-  `latexdiff --math-markup=FINE`. Text decorators never scan mathematical
+  `latexdiff --math-markup=WHOLE`. Any formula change replaces the complete
+  formula as one revision unit. Text decorators never scan mathematical
   content; math changes use the same semantic colors as prose.
 - Every revision `build` and `submission` audits
   `reviewer_comments.md <-> responses.tex <-> \review{...}`. Missing responses,
@@ -152,7 +164,7 @@ path only when the CLI identifies malformed source. Do not hide incomplete
 responses simply because PDFs compiled.
 
 For every revision, `build` produces clean and direct-parent marked PDFs from
-the same source and shared bibliography, derives review locations, and rebuilds
+isolated parent/current visible state, derives review locations, and rebuilds
 the response PDF from the current user-owned `responses.tex` when that source is
 syntactically valid. Incomplete entries remain visible in the audit but do not
 make a valid response source stale. `submission` requires a complete audit
@@ -173,6 +185,12 @@ ordinary author additions are blue text, deletions are light gray with
 strikeout, and reviewer/editor-linked additions are red text. Unchanged text is
 never colored because of `\review{}` alone. In Chinese marked manuscripts,
 deletion strikeout continues through CJK punctuation. Mathematics follows the
-same semantic colors; display equations use fine-grained math comparison.
+same semantic colors; every changed formula is replaced as one atomic unit.
 Reviewer line locations are generated in a separate transparent compilation
 and cannot change marked rendering.
+
+For the built-in Chinese publisher, `kxtbcas-numeric.bst` renders each non-empty
+DOI exactly once at the end of its entry as `DOI: 10...`. Standard
+`https://doi.org/`, `http://doi.org/`, and `http(s)://dx.doi.org/` prefixes are
+removed only while rendering; the user-owned BibTeX source is never rewritten.
+Entries without a DOI receive no DOI label or placeholder.

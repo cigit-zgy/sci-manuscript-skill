@@ -18,7 +18,14 @@ from .errors import WorkflowError
 from .locations import build_review_locations
 from .provenance import ProvenanceSource, extract_provenance, split_by_review_provenance
 from .templates import resources_root
-from .tex import extract_braced, is_escaped, scan_tex_commands
+from .tex import (
+    command_at,
+    extract_braced,
+    is_commented,
+    is_escaped,
+    scan_tex_commands,
+    skip_tex_space,
+)
 from .workspace import ProjectConfig, strip_provenance_wrappers
 
 DIF_COMMENT_PATTERN = re.compile(r"(?m)^%DIF[^\n]*(?:\n|$)")
@@ -80,6 +87,304 @@ class _DiffSegment:
     kind: str
     content: str
     macro: str = ""
+
+
+@dataclass(frozen=True)
+class _BibliographyEntry:
+    key: str
+    command: str
+    content: str
+
+
+@dataclass(frozen=True)
+class _BibliographyDocument:
+    header: str
+    entries: tuple[_BibliographyEntry, ...]
+    footer: str
+
+
+@dataclass(frozen=True)
+class _DisplayEquation:
+    """One labelled display equation and its exact source boundaries."""
+
+    label: str
+    start: int
+    end: int
+    body_without_label: str
+
+
+def _optional_field_end(text: str, start: int) -> int:
+    """Return the end of one optional TeX field, or ``start`` when absent."""
+    opening = skip_tex_space(text, start)
+    if opening >= len(text) or text[opening] != "[":
+        return start
+    depth = 1
+    cursor = opening + 1
+    while cursor < len(text):
+        if text[cursor] == "%" and not is_escaped(text, cursor):
+            newline = text.find("\n", cursor)
+            cursor = len(text) if newline == -1 else newline + 1
+            continue
+        if text[cursor] == "[" and not is_escaped(text, cursor):
+            depth += 1
+        elif text[cursor] == "]" and not is_escaped(text, cursor):
+            depth -= 1
+            if depth == 0:
+                return cursor + 1
+        cursor += 1
+    raise WorkflowError("Unbalanced optional label in generated bibliography.")
+
+
+def _parse_bibliography(text: str) -> _BibliographyDocument:
+    """Parse generated ``\\bibitem`` boundaries while preserving rendered TeX."""
+    commands: list[tuple[int, int, str]] = []
+    cursor = 0
+    while cursor < len(text):
+        start = text.find(r"\bibitem", cursor)
+        if start < 0:
+            break
+        if (
+            is_escaped(text, start)
+            or is_commented(text, start)
+            or not command_at(text, start, "bibitem")
+        ):
+            cursor = start + 1
+            continue
+        field_start = start + len(r"\bibitem")
+        optional_end = _optional_field_end(text, field_start)
+        if optional_end != field_start:
+            field_start = optional_end
+        try:
+            key, end = extract_braced(text, field_start)
+        except ValueError as exc:
+            raise WorkflowError(
+                "Malformed \\bibitem in generated bibliography."
+            ) from exc
+        key = key.strip()
+        if not key:
+            raise WorkflowError(
+                "Generated bibliography contains an empty citation key."
+            )
+        commands.append((start, end, key))
+        cursor = end
+
+    footer_start = len(text)
+    search_from = commands[-1][1] if commands else 0
+    try:
+        endings = scan_tex_commands(text, ("end",), field_count=1)
+    except ValueError as exc:
+        raise WorkflowError("Malformed generated bibliography environment.") from exc
+    for ending in endings:
+        if ending.start >= search_from and ending.fields[0].endswith("bibliography"):
+            footer_start = ending.start
+            break
+    if footer_start == len(text):
+        raise WorkflowError("Generated bibliography has no closing environment.")
+
+    entries: list[_BibliographyEntry] = []
+    seen: set[str] = set()
+    for index, (start, end, key) in enumerate(commands):
+        if key in seen:
+            raise WorkflowError(f"Duplicate generated bibliography key: {key}")
+        seen.add(key)
+        content_end = (
+            commands[index + 1][0] if index + 1 < len(commands) else footer_start
+        )
+        entries.append(_BibliographyEntry(key, text[start:end], text[end:content_end]))
+    header_end = commands[0][0] if commands else footer_start
+    return _BibliographyDocument(
+        text[:header_end],
+        tuple(entries),
+        text[footer_start:],
+    )
+
+
+def _align_bibliographies(old: str, current: str) -> tuple[str, str]:
+    """Align rendered entries by citation key while retaining current numbering."""
+    parent = _parse_bibliography(old)
+    child = _parse_bibliography(current)
+    parent_by_key = {entry.key: entry for entry in parent.entries}
+    current_keys = {entry.key for entry in child.entries}
+    old_parts = [child.header]
+    new_parts = [child.header]
+    for entry in child.entries:
+        previous = parent_by_key.get(entry.key)
+        old_parts.extend((entry.command, "" if previous is None else previous.content))
+        new_parts.extend((entry.command, entry.content))
+    for entry in parent.entries:
+        if entry.key in current_keys:
+            continue
+        old_parts.append(f"\n\\SCIDeletedBibItem{{{entry.content}}}\n")
+        new_parts.append("\n\\SCIDeletedBibItem{}\n")
+    old_parts.append(child.footer)
+    new_parts.append(child.footer)
+    return "".join(old_parts), "".join(new_parts)
+
+
+def _replace_bibliography(text: str, bibliography: str) -> str:
+    """Replace BibTeX commands with one materialized visible bibliography."""
+    try:
+        commands = scan_tex_commands(
+            text,
+            ("bibliographystyle", "bibliography"),
+            field_count=1,
+        )
+    except ValueError as exc:
+        raise WorkflowError(
+            "Malformed bibliography command in manuscript source."
+        ) from exc
+    bibliographies = [command for command in commands if command.name == "bibliography"]
+    if len(bibliographies) != 1:
+        raise WorkflowError(
+            "Marked comparison requires exactly one active \\bibliography command."
+        )
+    pieces: list[str] = []
+    cursor = 0
+    for command in commands:
+        pieces.append(text[cursor : command.start])
+        if command.name == "bibliography":
+            pieces.append(bibliography)
+        cursor = command.end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _display_equations(text: str) -> tuple[_DisplayEquation, ...]:
+    """Return active, labelled ``equation`` environments in source order."""
+    try:
+        commands = scan_tex_commands(text, ("begin", "end"), field_count=1)
+    except ValueError as exc:
+        raise WorkflowError(
+            "Malformed display environment in manuscript source."
+        ) from exc
+    stack = []
+    equations: list[_DisplayEquation] = []
+    seen_labels: set[str] = set()
+    for command in commands:
+        environment = command.fields[0].strip()
+        if command.name == "begin":
+            stack.append(command)
+            continue
+        if not stack or stack[-1].fields[0].strip() != environment:
+            raise WorkflowError("Unbalanced display environment in manuscript source.")
+        opening = stack.pop()
+        if environment != "equation":
+            continue
+        body = text[opening.end : command.start]
+        try:
+            labels = scan_tex_commands(body, ("label",), field_count=1)
+        except ValueError as exc:
+            raise WorkflowError(
+                "Malformed equation label in manuscript source."
+            ) from exc
+        if not labels:
+            continue
+        if len(labels) != 1:
+            raise WorkflowError(
+                "A display equation must contain at most one active \\label command."
+            )
+        label = labels[0].fields[0].strip()
+        if not label:
+            raise WorkflowError("A display equation contains an empty label.")
+        if label in seen_labels:
+            raise WorkflowError(f"Duplicate display equation label: {label}")
+        seen_labels.add(label)
+        body_without_label = body[: labels[0].start] + body[labels[0].end :]
+        equations.append(
+            _DisplayEquation(
+                label=label,
+                start=opening.start,
+                end=command.end,
+                body_without_label=body_without_label,
+            )
+        )
+    if stack:
+        raise WorkflowError("Unbalanced display environment in manuscript source.")
+    return tuple(equations)
+
+
+def _normalized_equation_body(body: str) -> str:
+    """Normalize insignificant whitespace for structural similarity testing."""
+    return " ".join(body.split())
+
+
+def _replace_spans(text: str, replacements: list[tuple[int, int, str]]) -> str:
+    """Apply non-overlapping source replacements from right to left."""
+    result = text
+    for start, end, replacement in sorted(replacements, reverse=True):
+        result = result[:start] + replacement + result[end:]
+    return result
+
+
+def _align_changed_display_equations(old: str, current: str) -> tuple[str, str]:
+    """Render each changed labelled equation atomically before ``latexdiff``.
+
+    The old formula is rendered as an unnumbered deletion and the complete
+    current formula as one numbered addition with preserved provenance.
+    """
+    old_equations = {equation.label: equation for equation in _display_equations(old)}
+    current_equations = {
+        equation.label: equation for equation in _display_equations(current)
+    }
+    current_provenance = extract_provenance(current)
+    visible_current_equations = {
+        equation.label: equation
+        for equation in _display_equations(current_provenance.text)
+    }
+    old_replacements: list[tuple[int, int, str]] = []
+    current_replacements: list[tuple[int, int, str]] = []
+    for label in old_equations.keys() & current_equations.keys():
+        previous = old_equations[label]
+        revised = current_equations[label]
+        old_body = _normalized_equation_body(previous.body_without_label)
+        new_body = _normalized_equation_body(revised.body_without_label)
+        if old_body == new_body:
+            continue
+        deleted_body = previous.body_without_label.strip()
+        added_body = revised.body_without_label.strip()
+        deleted = f"\\SCIDeletedEquation{{{deleted_body}}}\n"
+        visible_revised = visible_current_equations[label]
+        is_reviewer_change = any(
+            span.start <= visible_revised.start and visible_revised.end <= span.end
+            for span in current_provenance.review_spans
+        )
+        addition_command = (
+            "SCIReviewerAddedEquation" if is_reviewer_change else "SCIAddedEquation"
+        )
+        replacement = (
+            f"{deleted}\\{addition_command}{{{added_body}}}{{{revised.label}}}\n"
+        )
+        old_replacements.append((previous.start, previous.end, replacement))
+        current_replacements.append((revised.start, revised.end, replacement))
+    return (
+        _replace_spans(old, old_replacements),
+        _replace_spans(current, current_replacements),
+    )
+
+
+def _materialize_bibliography(
+    source: Path,
+    flattened: str,
+    build_dir: Path,
+    config: ProjectConfig,
+    engine_override: str | None,
+) -> str:
+    """Compile one staged round and return its publisher-rendered ``.bbl``."""
+    if not scan_tex_commands(flattened, ("bibliography",), field_count=1):
+        raise WorkflowError("Manuscript has no active bibliography command.")
+    compile_tex(
+        source,
+        build_dir,
+        config,
+        engine_override,
+        keep_intermediates=True,
+    )
+    bibliography = build_dir / f"{source.stem}.bbl"
+    if not bibliography.is_file():
+        raise WorkflowError(
+            "Compiler did not materialize the expected bibliography .bbl."
+        )
+    return bibliography.read_text(encoding="utf-8")
 
 
 def _flatten_tex(
@@ -480,141 +785,6 @@ def _separate_inline_math_from_diff_markup(text: str) -> str:
     return "".join(output)
 
 
-def _math_atoms(body: str) -> list[str] | None:
-    """Split math into command/group-safe atoms for conservative refinement."""
-    atoms: list[str] = []
-    cursor = 0
-    while cursor < len(body):
-        if body[cursor] == "{":
-            try:
-                _, end = _diff_field(body, cursor)
-            except WorkflowError:
-                return None
-            atoms.append(body[cursor:end])
-            cursor = end
-            continue
-        if body[cursor] == "}":
-            return None
-        if body[cursor] == "\\":
-            end = cursor + 1
-            if end < len(body) and body[end].isalpha():
-                while end < len(body) and body[end].isalpha():
-                    end += 1
-                if end < len(body) and body[end] == "*":
-                    end += 1
-            elif end < len(body):
-                end += 1
-            atoms.append(body[cursor:end])
-            cursor = end
-            continue
-        atoms.append(body[cursor])
-        cursor += 1
-    return atoms
-
-
-def _unwrap_inline_math(value: str) -> tuple[str, str, str] | None:
-    for left, right in (("$$", "$$"), ("$", "$"), (r"\(", r"\)")):
-        if value.startswith(left) and value.endswith(right):
-            return left, value[len(left) : len(value) - len(right)], right
-    return None
-
-
-def _render_inline_math_refinement(
-    old: str,
-    new: str,
-    addition_macro: str,
-) -> str | None:
-    old_math = _unwrap_inline_math(old)
-    new_math = _unwrap_inline_math(new)
-    if old_math is None or new_math is None or old_math[::2] != new_math[::2]:
-        return None
-    old_atoms = _math_atoms(old_math[1])
-    new_atoms = _math_atoms(new_math[1])
-    if old_atoms is None or new_atoms is None:
-        return None
-    matcher = SequenceMatcher(a=old_atoms, b=new_atoms, autojunk=False)
-    pieces = [old_math[0]]
-    add = r"\DIFaddReview" if "Review" in addition_macro else r"\DIFadd"
-    changed = False
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            pieces.extend(new_atoms[j1:j2])
-            continue
-        changed = True
-        if tag in {"delete", "replace"}:
-            pieces.append(f"\\DIFdel{{{''.join(old_atoms[i1:i2])}}}")
-        if tag in {"insert", "replace"}:
-            pieces.append(f"{add}{{{''.join(new_atoms[j1:j2])}}}")
-    pieces.append(old_math[2])
-    return "".join(pieces) if changed else new
-
-
-def _refine_inline_math_replacements(text: str) -> str:
-    """Refine paired inline-math replacements without crossing TeX groups."""
-    deleted_macro = r"\DIFdelMath"
-    additions = (r"\DIFaddReviewMath", r"\DIFaddMath")
-    output: list[str] = []
-    cursor = 0
-    while True:
-        start = text.find(f"{deleted_macro}{{", cursor)
-        if start < 0:
-            output.append(text[cursor:])
-            break
-        old, old_end = _diff_field(text, start + len(deleted_macro))
-        old_wrapper = _math_macro_wrapper(text, start, old_end)
-        if old_wrapper is None:
-            output.append(text[cursor:old_end])
-            cursor = old_end
-            continue
-        old_start, old_left, old_right, old_finish = old_wrapper
-        candidates = [(text.find(f"{macro}{{", old_end), macro) for macro in additions]
-        candidates = [item for item in candidates if item[0] >= 0]
-        if not candidates:
-            output.append(text[cursor:])
-            break
-        add_start, add_macro = min(candidates)
-        new, add_end = _diff_field(text, add_start + len(add_macro))
-        add_wrapper = _math_macro_wrapper(text, add_start, add_end)
-        if add_wrapper is None:
-            output.append(text[cursor:old_finish])
-            cursor = old_finish
-            continue
-        new_start, new_left, new_right, new_finish = add_wrapper
-        separator = text[old_finish:new_start]
-        if not _separator_is_diff_only(separator):
-            output.append(text[cursor:old_finish])
-            cursor = old_finish
-            continue
-        refined = _render_inline_math_refinement(
-            f"{old_left}{old}{old_right}",
-            f"{new_left}{new}{new_right}",
-            add_macro,
-        )
-        if refined is None:
-            output.append(text[cursor:old_finish])
-            cursor = old_finish
-            continue
-        output.extend((text[cursor:old_start], refined))
-        cursor = new_finish
-    return "".join(output)
-
-
-def _math_macro_wrapper(
-    text: str,
-    macro_start: int,
-    macro_end: int,
-) -> tuple[int, str, str, int] | None:
-    """Return delimiters surrounding one inline Math macro call."""
-    for left, right in (("$$", "$$"), ("$", "$"), (r"\(", r"\)")):
-        start = macro_start - len(left)
-        if start < 0 or text[start:macro_start] != left:
-            continue
-        if text[macro_end : macro_end + len(right)] != right:
-            continue
-        return start, left, right, macro_end + len(right)
-    return None
-
-
 def build_marked_manuscript(
     config: ProjectConfig,
     round_number: int,
@@ -652,18 +822,40 @@ def build_marked_manuscript(
         new_runtime,
         include_manuscript=True,
     )
-    old_text = strip_provenance_wrappers(
-        _flatten_tex(
-            old_runtime_source,
-            (old_runtime,),
-        )
+    old_flattened = _flatten_tex(
+        old_runtime_source,
+        (old_runtime,),
     )
-    provenance = extract_provenance(
-        _flatten_tex(
-            new_runtime_source,
-            (new_runtime,),
-        )
+    new_flattened = _flatten_tex(
+        new_runtime_source,
+        (new_runtime,),
     )
+    old_bibliography = _materialize_bibliography(
+        old_runtime_source,
+        old_flattened,
+        run_dir / "old_bibliography_build",
+        config,
+        engine_override,
+    )
+    new_bibliography = _materialize_bibliography(
+        new_runtime_source,
+        new_flattened,
+        run_dir / "new_bibliography_build",
+        config,
+        engine_override,
+    )
+    aligned_old_bibliography, aligned_new_bibliography = _align_bibliographies(
+        old_bibliography,
+        new_bibliography,
+    )
+    old_visible = _replace_bibliography(old_flattened, aligned_old_bibliography)
+    new_visible = _replace_bibliography(new_flattened, aligned_new_bibliography)
+    old_visible, new_visible = _align_changed_display_equations(
+        old_visible,
+        new_visible,
+    )
+    old_text = strip_provenance_wrappers(old_visible)
+    provenance = extract_provenance(new_visible)
     old_source = source_dir / "old.tex"
     new_source = source_dir / "new.tex"
     old_source.write_text(old_text, encoding="utf-8")
@@ -677,26 +869,28 @@ def build_marked_manuscript(
     )
     _copy_resources(config, source_dir)
 
+    text_commands = ["SCIDeletedBibItem", "SCIDeletedEquation"]
+    if config.metadata.publisher == "chinese":
+        text_commands.extend(CHINESE_TEXT_COMMANDS)
     command = [
         shutil.which("latexdiff") or "latexdiff",
         "--encoding=utf8",
         "--packages=none",
-        "--math-markup=FINE",
+        "--math-markup=WHOLE",
         f"--preamble={style}",
         "--append-context2cmd=" + ",".join(PUBLISHER_METADATA_CONTEXT_COMMANDS),
+        "--append-textcmd=" + ",".join(text_commands),
+        "--append-safecmd=latin,nolinkurl",
         "--disable-citation-markup",
         "--ignore-warnings",
         str(old_source),
         str(new_source),
     ]
-    if config.metadata.publisher == "chinese":
-        command.insert(-3, f"--append-textcmd={','.join(CHINESE_TEXT_COMMANDS)}")
     result = run_command(command, cwd=source_dir)
     classified = _classify_reviewer_additions(result.stdout, provenance)
     marked_source = source_dir / "manuscript_marked.tex"
-    separated = _separate_inline_math_from_diff_markup(classified)
     marked_source.write_text(
-        _refine_inline_math_replacements(separated), encoding="utf-8"
+        _separate_inline_math_from_diff_markup(classified), encoding="utf-8"
     )
     compiled = compile_tex(
         marked_source,

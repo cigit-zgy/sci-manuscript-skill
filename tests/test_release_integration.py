@@ -525,6 +525,13 @@ def test_non_chinese_initial_workflows_own_scientific_frontmatter(
     project = ManuscriptProject(manuscript)
     project.start_revision(confirmed=True)
     revision = manuscript / "revision_01"
+    if publisher == "elsevier":
+        bibliography = manuscript / "references" / "references.bib"
+        _replace_once(
+            bibliography,
+            "Replace this example bibliography entry",
+            "Corrected visible bibliography entry",
+        )
     introduction = revision / "sections" / "01_introduction.tex"
     _replace_once(
         introduction,
@@ -533,13 +540,32 @@ def test_non_chinese_initial_workflows_own_scientific_frontmatter(
         "User-approved revision with citation~\\cite{replace_me}.",
     )
     before = source_digest(revision, scientific_only=True)
-    revision_result = project.build(engine="tectonic")
+    revision_result = project.build(
+        engine="tectonic",
+        keep_temp=publisher == "elsevier",
+    )
     assert source_digest(revision, scientific_only=True) == before
     assert {artifact.label for artifact in revision_result.artifacts} >= {
         "Clean manuscript",
         "Marked manuscript",
     }
     assert (revision / "output" / "manuscript_marked.pdf").is_file()
+    if publisher == "elsevier":
+        clean_text = _pdf_text(revision / "output" / "manuscript_clean.pdf")
+        marked_text = _pdf_text(revision / "output" / "manuscript_marked.pdf")
+        assert "Corrected visible bibliography entry" in clean_text
+        assert "replace_me" not in marked_text
+        retained_runs = list((manuscript / "tmp").glob("run_*"))
+        assert len(retained_runs) == 1
+        marked_source = (
+            retained_runs[0] / "marked_source" / "manuscript_marked.tex"
+        ).read_text(encoding="utf-8")
+        bibliography_source = marked_source[marked_source.index(r"\bibitem") :]
+        assert "Replace this example" in bibliography_source
+        assert "Corrected visible" in bibliography_source
+        assert r"\DIFdel{" in bibliography_source
+        assert r"\DIFadd{" in bibliography_source
+        shutil.rmtree(manuscript / "tmp")
     assert not (manuscript / "tmp").exists()
 
 
@@ -869,7 +895,134 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     shutil.rmtree(manuscript / "tmp")
 
 
-def test_math_revision_semantics_are_fine_grained_and_rendered(tmp_path: Path) -> None:
+def test_chinese_bibliography_doi_and_visible_revision_semantics(
+    tmp_path: Path,
+) -> None:
+    _require_toolchain()
+    parent_bibliography = tmp_path / "parent-references.bib"
+    parent_bibliography.write_text(
+        """@article{hidden-citation-key-42,
+  author = {M. Bran, A},
+  title = {Augmenting Large Language Models with Chemistry Tools},
+  journal = {Nature Machine Intelligence},
+  year = {2024},
+  volume = {6},
+  pages = {525--535}
+}
+@article{removed-doi-entry,
+  author = {Example, Deleted},
+  title = {Removed DOI Entry},
+  journal = {Example Journal},
+  year = {2025},
+  volume = {1},
+  pages = {1--2},
+  doi = {https://dx.doi.org/10.5555/Deleted.MixedCase}
+}
+""",
+        encoding="utf-8",
+    )
+    project_dir = tmp_path / "Chinese Bibliography Revision Project"
+    initialize_manuscript(
+        project_dir,
+        title="中文参考文献修订测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        bibliography_path=parent_bibliography,
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    body = manuscript / "initial_submission" / "sections" / "01_manuscript.tex"
+    _replace_once(
+        body,
+        "Replace this placeholder with the manuscript body.",
+        "正文引用文献~\\cite{hidden-citation-key-42,removed-doi-entry}。",
+    )
+    project = ManuscriptProject(manuscript)
+    project.start_revision(confirmed=True)
+    current_body = manuscript / "revision_01" / "sections" / "01_manuscript.tex"
+    _replace_once(
+        current_body,
+        r"\cite{hidden-citation-key-42,removed-doi-entry}",
+        r"\cite{hidden-citation-key-42}",
+    )
+    shared = manuscript / "references" / "references.bib"
+    shared.write_text(
+        """@article{hidden-citation-key-42,
+  author = {Bran, Andres M},
+  title = {Augmenting Large Language Models with Chemistry Tools},
+  journal = {Nature Machine Intelligence},
+  year = {2024},
+  volume = {6},
+  pages = {525--535},
+  doi = {https://doi.org/10.1038/s42256-024-00832-8}
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = project.build(engine="tectonic", keep_temp=True)
+
+    output = manuscript / "revision_01" / "output"
+    assert {artifact.label for artifact in result.artifacts} == {
+        "Clean manuscript",
+        "Marked manuscript",
+    }
+    clean_text = " ".join(_pdf_text(output / "manuscript_clean.pdf").split())
+    marked_text = " ".join(_pdf_text(output / "manuscript_marked.pdf").split())
+    assert "Bran A M" in clean_text
+    assert "DOI: 10.1038/s42256-024-00832-8" in clean_text
+    assert "DOI: https://doi.org/" not in clean_text
+    assert "DOI: 10.5555/Deleted.MixedCase" in marked_text
+    assert "hidden-citation-key-42" not in marked_text
+    assert "DIFadd" not in marked_text
+    assert "DIFdel" not in marked_text
+    _assert_rendered_color(
+        output / "manuscript_marked.pdf",
+        tmp_path / "bibliography_blue",
+        (0, 92, 153),
+    )
+    _assert_rendered_color(
+        output / "manuscript_marked.pdf",
+        tmp_path / "bibliography_gray",
+        (160, 160, 160),
+    )
+
+    retained_runs = list((manuscript / "tmp").glob("run_*"))
+    assert len(retained_runs) == 1
+    run = retained_runs[0]
+    parent_bbl = (run / "old_bibliography_build" / "manuscript.bbl").read_text(
+        encoding="utf-8"
+    )
+    current_bbl = (run / "new_bibliography_build" / "manuscript.bbl").read_text(
+        encoding="utf-8"
+    )
+    marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
+    assert "M. Bran A" in parent_bbl.replace("~", " ")
+    assert "Bran A M" in current_bbl
+    assert r"DOI: \nolinkurl{10.5555/Deleted.MixedCase}" in " ".join(parent_bbl.split())
+    assert r"DOI: \nolinkurl{10.1038/s42256-024-00832-8}" in " ".join(
+        current_bbl.split()
+    )
+    assert r"\DIFadd{" in marked_source
+    assert r"\DIFdel{" in marked_source
+    bibliography_source = marked_source[marked_source.index(r"\bibitem") :]
+    assert r"\DIFaddReview{" not in bibliography_source
+    assert r"\nolinkurl{10.5555/Deleted.MixedCase}" in bibliography_source
+    assert (run / "marked_build" / "manuscript_marked.reviewloc").read_text(
+        encoding="utf-8"
+    ).splitlines() == [REVIEW_REGISTRY_HEADER]
+    layout = (run / "revision_layout_qa.txt").read_text(encoding="utf-8")
+    assert "Marked-specific overfull boxes: 0" in layout
+    assert "Result: PASS" in layout
+
+
+def test_math_revision_semantics_are_atomic_and_rendered(tmp_path: Path) -> None:
     _require_toolchain()
     project_dir = tmp_path / "Math Revision Project"
     initialize_manuscript(
@@ -893,6 +1046,9 @@ x+y=z\label{eq:partial}
 \begin{equation}
 p=q\label{eq:deleted}
 \end{equation}
+\begin{equation}
+\frac{a+b}{c+d}=e\label{eq:structural}
+\end{equation}
 Stable anchor.
 """
     _replace_once(initial, "Replace this placeholder with the manuscript body.", old)
@@ -909,6 +1065,9 @@ Stable anchor.
     new = r"""\review{1-1}{Reviewer inline $a+c$ and parenthesized \(\mathcal{O}_{\mathrm{M},new}\), plus unchanged math $u=v$.
 \begin{equation}
 x+y+w=z\label{eq:partial}
+\end{equation}
+\begin{equation}
+\sum_{i=1}^{n} x_i^2 = \mathcal{L}(\theta)\label{eq:structural}
 \end{equation}}
 Stable anchor.
 Author inline $\mathcal{O}_{\mathrm{M}}^{2}$ and $m+n$.
@@ -933,10 +1092,14 @@ r=s\label{eq:author}
     )
     assert r"$\DIFdelMath{a+b}$" in marked_source
     assert r"$\DIFaddReviewMath{a+c}$" in marked_source
-    assert r"\DIFaddReview{+w}" in marked_source
-    assert r"\DIFdel{p=q}" in marked_source
+    assert r"\DIFaddReview{+w}" not in marked_source
+    assert "p=q" in marked_source
     assert r"$\DIFaddMath{m+n}$" in marked_source
-    assert r"\DIFadd{r=s}" in marked_source
+    assert "r=s" in marked_source
+    assert marked_source.count(r"\SCIDeletedEquation{") == 2
+    assert marked_source.count(r"\SCIReviewerAddedEquation{") == 2
+    assert r"\frac{a+b}{c+d}=e" in marked_source
+    assert r"\sum_{i=1}^{n} x_i^2" in marked_source
     assert r"$\DIFdelMath{\mathcal{O}_{\mathrm{P}}}$" in marked_source
     assert r"$\DIFaddMath{\mathcal{O}_{\mathrm{M}}^{2}}$" in marked_source
     assert r"\(\DIFdelMath{" in marked_source
@@ -948,7 +1111,8 @@ r=s\label{eq:author}
         marked_source.index("u=v") - 30 : marked_source.index("u=v") + 30
     ]
     assert r"\DIFaddReview{u=v}" not in unchanged
-    assert marked_source.count(r"\label{eq:partial}") == 1
+    assert marked_source.count("{eq:partial}") == 1
+    assert marked_source.count("{eq:structural}") == 1
     assert marked_source.count(r"\label{eq:author}") == 1
     shutil.rmtree(manuscript / "tmp")
 

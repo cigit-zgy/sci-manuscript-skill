@@ -1,7 +1,8 @@
 %% kxtbcas numeric bibliography style for the Chinese Science Bulletin author
 %% format. Derived from TeX Live achemso.bst under its generated-file terms.
 %% Western names are family-first with unpunctuated initials, the first three
-%% authors precede et al., and DOI output is disabled for complete articles.
+%% authors precede et al., and DOI output is canonical for every entry that
+%% supplies a DOI field.
 %%
 %% This is file `achemso.bst',
 %% generated with the docstrip utility.
@@ -749,7 +750,7 @@ INTEGERS {
 FUNCTION { initialize.control.values } {
   #1 'ctrl.article.title.bool :=
   #0 'ctrl.chapter.title.bool :=
-  #0 'ctrl.doi.bool :=
+  #1 'ctrl.doi.bool :=
   #0 'ctrl.etal.firstonly.bool :=
   #3 'ctrl.etal.number.int :=
 }
@@ -1105,12 +1106,39 @@ FUNCTION { format.chapter } {
   if$
 }
 
+STRINGS {
+  normalized.doi
+}
+
+FUNCTION { normalize.doi } {
+  doi 'normalized.doi :=
+  doi #1 #19 substring$ "https://dx.doi.org/" =
+    { normalized.doi #20 global.max$ substring$ }
+    {
+      doi #1 #18 substring$ "http://dx.doi.org/" =
+        { normalized.doi #19 global.max$ substring$ }
+        {
+          doi #1 #16 substring$ "https://doi.org/" =
+            { normalized.doi #17 global.max$ substring$ }
+            {
+              doi #1 #15 substring$ "http://doi.org/" =
+                { normalized.doi #16 global.max$ substring$ }
+                { normalized.doi }
+              if$
+            }
+          if$
+        }
+      if$
+    }
+  if$
+}
+
 FUNCTION { format.doi } {
   doi empty$
     'skip$
     {
       bbl.doi add.space
-      "\nolinkurl{" * doi * "}" *
+      "\nolinkurl{" * normalize.doi * "}" *
       output
     }
   if$
@@ -1225,10 +1253,6 @@ FUNCTION { format.pages } {
       output
     }
   if$
-  ctrl.doi.bool
-    { format.doi }
-    'skip$
-  if$
 }
 
 FUNCTION { format.pages.article } {
@@ -1238,10 +1262,6 @@ FUNCTION { format.pages.article } {
       pages hyphen.to.dash
       output
     }
-  if$
-  ctrl.doi.bool
-    { format.doi }
-    'skip$
   if$
 }
 
@@ -1475,6 +1495,7 @@ FUNCTION { article } {
   format.volume.article
   format.pages.article
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1494,6 +1515,7 @@ FUNCTION { book } {
   format.chapter
   format.pages
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1507,6 +1529,7 @@ FUNCTION { booklet } {
   format.address
   format.year
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1526,10 +1549,10 @@ FUNCTION { inpress } {
     {
       format.year.article
       next.punct.comma 'next.punct.int :=
-      format.doi
     }
   if$
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1541,6 +1564,7 @@ FUNCTION { inproceedings } {
   format.year
   format.pages
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1552,6 +1576,7 @@ FUNCTION { manual } {
   format.organization.address
   format.year
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1563,6 +1588,7 @@ FUNCTION { mastersthesis } {
   format.school.address
   format.year
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1574,6 +1600,7 @@ FUNCTION { misc } {
   format.year
   format.url
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1585,6 +1612,7 @@ FUNCTION { patent } {
   format.type.number
   format.year
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1596,6 +1624,7 @@ FUNCTION { phdthesis } {
   format.school.address
   format.year
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1606,6 +1635,7 @@ FUNCTION { proceeding } {
   format.year
   format.pages
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1619,6 +1649,7 @@ FUNCTION { techreport } {
   format.volume
   format.pages
   format.note
+  format.doi
   end.bibitem
 }
 
@@ -1631,10 +1662,10 @@ FUNCTION { unpublished } {
     {
       format.year
       next.punct.comma 'next.punct.int :=
-      format.doi
     }
   if$
   format.note
+  format.doi
   end.bibitem
 }
 

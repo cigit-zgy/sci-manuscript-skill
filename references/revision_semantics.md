@@ -33,12 +33,12 @@ The structural comparison uses these fixed rules:
 - UTF-8 input;
 - citation markup disabled;
 - Chinese front-matter commands explicitly registered as text commands;
-- display mathematics compared with `--math-markup=FINE`.
+- mathematics compared with `--math-markup=WHOLE`.
 
-`FINE` is a math-aware semantic policy, not a project-specific workaround. It
-marks only changed formula fragments, while the rendering layer overlays the
-line decoration without rewriting the mathematical expression or equation
-number. Inline mathematics is likewise separated from prose decoration.
+Mathematics is atomic revision state. Any change inside an inline or display
+formula marks the complete old formula as deleted and the complete current
+formula as added; formula-internal fragments are never compared or refined.
+Inline mathematics remains separated from prose decoration.
 
 ## 3. Refinement policy
 
@@ -88,6 +88,34 @@ through CJK/ulem text-decoration scanners. This preserves TeX grouping and
 prevents marked output from creating layout boxes that do not exist in the clean
 manuscript.
 
+Changed labelled display equations bypass formula-internal diffing: the complete
+old equation is rendered as one unnumbered light-gray deletion and the complete
+current equation as one author-blue or reviewer-red numbered addition.
+This preserves the current equation number and prevents structurally different
+formula fragments from being interleaved or forced into one display box.
+
+### Generated bibliography
+
+The visible bibliography is part of the manuscript state. Each side of an
+adjacent comparison is compiled independently from that round's manuscript
+citations, effective BibTeX database, and publisher bibliography style. The
+resulting `.bbl` is the formatting source of truth; raw `.bib` text is never
+inserted into the marked manuscript or compared as visible prose.
+
+Generated `\bibitem` boundaries use citation keys as hidden stable identity.
+Entry bodies, not citation numbers, are the diff target. Both aligned streams
+use current `\bibitem` commands and current order, so the marked bibliography
+keeps current numbering even when citations are inserted, deleted, or reordered.
+A newly cited entry has an empty parent body and a current body; a removed entry
+is appended as an unnumbered deletion. Citation keys must not reach the rendered
+PDF.
+
+Bibliography changes have no `\review{}` provenance. New or corrected rendered
+content is therefore author-blue, removed rendered content is light-gray
+strikeout, and no bibliography change is reviewer-red. Inline citation markup
+remains disabled by the established `latexdiff --disable-citation-markup`
+contract.
+
 ## 5. Reviewer locations
 
 Reviewer line locations are generated in a separate transparent compilation of
@@ -99,7 +127,8 @@ cannot change marked-manuscript rendering.
 
 Revision validation has two independent fidelity layers.
 
-**Source fidelity** checks the generated marked TeX and unit-level refinement
+**Source fidelity** checks the generated marked TeX, materialized bibliography,
+stable entry alignment, and unit-level refinement
 operations. Old and new replacement content must remain represented by deletion,
 addition, reviewer-addition, and unchanged spans without character loss.
 Character-level refinement may interleave unchanged text with several diff
@@ -116,8 +145,8 @@ changing the visible manuscript.
 
 A revision implementation is acceptable only when all of the following pass:
 
-1. unit tests for provenance extraction, refinement policy, and lossless
-   old/new replacement representation;
+1. unit tests for provenance extraction, refinement policy, bibliography
+   identity/current numbering, and lossless old/new replacement representation;
 2. formatting, linting, typing, package build, and wheel smoke tests;
 3. real LaTeX integration tests with blue, red, and light-gray rendered pixels;
 4. clean-versus-marked layout QA with zero marked-specific overflow;

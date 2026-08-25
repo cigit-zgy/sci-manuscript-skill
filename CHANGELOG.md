@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Treat every changed formula atomically: render the complete old formula as a
+  deletion and the complete current formula as an addition, with changed
+  labelled displays separated to prevent revision-only horizontal overflow.
+
+- The Chinese `kxtbcas-numeric.bst` now renders non-empty DOI fields exactly
+  once and removes standard DOI resolver prefixes at rendering time without
+  rewriting user BibTeX data.
+- Generated bibliographies now participate in direct-parent marked comparison.
+  Parent/current `.bbl` files are materialized independently and aligned by
+  citation key, preserving current numbering while marking real metadata,
+  addition, and deletion changes.
+- Machine-owned per-round bibliography snapshots preserve visible history
+  across `sync-bib`, revision creation, rollback, reindex, build, and
+  submission transactions.
+
 ## 2.0.0
 
 Version 2.0.0 establishes one strict workspace and submission contract. It does

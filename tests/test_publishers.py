@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +31,45 @@ BIBLIOGRAPHY = """@article{template2026,
   pages = {1--2}
 }
 """
+CHINESE_DOI_BIBLIOGRAPHY = """@article{bare-doi,
+  author = {Alpha Author},
+  title = {Bare DOI Reference},
+  journal = {Test Journal},
+  year = {2026},
+  volume = {1},
+  pages = {1--2},
+  doi = {10.1234/Test.Mixed-Case-1}
+}
+
+@article{https-doi,
+  author = {Beta Author},
+  title = {HTTPS DOI Reference},
+  journal = {Test Journal},
+  year = {2026},
+  volume = {1},
+  pages = {3--4},
+  doi = {https://doi.org/10.5678/AbC.Def-2}
+}
+
+@article{dx-doi,
+  author = {Gamma Author},
+  title = {DX DOI Reference},
+  journal = {Test Journal},
+  year = {2026},
+  volume = {1},
+  pages = {5--6},
+  doi = {http://dx.doi.org/10.9012/Mixed.Punctuation-3}
+}
+
+@article{without-doi,
+  author = {Delta Author},
+  title = {Reference Without DOI},
+  journal = {Test Journal},
+  year = {2026},
+  volume = {1},
+  pages = {7--8}
+}
+"""
 
 
 class PublisherTemplateTest(unittest.TestCase):
@@ -52,13 +92,16 @@ class PublisherTemplateTest(unittest.TestCase):
         publisher: str,
         source: str,
         resources: tuple[str, ...],
+        bibliography: str = BIBLIOGRAPHY,
+        expected_reference: str = "template reference",
+        reject_overfull: bool = False,
     ) -> str:
         with tempfile.TemporaryDirectory() as temp:
             work = Path(temp)
             for name in resources:
                 shutil.copy2(PUBLISHER_ASSETS / publisher / name, work / name)
             (work / "main.tex").write_text(source, encoding="utf-8")
-            (work / "references.bib").write_text(BIBLIOGRAPHY, encoding="utf-8")
+            (work / "references.bib").write_text(bibliography, encoding="utf-8")
             (work / "figure.png").write_bytes(PNG_1X1)
             if publisher == "chinese":
                 configured = os.environ.get("SCI_MANUSCRIPT_CJK_FONT_DIR")
@@ -111,6 +154,10 @@ class PublisherTemplateTest(unittest.TestCase):
                 0,
                 f"{publisher} compilation failed:\n{result.stdout}\n{result.stderr}",
             )
+            if reject_overfull:
+                diagnostics = result.stdout + result.stderr
+                self.assertNotIn("Overfull \\hbox", diagnostics)
+                self.assertNotIn("Overfull \\vbox", diagnostics)
             pdf = build / "main.pdf"
             self.assertTrue(pdf.is_file(), publisher)
             extracted = subprocess.run(
@@ -121,7 +168,7 @@ class PublisherTemplateTest(unittest.TestCase):
                 check=True,
             ).stdout
             self.assertIn("Test Author", extracted)
-            self.assertIn("template reference", extracted.lower())
+            self.assertIn(expected_reference, extracted.lower())
             if self.pdfimages is not None:
                 image_list = subprocess.run(
                     [self.pdfimages, "-list", str(pdf)],
@@ -244,6 +291,51 @@ Template compilation test.
 \end{document}
 """
         self._compile("chinese", source, ("kxtbcas.cls", "kxtbcas-numeric.bst"))
+
+    def test_chinese_journal_renders_normalized_doi(self) -> None:
+        source = r"""
+\documentclass[review]{kxtbcas}
+\title{中文 DOI 模板测试}
+\entitle{Chinese DOI Template Test}
+\author{Test Author$^{1,*}$}
+\enauthor{Test Author$^{1,*}$}
+\affiliation{$^{1}$示例研究机构}
+\enaffiliation{$^{1}$Example Research Institute}
+\begin{abstract}本文仅用于 DOI 编译验证。\end{abstract}
+\keywords{DOI; 验证}
+\begin{englishabstract}DOI compilation test.\end{englishabstract}
+\enkeywords{DOI; validation}
+\corrauthorcn{Test Author, test@example.org}
+\begin{document}
+\maketitle
+\section{验证}
+文献\cite{bare-doi,https-doi,dx-doi,without-doi}用于 DOI 验证。
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=10mm]{figure.png}
+\bicaption{模板图片}{Template figure}
+\end{figure}
+\bibliographystyle{kxtbcas-numeric}
+\bibliography{references}
+\end{document}
+"""
+
+        extracted = self._compile(
+            "chinese",
+            source,
+            ("kxtbcas.cls", "kxtbcas-numeric.bst"),
+            CHINESE_DOI_BIBLIOGRAPHY,
+            "bare doi reference",
+            reject_overfull=True,
+        )
+        normalized = re.sub(r"\s+", " ", extracted)
+
+        self.assertIn("DOI: 10.1234/Test.Mixed-Case-1", normalized)
+        self.assertIn("DOI: 10.5678/AbC.Def-2", normalized)
+        self.assertIn("DOI: 10.9012/Mixed.Punctuation-3", normalized)
+        self.assertNotIn("DOI: https://doi.org/", normalized)
+        self.assertNotIn("DOI: http://dx.doi.org/", normalized)
+        self.assertEqual(normalized.count("DOI:"), 3)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,21 @@
 \providecommand{\DIFdelbeginFL}{}
 \providecommand{\DIFdelendFL}{}
 \providecommand{\review}[2]{#2}
+\providecommand{\SCIDeletedBibItem}[1]{%
+  \item[]\begingroup
+    \hypersetup{urlcolor=RevisionDeletedColor}%
+    \color{RevisionDeletedColor}#1%
+  \endgroup
+}
+\providecommand{\SCIDeletedEquation}[1]{%
+  \par\noindent\[\DIFdelMath{#1}\]\par
+}
+\providecommand{\SCIAddedEquation}[2]{%
+  \begin{equation}\DIFaddMath{#1}\label{#2}\end{equation}%
+}
+\providecommand{\SCIReviewerAddedEquation}[2]{%
+  \begin{equation}\DIFaddReviewMath{#1}\label{#2}\end{equation}%
+}
 
 % Keep an empty registry for standalone runtime probes.
 % Real reviewer locations are compiled independently and copied over this file.

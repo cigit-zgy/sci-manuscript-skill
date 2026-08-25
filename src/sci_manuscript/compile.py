@@ -16,7 +16,7 @@ import yaml
 from .errors import WorkflowError
 from .metadata import generate_metadata
 from .templates import publisher_resource, resources_root
-from .workspace import ProjectConfig
+from .workspace import ProjectConfig, bibliography_source_for_round
 
 SUPPORTED_ENGINES = ("auto", "tectonic", "latex")
 
@@ -459,7 +459,10 @@ def stage_runtime_resources(
             source = version / directory
             if source.exists():
                 shutil.copytree(source, target / directory, dirs_exist_ok=True)
-    shutil.copy2(config.references / "references.bib", target / "references.bib")
+    shutil.copy2(
+        bibliography_source_for_round(config, round_number),
+        target / "references.bib",
+    )
     for resource in publisher_resource(config).iterdir():
         destination = target / resource.name
         if resource.is_dir():

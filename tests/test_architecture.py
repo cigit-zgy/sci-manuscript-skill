@@ -67,6 +67,14 @@ def test_revision_semantics_contract_is_documented() -> None:
     style = (
         ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.template.tex"
     ).read_text(encoding="utf-8")
+    runtime = (
+        ROOT
+        / "src"
+        / "sci_manuscript"
+        / "resources"
+        / "revision"
+        / "marked_runtime.tex"
+    ).read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     semantics = (ROOT / "references" / "revision_semantics.md").read_text(
@@ -80,6 +88,7 @@ def test_revision_semantics_contract_is_documented() -> None:
         r"\newcommand{\RevisionDeletionThickness}{0.8pt}",
     ):
         assert token in style
+    assert r"\hypersetup{urlcolor=RevisionDeletedColor}" in runtime
     assert r"\CJKunderwave" not in style
     assert r"\CJKunderline" not in style
     assert "blue text" in readme
@@ -87,7 +96,7 @@ def test_revision_semantics_contract_is_documented() -> None:
     assert "four-layer contract" in skill
     assert "similarity(old, new) >= 0.70" in semantics
     assert "max(len(old), len(new)) <= 2000" in semantics
-    assert "--math-markup=FINE" in semantics
+    assert "--math-markup=WHOLE" in semantics
     assert "Rendering is mutually exclusive" in semantics
 
 
@@ -105,7 +114,7 @@ def test_no_obsolete_public_architecture_strings() -> None:
         "project `authors.yaml`",
         "--authors",
         "There is no traditional-LaTeX fallback",
-        "math-markup=WHOLE",
+        "math-markup=FINE",
         "v3.0.0",
     ):
         assert obsolete not in text
@@ -250,7 +259,7 @@ def test_current_docs_have_one_revision_rendering_contract() -> None:
         ROOT / "references" / "workflow.md",
     )
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
-    assert "--math-markup=FINE" in text
+    assert "--math-markup=WHOLE" in text
     assert "Reviewer-linked additions | Red text" in text
     assert "Deleted content | Light-gray strikeout" in text
 

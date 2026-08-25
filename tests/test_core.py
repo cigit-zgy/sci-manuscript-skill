@@ -21,8 +21,10 @@ from sci_manuscript.compile import (
     validate_revision_layout,
 )
 from sci_manuscript.diff import (
+    _align_bibliographies,
+    _align_changed_display_equations,
     _flatten_tex,
-    _refine_inline_math_replacements,
+    _replace_bibliography,
     _separate_inline_math_from_diff_markup,
 )
 from sci_manuscript.metadata import (
@@ -39,6 +41,7 @@ from sci_manuscript.submission import ensure_submission_workspace
 from sci_manuscript.workspace import (
     ProjectConfig,
     WorkflowError,
+    bibliography_source_for_round,
     finalize_revision_creation,
     initialize_project,
     load_project,
@@ -48,6 +51,141 @@ from sci_manuscript.workspace import (
     start_revision,
     temporary_run,
 )
+
+
+def test_dissimilar_labelled_equations_are_separated_before_latexdiff() -> None:
+    parent = r"""Before.
+\begin{equation}
+\frac{a+b}{c+d}=e\label{eq:changed}
+\end{equation}
+After.
+"""
+    current = r"""Before.
+\begin{equation}
+\sum_{i=1}^{n} x_i^2 = \mathcal{L}(\theta)\label{eq:changed}
+\end{equation}
+After.
+"""
+
+    old_aligned, new_aligned = _align_changed_display_equations(parent, current)
+
+    deleted = r"\SCIDeletedEquation{"
+    assert old_aligned.count(deleted) == 1
+    assert new_aligned.count(deleted) == 1
+    assert r"\frac{a+b}{c+d}=e" in old_aligned
+    assert r"\frac{a+b}{c+d}=e" in new_aligned
+    assert r"\sum_{i=1}^{n} x_i^2" in old_aligned
+    assert r"\sum_{i=1}^{n} x_i^2" in new_aligned
+    assert old_aligned.count(r"\SCIAddedEquation{") == 1
+    assert new_aligned.count(r"\SCIAddedEquation{") == 1
+    assert old_aligned == new_aligned
+
+
+def test_whole_equation_replacement_preserves_reviewer_provenance() -> None:
+    parent = r"\begin{equation}a=b\label{eq:review}\end{equation}"
+    current = (
+        r"\review{1-1}{\begin{equation}"
+        r"\sum_{i=1}^{n} x_i^2=0\label{eq:review}\end{equation}}"
+    )
+
+    old_aligned, new_aligned = _align_changed_display_equations(parent, current)
+
+    assert r"\SCIReviewerAddedEquation{" in old_aligned
+    assert r"\SCIReviewerAddedEquation{" in new_aligned
+
+
+def test_small_labelled_equation_change_is_still_atomic() -> None:
+    parent = r"\begin{equation}x+y=z\label{eq:fine}\end{equation}"
+    current = r"\begin{equation}x+y+w=z\label{eq:fine}\end{equation}"
+
+    old_aligned, new_aligned = _align_changed_display_equations(parent, current)
+
+    assert old_aligned == new_aligned
+    assert r"\SCIDeletedEquation{x+y=z}" in old_aligned
+    assert r"\SCIAddedEquation{x+y+w=z}{eq:fine}" in old_aligned
+
+
+def test_visible_bibliography_alignment_uses_keys_and_current_order() -> None:
+    parent = r"""\providecommand{\EndOfBibitem}{}
+\begin{thebibliography}{2}
+\bibitem{a} Alpha old metadata.\EndOfBibitem
+\bibitem{b} Beta deleted metadata.\EndOfBibitem
+\end{thebibliography}
+"""
+    current = r"""\providecommand{\EndOfBibitem}{}
+\begin{thebibliography}{2}
+\bibitem[Gamma(2026)]{c} Gamma new metadata.\EndOfBibitem
+\bibitem{a} Alpha corrected metadata.\EndOfBibitem
+\end{thebibliography}
+"""
+
+    old_aligned, new_aligned = _align_bibliographies(parent, current)
+
+    assert old_aligned.index(r"\bibitem[Gamma(2026)]{c}") < old_aligned.index(
+        r"\bibitem{a}"
+    )
+    assert new_aligned.index(r"\bibitem[Gamma(2026)]{c}") < new_aligned.index(
+        r"\bibitem{a}"
+    )
+    assert r"\bibitem{b}" not in old_aligned
+    assert r"\bibitem{b}" not in new_aligned
+    assert "Alpha old metadata" in old_aligned
+    assert "Alpha corrected metadata" in new_aligned
+    assert "Gamma new metadata" not in old_aligned
+    assert "Gamma new metadata" in new_aligned
+    assert r"\SCIDeletedBibItem{" in old_aligned
+    assert "Beta deleted metadata" in old_aligned
+    assert r"\SCIDeletedBibItem{}" in new_aligned
+
+    manuscript = r"""\documentclass{article}
+\bibliographystyle{style}
+\begin{document}
+\bibliography{references}
+\end{document}
+"""
+    materialized = _replace_bibliography(manuscript, new_aligned)
+    assert r"\bibliographystyle" not in materialized
+    assert r"\bibliography{references}" not in materialized
+    assert "Gamma new metadata" in materialized
+
+
+@pytest.mark.parametrize(
+    ("old_content", "new_content"),
+    (
+        ("M. Bran A. Stable title.", "Bran A M. Stable title."),
+        ("Author. Old title. 2024, 1, 1--2.", "Author. New title. 2024, 1, 1--2."),
+        ("Author. Title. 2023, 1, 1--2.", "Author. Title. 2024, 1, 1--2."),
+        ("Author. Title. 2024, 1, 1--2.", "Author. Title. 2024, 1, 3--4."),
+        ("Author. Title. 2024, 1, 1--2.", "Author. Title. 2024, 1, 1--2. DOI: 10.1/x."),
+    ),
+)
+def test_visible_bibliography_alignment_preserves_metadata_corrections(
+    old_content: str,
+    new_content: str,
+) -> None:
+    parent = (
+        r"\begin{thebibliography}{1}"
+        "\n"
+        r"\bibitem{stable-key} "
+        f"{old_content}\n"
+        r"\end{thebibliography}"
+    )
+    current = (
+        r"\begin{thebibliography}{1}"
+        "\n"
+        r"\bibitem{stable-key} "
+        f"{new_content}\n"
+        r"\end{thebibliography}"
+    )
+
+    old_aligned, new_aligned = _align_bibliographies(parent, current)
+
+    assert old_content in old_aligned
+    assert new_content in new_aligned
+    assert new_content not in old_aligned
+    assert old_aligned != new_aligned
+    assert old_aligned.count(r"\bibitem{stable-key}") == 1
+    assert new_aligned.count(r"\bibitem{stable-key}") == 1
 
 
 def _metadata(publisher: str = "elsevier", language: str = "en") -> ManuscriptMetadata:
@@ -471,7 +609,9 @@ def test_failed_revision_creation_removes_partial_round_state_and_tmp(
 
 
 def test_sync_bib_uses_only_the_explicit_export(tmp_path: Path) -> None:
-    config = _workspace(tmp_path)
+    config = _revision(_workspace(tmp_path))
+    parent_snapshot = config.bibliography_snapshot_path(0)
+    frozen_parent = parent_snapshot.read_bytes()
     unrelated = config.project.parent / "unrelated.txt"
     before = unrelated.read_bytes()
     export = tmp_path / "user-export.bib"
@@ -481,6 +621,7 @@ def test_sync_bib_uses_only_the_explicit_export(tmp_path: Path) -> None:
 
     assert result.artifacts[0].path == config.references / "references.bib"
     assert result.artifacts[0].path.read_bytes() == export.read_bytes()
+    assert parent_snapshot.read_bytes() == frozen_parent
     assert unrelated.read_bytes() == before
     with pytest.raises(WorkflowError, match="is missing"):
         ManuscriptProject(config.project).sync_bib(tmp_path / "missing.bib")
@@ -490,8 +631,38 @@ def test_sync_bib_uses_only_the_explicit_export(tmp_path: Path) -> None:
         ManuscriptProject(config.project).sync_bib(malformed)
 
 
+def test_round_bibliography_snapshots_preserve_visible_history(tmp_path: Path) -> None:
+    r00 = _workspace(tmp_path)
+    shared = r00.references / "references.bib"
+    bibliography_a = b"@article{a, title={Parent bibliography}}\n"
+    bibliography_b = b"@article{a, title={First revision bibliography}}\n"
+    bibliography_c = b"@article{a, title={Second revision bibliography}}\n"
+    shared.write_bytes(bibliography_a)
+
+    r01 = _revision(r00)
+    assert r01.bibliography_snapshot_path(0).read_bytes() == bibliography_a
+    shared.write_bytes(bibliography_b)
+    assert bibliography_source_for_round(r01, 0).read_bytes() == bibliography_a
+    assert bibliography_source_for_round(r01, 1).read_bytes() == bibliography_b
+
+    r02 = _revision(r01)
+    assert r02.bibliography_snapshot_path(1).read_bytes() == bibliography_b
+    shared.write_bytes(bibliography_c)
+    assert bibliography_source_for_round(r02, 0).read_bytes() == bibliography_a
+    assert bibliography_source_for_round(r02, 1).read_bytes() == bibliography_b
+    assert bibliography_source_for_round(r02, 2).read_bytes() == bibliography_c
+
+    r02.bibliography_snapshot_path(1).unlink()
+    with pytest.raises(WorkflowError, match="Historical bibliography snapshot"):
+        bibliography_source_for_round(r02, 1)
+
+
 def test_rollback_success_and_refusal(tmp_path: Path) -> None:
-    project = ManuscriptProject(_revision(_workspace(tmp_path)).project)
+    revision = _revision(_workspace(tmp_path))
+    parent_bibliography = revision.bibliography_snapshot_path(0).read_bytes()
+    current_bibliography = b"@article{current, title={Current revision}}\n"
+    (revision.references / "references.bib").write_bytes(current_bibliography)
+    project = ManuscriptProject(revision.project)
     result = project.rollback(confirmed=True)
     assert result.version == "initial_submission"
     assert result.artifacts[0].path.is_dir()
@@ -499,6 +670,10 @@ def test_rollback_success_and_refusal(tmp_path: Path) -> None:
     assert (
         result.artifacts[0].path.parent / "state" / "revision_01" / "creation.yaml"
     ).is_file()
+    assert (
+        result.artifacts[0].path.parent / "state" / "revision_01" / "bibliography.bib"
+    ).read_bytes() == current_bibliography
+    assert (revision.references / "references.bib").read_bytes() == parent_bibliography
     r01 = _revision(ProjectConfig(project.root, _metadata()))
     section = r01.round_dir(1) / "sections" / "01_introduction.tex"
     section.write_text(section.read_text() + "\nUser edit.\n", encoding="utf-8")
@@ -510,6 +685,10 @@ def test_reindex_success_preserves_scientific_bytes(tmp_path: Path) -> None:
     r01 = _revision(_workspace(tmp_path))
     r02 = _revision(r01)
     r03 = _revision(r02)
+    bibliography_by_round = {
+        number: r03.bibliography_snapshot_path(number).read_bytes()
+        for number in (0, 1, 2)
+    }
     before = {
         2: source_digest(r03.round_dir(2), scientific_only=True),
         3: source_digest(r03.round_dir(3), scientific_only=True),
@@ -526,6 +705,8 @@ def test_reindex_success_preserves_scientific_bytes(tmp_path: Path) -> None:
     assert load_meta(r03.round_dir(1) / "meta.yaml").round_number == 1
     assert r03.creation_record_path(1).is_file()
     assert r03.creation_record_path(2).is_file()
+    assert r03.bibliography_snapshot_path(0).read_bytes() == bibliography_by_round[0]
+    assert r03.bibliography_snapshot_path(1).read_bytes() == bibliography_by_round[2]
     assert not r03.state_dir(3).exists()
     assert load_meta(r03.round_dir(2) / "meta.yaml").round_number == 2
     assert any((r03.project / "00_archive").iterdir())
@@ -933,20 +1114,6 @@ def test_diff_markup_separates_inline_math_from_line_decoration() -> None:
     assert rewritten == (
         r"\DIFadd{中文 }$\DIFaddMath{A \longrightarrow B}$\DIFadd{ 文本} "
         r"\DIFdel{old }\(\DIFdelMath{x+y}\)\DIFdel{ text}"
-    )
-
-
-def test_inline_math_replacement_is_refined_only_at_safe_atoms() -> None:
-    source = (
-        r"$\DIFdelMath{a+b}$\DIFdelend \DIFaddbegin "
-        r"$\DIFaddReviewMath{a+c}$"
-    )
-    assert _refine_inline_math_replacements(source) == (
-        r"$a+\DIFdel{b}\DIFaddReview{c}$"
-    )
-    grouped = r"$\DIFdelMath{x_{old}}$$\DIFaddMath{x_{new}}$"
-    assert _refine_inline_math_replacements(grouped) == (
-        r"$x_\DIFdel{{old}}\DIFadd{{new}}$"
     )
 
 

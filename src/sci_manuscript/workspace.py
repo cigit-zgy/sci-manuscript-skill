@@ -124,6 +124,10 @@ class ProjectConfig:
         """Return the reproducibility manifest for one round."""
         return self.state_dir(round_number) / "build_manifest.yaml"
 
+    def bibliography_snapshot_path(self, round_number: int) -> Path:
+        """Return the machine-owned bibliography snapshot for one round."""
+        return self.state_dir(round_number) / "bibliography.bib"
+
     def tmp_root(self) -> Path:
         """Return the lazy reproducible run-diagnostics root."""
         return self.project / "tmp"
@@ -444,6 +448,52 @@ def _path_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _copy_file_atomically(source: Path, target: Path) -> Path:
+    """Copy one file through a sibling temporary and atomically replace it."""
+    if not source.is_file():
+        raise WorkflowError(f"Source file is missing: {source}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.new")
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        if temporary.is_file():
+            temporary.unlink()
+    return target
+
+
+def snapshot_bibliography(config: ProjectConfig, round_number: int) -> Path:
+    """Atomically freeze the shared bibliography as one round's visible state."""
+    source = config.references / "references.bib"
+    if not source.is_file():
+        raise WorkflowError(f"Bibliography is missing: {source}")
+    return _copy_file_atomically(
+        source,
+        config.bibliography_snapshot_path(round_number),
+    )
+
+
+def bibliography_source_for_round(
+    config: ProjectConfig,
+    round_number: int,
+) -> Path:
+    """Resolve live bibliography for the latest round and snapshots for history."""
+    rounds = _round_numbers(config.project)
+    if round_number not in rounds:
+        raise WorkflowError(f"Unknown bibliography round: {round_name(round_number)}")
+    if round_number == rounds[-1]:
+        return config.references / "references.bib"
+    snapshot = config.bibliography_snapshot_path(round_number)
+    if not snapshot.is_file():
+        raise WorkflowError(
+            "Historical bibliography snapshot is missing for "
+            f"{round_name(round_number)}; its visible reference state cannot be "
+            "reconstructed from the shared latest references.bib."
+        )
+    return snapshot
+
+
 def _tool_version(name: str) -> str:
     executable = shutil.which(name)
     if executable is None:
@@ -557,7 +607,9 @@ def write_build_manifest(
         "inputs": {
             "scientific_source_sha256": source_digest(version, scientific_only=True),
             "protected_user_source_sha256": source_digest(version),
-            "references_bib_sha256": _path_digest(config.references / "references.bib"),
+            "references_bib_sha256": _path_digest(
+                bibliography_source_for_round(config, round_number)
+            ),
             "effective_authors_source": author_kind,
             "effective_authors_sha256": _path_digest(author_source),
         },
@@ -602,6 +654,7 @@ def start_revision(
     target = config.round_dir(target_round)
     if target.exists():
         raise WorkflowError(f"Revision already exists: {target}")
+    snapshot_bibliography(config, config.current_round)
     staged = staging_root / revision_directory_name(target_round)
     staged.mkdir(parents=True)
     source_manuscript = source / "manuscript.tex"
@@ -689,6 +742,18 @@ def rollback_revision(config: ProjectConfig) -> tuple[Path, int]:
         raise WorkflowError(
             "Rollback refused: protected user or scientific source has changed."
         )
+    previous_round = latest.current_round - 1
+    previous_bibliography = latest.bibliography_snapshot_path(previous_round)
+    if not previous_bibliography.is_file():
+        raise WorkflowError(
+            "Rollback refused: the previous round's bibliography snapshot is "
+            f"missing for {round_name(previous_round)}."
+        )
+    shared_bibliography = latest.references / "references.bib"
+    current_snapshot = latest.bibliography_snapshot_path(latest.current_round)
+    snapshot_existed = current_snapshot.is_file()
+    snapshot_backup = current_snapshot.read_bytes() if snapshot_existed else None
+    snapshot_bibliography(latest, latest.current_round)
     archive = _archive_directory(latest.project, "rollback")
     archived = archive / version.name
     state = latest.state_dir(latest.current_round)
@@ -698,13 +763,21 @@ def rollback_revision(config: ProjectConfig) -> tuple[Path, int]:
         if state.exists():
             archived_state.parent.mkdir()
             os.replace(state, archived_state)
+        _copy_file_atomically(previous_bibliography, shared_bibliography)
         load_project(latest.project)
     except Exception:
+        archived_bibliography = archived_state / "bibliography.bib"
+        if archived_bibliography.is_file():
+            _copy_file_atomically(archived_bibliography, shared_bibliography)
         if archived_state.exists() and not state.exists():
             state.parent.mkdir(exist_ok=True)
             os.replace(archived_state, state)
         if archived.exists() and not version.exists():
             os.replace(archived, version)
+        if snapshot_existed and snapshot_backup is not None:
+            current_snapshot.write_bytes(snapshot_backup)
+        elif current_snapshot.is_file():
+            current_snapshot.unlink()
         raise
     return archived, latest.current_round - 1
 

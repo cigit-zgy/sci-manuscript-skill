@@ -21,5 +21,8 @@ current journal instructions and the target build environment before use.
 
 `kxtbcas-numeric.bst` is the bundled author-format layer for Scientific
 Bulletin-style numeric references: family name first, given-name initials
-without full stops, three authors followed by `et al.`, and no ISSN output.
-Journal abbreviations still depend on correct exported bibliography metadata.
+without full stops, three authors followed by `et al.`, and no ISSN output. A
+non-empty DOI is emitted exactly once at the end of an entry as `DOI: 10...`.
+Standard DOI resolver prefixes are removed at rendering time without rewriting
+the source `.bib`; entries without DOI receive no empty label. Journal
+abbreviations still depend on correct exported bibliography metadata.

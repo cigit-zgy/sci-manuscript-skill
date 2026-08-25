@@ -159,7 +159,10 @@ the light-gray strikeout.
 `sections/00_frontmatter.tex` stores the user-owned manuscript title, abstract,
 and keywords. These visible fields participate in the same direct-parent
 revision comparison as body sections; generated visible funding metadata is
-included in that comparison as well.
+included in that comparison as well. Publisher-rendered bibliography entries
+also participate: historical BibTeX state is frozen under `state/<round>/`, and
+the marked comparison aligns generated `.bbl` entries by citation key while
+retaining current reference order and numbering.
 
 The active author library stores only person-level names, email, affiliations,
 and bilingual biography strings. Names, affiliations, email, and biographies
