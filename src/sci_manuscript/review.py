@@ -25,6 +25,8 @@ USER_SECTION_HEADING = re.compile(
 )
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 RESPONSE_COMMAND = r"\Response"
+RESPONSE_LETTER_COMMAND = r"\ResponseLetter"
+REVIEW_REFERENCE_COMMAND = r"\ReviewReference"
 REVIEW_INDEX_NAME = "review_index.yaml"
 
 
@@ -49,6 +51,23 @@ class ReviewBlock:
     prefix: str
     summary: tuple[str, ...]
     comments: tuple[ReviewComment, ...]
+
+
+@dataclass(frozen=True)
+class ReviewReference:
+    """One reviewer-to-bibliography provenance declaration."""
+
+    review_id: str
+    citation_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ResponseSource:
+    """The complete active user content in ``responses.tex``."""
+
+    letter: str
+    responses: dict[str, str]
+    references: tuple[ReviewReference, ...]
 
 
 @dataclass(frozen=True)
@@ -94,7 +113,8 @@ class ReviewAuditResult:
     @property
     def is_complete(self) -> bool:
         """Return whether the review audit has no warnings."""
-        return not self.issues
+        neutral = {"REVIEW_REFERENCE_UNCHANGED", "REVIEW_REFERENCE_DELETED"}
+        return not any(issue.code not in neutral for issue in self.issues)
 
 
 def _paragraphs(lines: list[str]) -> tuple[str, ...]:
@@ -246,39 +266,74 @@ def _extract_braced_response_field(text: str, start: int) -> tuple[str, int]:
         raise WorkflowError("Unbalanced braces in responses.tex.") from exc
 
 
-def parse_response_entries(path: Path) -> dict[str, str]:
-    r"""Parse observed ``\Response{ID}{body}`` entries without completeness checks."""
+def parse_response_source(path: Path) -> ResponseSource:
+    r"""Parse the strict ``\ResponseLetter``/``\Response`` user interface."""
     if not path.is_file():
-        return {}
+        return ResponseSource("", {}, ())
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise WorkflowError(f"Cannot read response content: {path}") from exc
+    letter: str | None = None
     responses: dict[str, str] = {}
+    references: list[ReviewReference] = []
     cursor = skip_tex_space(text, 0)
     while cursor < len(text):
-        if not text.startswith(RESPONSE_COMMAND, cursor):
+        if text.startswith(RESPONSE_LETTER_COMMAND, cursor):
+            command = RESPONSE_LETTER_COMMAND
+        elif text.startswith(REVIEW_REFERENCE_COMMAND, cursor):
+            command = REVIEW_REFERENCE_COMMAND
+        elif text.startswith(RESPONSE_COMMAND, cursor):
+            command = RESPONSE_COMMAND
+        else:
             raise WorkflowError(
                 f"Unexpected content in {path} at character {cursor + 1}; "
-                "expected \\Response{ID}{...}."
+                "expected \\ResponseLetter, \\Response, or \\ReviewReference."
             )
-        cursor += len(RESPONSE_COMMAND)
+        cursor += len(command)
         if cursor < len(text) and (text[cursor].isalnum() or text[cursor] == "@"):
             raise WorkflowError(
                 f"Unexpected command in {path} at character {cursor + 1}."
             )
         cursor = skip_tex_space(text, cursor)
+        if command == RESPONSE_LETTER_COMMAND:
+            if letter is not None:
+                raise WorkflowError(f"Duplicate ResponseLetter declaration: {path}")
+            letter, cursor = _extract_braced_response_field(text, cursor)
+            cursor = skip_tex_space(text, cursor)
+            continue
+
         raw_id, cursor = _extract_braced_response_field(text, cursor)
         review_id = raw_id.strip()
         if not is_review_id(review_id):
-            raise WorkflowError(f"Invalid response ID {review_id!r}: {path}")
-        if review_id in responses:
-            raise WorkflowError(f"Duplicate response ID {review_id}: {path}")
+            label = "response" if command == RESPONSE_COMMAND else "ReviewReference"
+            raise WorkflowError(f"Invalid {label} ID {review_id!r}: {path.resolve()}")
         cursor = skip_tex_space(text, cursor)
         body, cursor = _extract_braced_response_field(text, cursor)
+        if command == REVIEW_REFERENCE_COMMAND:
+            keys = tuple(dict.fromkeys(item.strip() for item in body.split(",")))
+            if not keys or any(
+                not key or any(character.isspace() for character in key) for key in keys
+            ):
+                raise WorkflowError(
+                    f"ReviewReference {review_id} has invalid citation keys: "
+                    f"{path.resolve()}"
+                )
+            references.append(ReviewReference(review_id, keys))
+            cursor = skip_tex_space(text, cursor)
+            continue
+        if review_id in responses:
+            raise WorkflowError(f"Duplicate response ID {review_id}: {path}")
         responses[review_id] = body.strip()
         cursor = skip_tex_space(text, cursor)
-    return responses
+    if letter is None:
+        raise WorkflowError(f"Missing \\ResponseLetter declaration: {path.resolve()}")
+    return ResponseSource(letter.strip(), responses, tuple(references))
+
+
+def parse_response_entries(path: Path) -> dict[str, str]:
+    r"""Parse observed ``\Response{ID}{body}`` entries without completeness checks."""
+    return parse_response_source(path).responses
 
 
 def _review_ids_with_paths(version: Path) -> dict[str, set[Path]]:
@@ -375,8 +430,10 @@ def audit_reviews(
         comment.review_id: comment for block in blocks for comment in block.comments
     }
     try:
-        responses = parse_response_entries(response_path)
+        response_source = parse_response_source(response_path)
+        responses = response_source.responses
     except WorkflowError as exc:
+        response_source = ResponseSource("", {}, ())
         responses = {}
         issues.append(
             ReviewAuditIssue(
@@ -387,6 +444,8 @@ def audit_reviews(
             )
         )
     provenance = _review_ids_with_paths(version)
+    for reference in response_source.references:
+        provenance.setdefault(reference.review_id, set()).add(response_path)
     entries: list[ReviewAuditEntry] = []
 
     if not comments and not any(issue.code == "COMMENTS_INVALID" for issue in issues):

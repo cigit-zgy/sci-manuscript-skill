@@ -159,10 +159,11 @@ the light-gray strikeout.
 `sections/00_frontmatter.tex` stores the user-owned manuscript title, abstract,
 and keywords. These visible fields participate in the same direct-parent
 revision comparison as body sections; generated visible funding metadata is
-included in that comparison as well. Publisher-rendered bibliography entries
-also participate: historical BibTeX state is frozen under `state/<round>/`, and
-the marked comparison aligns generated `.bbl` entries by citation key while
-retaining current reference order and numbering.
+included in that comparison as well. Historical bibliography state is frozen
+under `state/<round>/` for key-based machine comparison, while marked output
+always renders the current bibliography only. `\ReviewReference{ID}{key[,keys...]}`
+adds eligible current-entry lines to the same response-location set as
+manuscript `\review` additions.
 
 The active author library stores only person-level names, email, affiliations,
 and bilingual biography strings. Names, affiliations, email, and biographies
@@ -195,10 +196,11 @@ Templates Compiler Revision engine
 The project directory contains scientific content. The Skill package contains reusable infrastructure.
 
 For revision rounds, `build` deterministically refreshes clean, marked, and
-response PDFs. The response PDF reads reply bodies only from the current
-`response/responses.tex` and inserts locations derived from current
-`\review{ID}{...}` provenance; incomplete replies remain non-blocking audit
-items, while malformed response syntax suppresses untrusted response output.
+response PDFs. The response PDF reads the user-owned `\ResponseLetter{...}` and
+`\Response{ID}{...}` bodies only from current `response/responses.tex`, then
+inserts the unified final-marked locations derived from `\review` and
+`\ReviewReference`; malformed response syntax suppresses only untrusted
+response output.
 
 Associate Editor (`AE-N`), Editor (`E-N`), and Reviewer (`N-N`) detailed
 comments use the same response and provenance workflow. `build` remains

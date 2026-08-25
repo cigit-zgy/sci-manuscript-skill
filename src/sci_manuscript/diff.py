@@ -17,6 +17,7 @@ from .compile import (
 from .errors import WorkflowError
 from .locations import build_review_locations
 from .provenance import ProvenanceSource, extract_provenance, split_by_review_provenance
+from .review import parse_response_source
 from .templates import resources_root
 from .tex import (
     command_at,
@@ -80,6 +81,18 @@ class MarkedResult:
 
     pdf: Path
     locations: dict[str, str]
+    bibliography_notices: tuple["BibliographyNotice", ...] = ()
+
+
+@dataclass(frozen=True)
+class BibliographyNotice:
+    """One neutral machine-level ReviewReference result."""
+
+    code: str
+    review_id: str
+    citation_key: str
+    message: str
+    path: Path
 
 
 @dataclass(frozen=True)
@@ -108,6 +121,7 @@ class _DisplayEquation:
     """One labelled display equation and its exact source boundaries."""
 
     label: str
+    environment: str
     start: int
     end: int
     body_without_label: str
@@ -199,26 +213,89 @@ def _parse_bibliography(text: str) -> _BibliographyDocument:
     )
 
 
-def _align_bibliographies(old: str, current: str) -> tuple[str, str]:
-    """Align rendered entries by citation key while retaining current numbering."""
+def _bibliography_change_states(old: str, current: str) -> dict[str, str]:
+    """Compare rendered entries by key while ignoring numbering and order."""
     parent = _parse_bibliography(old)
     child = _parse_bibliography(current)
     parent_by_key = {entry.key: entry for entry in parent.entries}
-    current_keys = {entry.key for entry in child.entries}
-    old_parts = [child.header]
-    new_parts = [child.header]
-    for entry in child.entries:
-        previous = parent_by_key.get(entry.key)
-        old_parts.extend((entry.command, "" if previous is None else previous.content))
-        new_parts.extend((entry.command, entry.content))
-    for entry in parent.entries:
-        if entry.key in current_keys:
-            continue
-        old_parts.append(f"\n\\SCIDeletedBibItem{{{entry.content}}}\n")
-        new_parts.append("\n\\SCIDeletedBibItem{}\n")
-    old_parts.append(child.footer)
-    new_parts.append(child.footer)
-    return "".join(old_parts), "".join(new_parts)
+    child_by_key = {entry.key: entry for entry in child.entries}
+    states: dict[str, str] = {}
+    for key in parent_by_key.keys() | child_by_key.keys():
+        previous = parent_by_key.get(key)
+        revised = child_by_key.get(key)
+        if previous is None:
+            states[key] = "added"
+        elif revised is None:
+            states[key] = "deleted"
+        elif " ".join(previous.content.split()) == " ".join(revised.content.split()):
+            states[key] = "unchanged"
+        else:
+            states[key] = "modified"
+    return states
+
+
+def _current_bibliography_with_reference_provenance(
+    old: str,
+    current: str,
+    response_path: Path,
+) -> tuple[str, tuple[BibliographyNotice, ...]]:
+    """Wrap eligible current entries invisibly for final-layout locations."""
+    document = _parse_bibliography(current)
+    states = _bibliography_change_states(old, current)
+    try:
+        declarations = parse_response_source(response_path).references
+    except WorkflowError:
+        declarations = ()
+    owners: dict[str, list[str]] = {}
+    notices: list[BibliographyNotice] = []
+    for declaration in declarations:
+        for key in declaration.citation_keys:
+            state = states.get(key)
+            if state is None:
+                raise WorkflowError(
+                    f"ReviewReference {declaration.review_id} uses unknown citation "
+                    f"key {key!r}: {response_path.resolve()}"
+                )
+            if state == "unchanged":
+                notices.append(
+                    BibliographyNotice(
+                        "REVIEW_REFERENCE_UNCHANGED",
+                        declaration.review_id,
+                        key,
+                        f"ReviewReference {declaration.review_id} declares {key}, "
+                        "but no visible bibliography change was detected.",
+                        response_path.resolve(),
+                    )
+                )
+                continue
+            if state == "deleted":
+                notices.append(
+                    BibliographyNotice(
+                        "REVIEW_REFERENCE_DELETED",
+                        declaration.review_id,
+                        key,
+                        f"Reference {key!r} was removed in this revision; no current "
+                        "marked-manuscript bibliography location exists.",
+                        response_path.resolve(),
+                    )
+                )
+                continue
+            key_owners = owners.setdefault(key, [])
+            if declaration.review_id not in key_owners:
+                key_owners.append(declaration.review_id)
+
+    parts = [document.header]
+    for entry in document.entries:
+        parts.append(entry.command)
+        rendered_owners = owners.get(entry.key)
+        if rendered_owners:
+            parts.append(
+                f"\\SCIReviewSpan{{{','.join(rendered_owners)}}}{{{entry.content}}}"
+            )
+        else:
+            parts.append(entry.content)
+    parts.append(document.footer)
+    return "".join(parts), tuple(notices)
 
 
 def _replace_bibliography(text: str, bibliography: str) -> str:
@@ -249,8 +326,16 @@ def _replace_bibliography(text: str, bibliography: str) -> str:
     return "".join(pieces)
 
 
+def _replace_materialized_bibliography_entries(text: str, bibliography: str) -> str:
+    """Replace one rendered bibliography with current entries only."""
+    target = _parse_bibliography(text)
+    current = _parse_bibliography(bibliography)
+    entries = "".join(entry.command + entry.content for entry in current.entries)
+    return target.header + entries + target.footer
+
+
 def _display_equations(text: str) -> tuple[_DisplayEquation, ...]:
-    """Return active, labelled ``equation`` environments in source order."""
+    """Return active, labelled outer display-math environments in source order."""
     try:
         commands = scan_tex_commands(text, ("begin", "end"), field_count=1)
     except ValueError as exc:
@@ -268,7 +353,12 @@ def _display_equations(text: str) -> tuple[_DisplayEquation, ...]:
         if not stack or stack[-1].fields[0].strip() != environment:
             raise WorkflowError("Unbalanced display environment in manuscript source.")
         opening = stack.pop()
-        if environment != "equation":
+        if environment not in {
+            "equation",
+            "align",
+            "gather",
+            "multline",
+        }:
             continue
         body = text[opening.end : command.start]
         try:
@@ -293,6 +383,7 @@ def _display_equations(text: str) -> tuple[_DisplayEquation, ...]:
         equations.append(
             _DisplayEquation(
                 label=label,
+                environment=environment,
                 start=opening.start,
                 end=command.end,
                 body_without_label=body_without_label,
@@ -342,18 +433,37 @@ def _align_changed_display_equations(old: str, current: str) -> tuple[str, str]:
             continue
         deleted_body = previous.body_without_label.strip()
         added_body = revised.body_without_label.strip()
-        deleted = f"\\SCIDeletedEquation{{{deleted_body}}}\n"
+        if revised.environment == "equation" and previous.environment == "equation":
+            deleted = f"\\SCIDeletedEquation{{{deleted_body}}}\n"
+        else:
+            deleted_environment = previous.environment + "*"
+            deleted = (
+                f"\\SCIDeletedDisplay{{{deleted_environment}}}{{{deleted_body}}}\n"
+            )
         visible_revised = visible_current_equations[label]
-        is_reviewer_change = any(
-            span.start <= visible_revised.start and visible_revised.end <= span.end
-            for span in current_provenance.review_spans
+        owner = next(
+            (
+                span.review_ids
+                for span in current_provenance.review_spans
+                if span.start <= visible_revised.start
+                and visible_revised.end <= span.end
+            ),
+            None,
         )
-        addition_command = (
-            "SCIReviewerAddedEquation" if is_reviewer_change else "SCIAddedEquation"
-        )
-        replacement = (
-            f"{deleted}\\{addition_command}{{{added_body}}}{{{revised.label}}}\n"
-        )
+        if revised.environment == "equation":
+            addition_command = (
+                "SCIReviewerAddedEquation" if owner else "SCIAddedEquation"
+            )
+            addition = f"\\{addition_command}{{{added_body}}}{{{revised.label}}}\n"
+        else:
+            addition_command = "SCIReviewerAddedDisplay" if owner else "SCIAddedDisplay"
+            addition = (
+                f"\\{addition_command}{{{revised.environment}}}"
+                f"{{{added_body}}}{{{revised.label}}}\n"
+            )
+        replacement = deleted + addition
+        if owner:
+            replacement = f"\\SCIReviewSpan{{{','.join(owner)}}}{{{replacement}}}"
         old_replacements.append((previous.start, previous.end, replacement))
         current_replacements.append((revised.start, revised.end, replacement))
     return (
@@ -552,7 +662,10 @@ def _render_addition(
             macro = r"\DIFaddReviewFL" if full_document else r"\DIFaddReview"
         else:
             macro = r"\DIFaddFL" if full_document else r"\DIFadd"
-        pieces.append(f"{macro}{{{content}}}")
+        rendered = f"{macro}{{{content}}}"
+        if owner:
+            rendered = f"\\SCIReviewSpan{{{','.join(owner)}}}{{{rendered}}}"
+        pieces.append(rendered)
     return "".join(pieces)
 
 
@@ -785,6 +898,44 @@ def _separate_inline_math_from_diff_markup(text: str) -> str:
     return "".join(output)
 
 
+def _lift_review_spans_from_moving_arguments(text: str) -> str:
+    """Move whole-field internal spans outside sectioning commands.
+
+    Line labels cannot safely execute inside TeX moving arguments. The visible
+    reviewer markup remains inside the title, while the invisible location span
+    encloses the complete command.
+    """
+    names = ("section", "subsection", "subsubsection", "paragraph")
+    try:
+        commands = scan_tex_commands(text, names, field_count=1)
+    except ValueError as exc:
+        raise WorkflowError("Malformed sectioning command in marked source.") from exc
+    replacements: list[tuple[int, int, str]] = []
+    for command in commands:
+        field = command.fields[0]
+        cursor = skip_tex_space(field, 0)
+        if not command_at(field, cursor, "SCIReviewSpan"):
+            continue
+        try:
+            ids, after_ids = extract_braced(field, cursor + len(r"\SCIReviewSpan"))
+            body, end = extract_braced(field, after_ids)
+        except ValueError as exc:
+            raise WorkflowError(
+                "Malformed internal reviewer span in a section title."
+            ) from exc
+        if skip_tex_space(field, end) != len(field):
+            continue
+        visible_command = f"\\{command.name}{{{body}}}"
+        replacements.append(
+            (
+                command.start,
+                command.end,
+                f"\\SCIReviewSpan{{{ids}}}{{{visible_command}}}",
+            )
+        )
+    return _replace_spans(text, replacements)
+
+
 def build_marked_manuscript(
     config: ProjectConfig,
     round_number: int,
@@ -844,12 +995,15 @@ def build_marked_manuscript(
         config,
         engine_override,
     )
-    aligned_old_bibliography, aligned_new_bibliography = _align_bibliographies(
-        old_bibliography,
-        new_bibliography,
+    visible_bibliography, bibliography_notices = (
+        _current_bibliography_with_reference_provenance(
+            old_bibliography,
+            new_bibliography,
+            config.response_dir(round_number) / "responses.tex",
+        )
     )
-    old_visible = _replace_bibliography(old_flattened, aligned_old_bibliography)
-    new_visible = _replace_bibliography(new_flattened, aligned_new_bibliography)
+    old_visible = _replace_bibliography(old_flattened, visible_bibliography)
+    new_visible = _replace_bibliography(new_flattened, visible_bibliography)
     old_visible, new_visible = _align_changed_display_equations(
         old_visible,
         new_visible,
@@ -869,7 +1023,7 @@ def build_marked_manuscript(
     )
     _copy_resources(config, source_dir)
 
-    text_commands = ["SCIDeletedBibItem", "SCIDeletedEquation"]
+    text_commands = ["SCIDeletedEquation", "SCIDeletedDisplay"]
     if config.metadata.publisher == "chinese":
         text_commands.extend(CHINESE_TEXT_COMMANDS)
     command = [
@@ -888,9 +1042,15 @@ def build_marked_manuscript(
     ]
     result = run_command(command, cwd=source_dir)
     classified = _classify_reviewer_additions(result.stdout, provenance)
+    classified = _replace_materialized_bibliography_entries(
+        classified, visible_bibliography
+    )
     marked_source = source_dir / "manuscript_marked.tex"
     marked_source.write_text(
-        _separate_inline_math_from_diff_markup(classified), encoding="utf-8"
+        _lift_review_spans_from_moving_arguments(
+            _separate_inline_math_from_diff_markup(classified)
+        ),
+        encoding="utf-8",
     )
     compiled = compile_tex(
         marked_source,
@@ -917,7 +1077,12 @@ def build_marked_manuscript(
         round_number,
         run_dir,
         engine_override,
+        marked_source,
     )
     output = config.output_dir(round_number) / "manuscript_marked.pdf"
     publish_file_atomically(compiled.pdf, output)
-    return MarkedResult(pdf=output, locations=locations)
+    return MarkedResult(
+        pdf=output,
+        locations=locations,
+        bibliography_notices=bibliography_notices,
+    )

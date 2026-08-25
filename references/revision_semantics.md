@@ -19,8 +19,13 @@ R = {(start_i, end_i, reviewer_ids_i)}.
 
 The wrapper never creates a visual change by itself. Therefore text that is
 unchanged between `P` and `C` remains unmarked even when it lies inside a
-reviewer interval. Nested reviewer scopes are invalid; multiple reviewer IDs
-belong in one wrapper.
+reviewer interval. Nested scopes inherit parent IDs and union child IDs in
+first-seen order. The sidecar is canonicalized to non-overlapping effective
+segments, merging adjacent segments with identical ID tuples.
+
+`\ReviewReference{ID}{key[,keys...]}` is declared in `responses.tex`. It links
+real rendered bibliography changes to reviewer provenance and response
+locations; it never controls bibliography color or modifies `.bib` data.
 
 ## 2. Structural-diff layer
 
@@ -103,32 +108,33 @@ resulting `.bbl` is the formatting source of truth; raw `.bib` text is never
 inserted into the marked manuscript or compared as visible prose.
 
 Generated `\bibitem` boundaries use citation keys as hidden stable identity.
-Entry bodies, not citation numbers, are the diff target. Both aligned streams
-use current `\bibitem` commands and current order, so the marked bibliography
-keeps current numbering even when citations are inserted, deleted, or reordered.
-A newly cited entry has an empty parent body and a current body; a removed entry
-is appended as an unnumbered deletion. Citation keys must not reach the rendered
-PDF.
+Entry bodies, not citation numbers or ordering, determine machine states:
+`unchanged`, `modified`, `added`, or `deleted`. The marked bibliography renders
+the current revision only, with current numbering, normal journal styling, and
+normal link colors. Old entries and red/blue/gray bibliography revision styling
+are forbidden.
 
-Bibliography changes have no `\review{}` provenance. New or corrected rendered
-content is therefore author-blue, removed rendered content is light-gray
-strikeout, and no bibliography change is reviewer-red. Inline citation markup
-remains disabled by the established `latexdiff --disable-citation-markup`
-contract.
+For a modified or added key, `\ReviewReference` records the current rendered
+entry's final marked line range. A deleted key is valid but has no current
+location. An unchanged key yields a neutral warning and no location. A key
+absent from both rendered states is a fatal provenance error that reports the
+review ID, key, and absolute `responses.tex` path. Citation keys never reach the
+rendered PDF.
 
 ## 5. Reviewer locations
 
-Reviewer line locations are generated in a separate transparent compilation of
-the current source. This compilation uses reviewer intervals only for line
-labels and never for colors. Consequently response-letter location generation
-cannot change marked-manuscript rendering.
+Reviewer line locations are generated in a layout-equivalent compilation of
+the final marked source. Invisible internal spans label actual reviewer-linked
+additions and eligible current bibliography entries without changing rendering.
+Body and bibliography ranges are sorted, deduplicated, and merged with the same
+overlap and adjacency rules.
 
 ## 6. Fidelity and release invariants
 
 Revision validation has two independent fidelity layers.
 
-**Source fidelity** checks the generated marked TeX, materialized bibliography,
-stable entry alignment, and unit-level refinement
+**Source fidelity** checks the generated marked TeX, both materialized historical
+bibliographies, current-only marked entries, and unit-level refinement
 operations. Old and new replacement content must remain represented by deletion,
 addition, reviewer-addition, and unchanged spans without character loss.
 Character-level refinement may interleave unchanged text with several diff

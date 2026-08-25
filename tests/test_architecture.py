@@ -88,7 +88,7 @@ def test_revision_semantics_contract_is_documented() -> None:
         r"\newcommand{\RevisionDeletionThickness}{0.8pt}",
     ):
         assert token in style
-    assert r"\hypersetup{urlcolor=RevisionDeletedColor}" in runtime
+    assert r"\SCIDeletedBibItem" not in runtime
     assert r"\CJKunderwave" not in style
     assert r"\CJKunderline" not in style
     assert "blue text" in readme
@@ -98,6 +98,8 @@ def test_revision_semantics_contract_is_documented() -> None:
     assert "max(len(old), len(new)) <= 2000" in semantics
     assert "--math-markup=WHOLE" in semantics
     assert "Rendering is mutually exclusive" in semantics
+    assert "current revision only" in semantics
+    assert r"\ReviewReference" in semantics
 
 
 def test_no_obsolete_public_architecture_strings() -> None:

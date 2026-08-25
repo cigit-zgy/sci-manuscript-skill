@@ -20,9 +20,10 @@
 \color{ink}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.72\baselineskip}
+\setlength{\emergencystretch}{2em}
 \pagestyle{plain}
 
-\newcommand{\ResponseSection}[1]{\clearpage\section*{对#1的回复}}
+\newcommand{\ResponseSection}[1]{\section*{对#1的回复}}
 \newenvironment{generalcomment}[1][总体意见]
   {\begin{tcolorbox}[
     enhanced,breakable,frame hidden,colback=quotegray,
@@ -47,35 +48,16 @@
   \addvspace{1.2\baselineskip}}
 \newcommand{\ReviewLocation}[1]{#1}
 \newcommand{\ReviewerComment}[1]{#1\par\medskip}
-\newcommand{\ManuscriptIDLine}{%
-  \if\relax\detokenize\expandafter{\ManuscriptID}\relax
-  \else 稿件编号：\ManuscriptID\fi}
-
 \begin{document}
 
-{\color{navy}\rule{\textwidth}{1.5pt}}\par
-\vspace{0.15in}
-{\sffamily\bfseries\LARGE 给编辑的回复}\par
-\vspace{0.08in}
-{\color{graytext}\ManuscriptTitle}\par
-{\small\color{graytext}\JournalName\quad\ManuscriptIDLine}
-\vspace{0.28in}
+%%RESPONSE_LETTER%%
 
-尊敬的编辑：
-
-感谢您给予我们修改稿件《\ManuscriptTitle》的机会，并考虑将其发表于
-\textit{\JournalName}。衷心感谢编辑和审稿人对本稿件的认真评阅以及富有
-建设性的建议。
-
-以下按照编辑和审稿人的意见列出相应回复；涉及正文修改的意见，其修改位置由
-marked manuscript 的连续行号自动生成。
-
-此致\par
-敬礼！\par
 \vspace{0.25in}
 \CorrespondenceAuthorNameZh\par
 谨代表全体作者\par
 \href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
+
+\vspace{0.35in}
 
 %%RESPONSE_BODY%%
 

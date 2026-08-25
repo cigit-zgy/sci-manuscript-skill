@@ -369,7 +369,7 @@ def test_target_aware_chinese_doctor_runs_real_probe() -> None:
     assert "preserved Chinese glyphs" in cjk.detail
 
 
-def test_tectonic_materializes_empty_review_registry(tmp_path: Path) -> None:
+def test_marked_runtime_does_not_own_the_location_registry(tmp_path: Path) -> None:
     _require_toolchain()
     source = tmp_path / "empty_registry.tex"
     build = tmp_path / "build"
@@ -397,8 +397,7 @@ def test_tectonic_materializes_empty_review_registry(tmp_path: Path) -> None:
         stderr=subprocess.PIPE,
         check=True,
     )
-    registry = build / "empty_registry.reviewloc"
-    assert registry.read_text(encoding="utf-8").splitlines() == [REVIEW_REGISTRY_HEADER]
+    assert not (build / "empty_registry.reviewloc").exists()
 
 
 def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
@@ -561,10 +560,10 @@ def test_non_chinese_initial_workflows_own_scientific_frontmatter(
             retained_runs[0] / "marked_source" / "manuscript_marked.tex"
         ).read_text(encoding="utf-8")
         bibliography_source = marked_source[marked_source.index(r"\bibitem") :]
-        assert "Replace this example" in bibliography_source
         assert "Corrected visible" in bibliography_source
-        assert r"\DIFdel{" in bibliography_source
-        assert r"\DIFadd{" in bibliography_source
+        assert "Replace this example" not in bibliography_source
+        assert r"\DIFdel{" not in bibliography_source
+        assert r"\DIFadd{" not in bibliography_source
         shutil.rmtree(manuscript / "tmp")
     assert not (manuscript / "tmp").exists()
 
@@ -878,10 +877,10 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     assert r"\DIFaddReview{段落}" not in marked_source
     assert "作者普通新增中文" in marked_source
     registry = retained_runs[0] / "marked_build" / "manuscript_marked.reviewloc"
-    assert registry.read_text(encoding="utf-8").splitlines() == [
-        REVIEW_REGISTRY_HEADER,
-        "1-1|1",
-    ]
+    registry_lines = registry.read_text(encoding="utf-8").splitlines()
+    assert registry_lines[0] == REVIEW_REGISTRY_HEADER
+    assert len(registry_lines) > 2
+    assert all(line.startswith("1-1|") for line in registry_lines[1:])
     aux = retained_runs[0] / "marked_build" / "manuscript_marked.aux"
     aux_text = aux.read_text(encoding="utf-8")
     assert "review:1:start" in aux_text
@@ -942,7 +941,13 @@ def test_chinese_bibliography_doi_and_visible_revision_semantics(
         "正文引用文献~\\cite{hidden-citation-key-42,removed-doi-entry}。",
     )
     project = ManuscriptProject(manuscript)
-    project.start_revision(confirmed=True)
+    reviews = tmp_path / "bibliography-reviews.md"
+    reviews.write_text(
+        "# Reviewer #2\n\n## Main comment\n\nPlease standardize the references.\n\n"
+        "## Specific comments\n\n1. Correct the reference metadata.\n",
+        encoding="utf-8",
+    )
+    project.start_revision(reviews=reviews, confirmed=True)
     current_body = manuscript / "revision_01" / "sections" / "01_manuscript.tex"
     _replace_once(
         current_body,
@@ -963,6 +968,13 @@ def test_chinese_bibliography_doi_and_visible_revision_semantics(
 """,
         encoding="utf-8",
     )
+    response_source = manuscript / "revision_01" / "response" / "responses.tex"
+    response_source.write_text(
+        "\\ResponseLetter{Dear Editor.}\n"
+        "\\Response{2-1}{The reference metadata was corrected.}\n"
+        "\\ReviewReference{2-1}{hidden-citation-key-42}\n",
+        encoding="utf-8",
+    )
 
     result = project.build(engine="tectonic", keep_temp=True)
 
@@ -970,26 +982,20 @@ def test_chinese_bibliography_doi_and_visible_revision_semantics(
     assert {artifact.label for artifact in result.artifacts} == {
         "Clean manuscript",
         "Marked manuscript",
+        "Response letter",
     }
     clean_text = " ".join(_pdf_text(output / "manuscript_clean.pdf").split())
     marked_text = " ".join(_pdf_text(output / "manuscript_marked.pdf").split())
     assert "Bran A M" in clean_text
     assert "DOI: 10.1038/s42256-024-00832-8" in clean_text
     assert "DOI: https://doi.org/" not in clean_text
-    assert "DOI: 10.5555/Deleted.MixedCase" in marked_text
+    assert "Bran A M" in marked_text
+    assert "DOI: 10.1038/s42256-024-00832-8" in marked_text
+    assert "M. Bran A" not in marked_text
+    assert "DOI: 10.5555/Deleted.MixedCase" not in marked_text
     assert "hidden-citation-key-42" not in marked_text
     assert "DIFadd" not in marked_text
     assert "DIFdel" not in marked_text
-    _assert_rendered_color(
-        output / "manuscript_marked.pdf",
-        tmp_path / "bibliography_blue",
-        (0, 92, 153),
-    )
-    _assert_rendered_color(
-        output / "manuscript_marked.pdf",
-        tmp_path / "bibliography_gray",
-        (160, 160, 160),
-    )
 
     retained_runs = list((manuscript / "tmp").glob("run_*"))
     assert len(retained_runs) == 1
@@ -1009,14 +1015,22 @@ def test_chinese_bibliography_doi_and_visible_revision_semantics(
     assert r"DOI: \nolinkurl{10.1038/s42256-024-00832-8}" in " ".join(
         current_bbl.split()
     )
-    assert r"\DIFadd{" in marked_source
-    assert r"\DIFdel{" in marked_source
     bibliography_source = marked_source[marked_source.index(r"\bibitem") :]
-    assert r"\DIFaddReview{" not in bibliography_source
-    assert r"\nolinkurl{10.5555/Deleted.MixedCase}" in bibliography_source
-    assert (run / "marked_build" / "manuscript_marked.reviewloc").read_text(
-        encoding="utf-8"
-    ).splitlines() == [REVIEW_REGISTRY_HEADER]
+    assert r"\DIFadd{" not in bibliography_source
+    assert r"\DIFdel{" not in bibliography_source
+    assert r"\SCIDeletedBibItem" not in bibliography_source
+    assert r"\nolinkurl{10.1038/s42256-024-00832-8}" in bibliography_source
+    assert r"\nolinkurl{10.5555/Deleted.MixedCase}" not in bibliography_source
+    registry_lines = (
+        (run / "marked_build" / "manuscript_marked.reviewloc")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    assert registry_lines[0] == REVIEW_REGISTRY_HEADER
+    assert registry_lines[1].startswith("2-1|")
+    response_text = _pdf_text(output / "response_letter.pdf")
+    assert "The reference metadata was corrected." in response_text
+    assert "修改位置：第 11–12 行。" in response_text
     layout = (run / "revision_layout_qa.txt").read_text(encoding="utf-8")
     assert "Marked-specific overfull boxes: 0" in layout
     assert "Result: PASS" in layout
@@ -1311,7 +1325,9 @@ def test_response_body_reaches_response_letter_during_build(tmp_path: Path) -> N
     )
     response_source = revision / "response" / "responses.tex"
     response_source.write_text(
-        "\\Response{1-1}{ResponseSentinelOne}\n\\Response{1-2}{ResponseSentinelTwo}\n",
+        "\\ResponseLetter{尊敬的编辑：}\n"
+        "\\Response{1-1}{ResponseSentinelOne}\n"
+        "\\Response{1-2}{ResponseSentinelTwo}\n",
         encoding="utf-8",
     )
 
@@ -1332,6 +1348,7 @@ def test_response_body_reaches_response_letter_during_build(tmp_path: Path) -> N
     )
     assert assembled.count(r"\reviewlocation{") == 1
     response_source.write_text(
+        "\\ResponseLetter{尊敬的编辑：}\n"
         "\\Response{1-1}{ResponseSentinelUpdated}\n"
         "\\Response{1-2}{ResponseSentinelTwo}\n",
         encoding="utf-8",
@@ -1400,6 +1417,7 @@ def test_frontmatter_reviewer_addition_is_red_and_location_is_generated(
         "\\review{1-1}{审稿关联新增，行内公式 $\\mathrm{ASM2d}_{new}$。}",
     )
     (revision / "response" / "responses.tex").write_text(
+        "\\ResponseLetter{尊敬的编辑：}\n"
         "\\Response{1-1}{FrontmatterResponseSentinel}\n",
         encoding="utf-8",
     )

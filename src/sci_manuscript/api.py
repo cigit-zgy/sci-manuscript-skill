@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.metadata
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .authors import load_author_library, resolve_author_library_path, resolve_authors
@@ -30,6 +30,7 @@ from .metadata import (
 )
 from .response import build_response, ensure_response_source, init_response
 from .review import (
+    ReviewAuditIssue,
     ReviewAuditResult,
     audit_reviews,
     parse_reviews,
@@ -63,6 +64,23 @@ OUTPUT_PDF_NAMES = (
     "manuscript_marked.pdf",
     "response_letter.pdf",
 )
+
+
+def _with_bibliography_notices(
+    audit: ReviewAuditResult,
+    marked: object,
+) -> ReviewAuditResult:
+    notices = getattr(marked, "bibliography_notices", ())
+    issues = tuple(
+        ReviewAuditIssue(
+            notice.code,
+            notice.review_id,
+            notice.message,
+            (notice.path,),
+        )
+        for notice in notices
+    )
+    return replace(audit, issues=(*audit.issues, *issues))
 
 
 @dataclass(frozen=True)
@@ -422,6 +440,7 @@ class ManuscriptProject:
                     )
                     ensure_response_source(config, selected)
                     audit = audit_reviews(config, selected, record_index=True)
+                    audit = _with_bibliography_notices(audit, marked)
                     malformed = any(
                         issue.code in {"COMMENTS_INVALID", "RESPONSES_INVALID"}
                         for issue in audit.issues

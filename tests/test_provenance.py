@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import pytest
-
 from sci_manuscript.diff import (
     CHARACTER_REFINEMENT_THRESHOLD,
     MAX_CHARACTER_REFINEMENT_CHARS,
     _classify_reviewer_additions,
     _safe_character_refinement,
 )
-from sci_manuscript.provenance import extract_provenance, split_by_review_provenance
-from sci_manuscript.workspace import WorkflowError
+from sci_manuscript.provenance import (
+    ReviewSpan,
+    extract_provenance,
+    split_by_review_provenance,
+)
 
 
 def test_review_wrapper_is_removed_but_interval_is_retained() -> None:
@@ -26,9 +27,20 @@ def test_review_wrapper_is_removed_but_interval_is_retained() -> None:
     )
 
 
-def test_nested_review_scope_is_rejected() -> None:
-    with pytest.raises(WorkflowError, match="Nested"):
-        extract_provenance(r"\review{1-1}{outer \review{2-1}{inner}}")
+def test_nested_review_scope_inherits_and_canonicalizes_effective_ids() -> None:
+    source = extract_provenance(r"\review{1-1}{A\review{2-1,1-1}{B}C}")
+
+    assert source.text == "ABC"
+    assert source.review_spans == (
+        ReviewSpan(("1-1",), 0, 1),
+        ReviewSpan(("1-1", "2-1"), 1, 2),
+        ReviewSpan(("1-1",), 2, 3),
+    )
+    assert split_by_review_provenance(source, 0, 3) == (
+        (0, 1, ("1-1",)),
+        (1, 2, ("1-1", "2-1")),
+        (2, 3, ("1-1",)),
+    )
 
 
 def test_character_refinement_colors_only_real_reviewer_change() -> None:
@@ -42,7 +54,7 @@ def test_character_refinement_colors_only_real_reviewer_change() -> None:
         r"\end{document}"
     )
     classified = _classify_reviewer_additions(latexdiff, provenance)
-    assert r"模型能够\DIFaddReview{稳定}执行。" in classified
+    assert r"模型能够\SCIReviewSpan{1-1}{\DIFaddReview{稳定}}执行。" in classified
     assert r"\DIFadd{作者新增。}" in classified
     assert r"\DIFaddReview{模型能够" not in classified
 
@@ -58,8 +70,8 @@ def test_character_refinement_preserves_old_and_new_text_spans() -> None:
     )
     classified = _classify_reviewer_additions(latexdiff, provenance)
     assert (
-        r"Re\DIFdel{v}\DIFaddReview{f}i\DIFdel{ew}"
-        r"\DIFaddReview{n}ed wording."
+        r"Re\DIFdel{v}\SCIReviewSpan{1-1}{\DIFaddReview{f}}i\DIFdel{ew}"
+        r"\SCIReviewSpan{1-1}{\DIFaddReview{n}}ed wording."
     ) in classified
 
 
@@ -77,7 +89,7 @@ def test_frontmatter_addition_is_classified_before_begin_document() -> None:
         r"\begin{document}正文\end{document}"
     )
     classified = _classify_reviewer_additions(latexdiff, provenance)
-    assert r"\DIFaddReview{新}" in classified
+    assert r"\SCIReviewSpan{1-1}{\DIFaddReview{新}}" in classified
     assert r"\DIFaddReview{第一句不变" not in classified
     assert r"\providecommand{\DIFadd}[1]{#1}" in classified
 
@@ -94,7 +106,7 @@ def test_unrelated_replacement_is_not_fragmented_by_character_matches() -> None:
     )
     classified = _classify_reviewer_additions(latexdiff, provenance)
     assert r"\DIFdel{Replace this placeholder and its }" in classified
-    assert r"\DIFaddReview{Reviewed wording.}" in classified
+    assert r"\SCIReviewSpan{1-1}{\DIFaddReview{Reviewed wording.}}" in classified
 
 
 def test_character_refinement_policy_values_are_release_contract() -> None:

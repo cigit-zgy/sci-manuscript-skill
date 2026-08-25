@@ -7,7 +7,7 @@ import re
 import shutil
 from pathlib import Path
 
-from .compile import compile_tex, stage_runtime_resources
+from .compile import compile_tex
 from .errors import WorkflowError
 from .review_ids import is_review_id
 from .templates import resources_root
@@ -121,15 +121,11 @@ def build_review_locations(
     round_number: int,
     run_dir: Path,
     engine_override: str | None,
+    marked_source: Path,
 ) -> dict[str, str]:
-    """Compile transparent review wrappers solely for response locations."""
-    source_dir = run_dir / "location_source"
-    source = stage_runtime_resources(
-        config,
-        round_number,
-        source_dir,
-        include_manuscript=True,
-    )
+    """Compile invisible wrappers in the final marked-manuscript layout."""
+    del round_number
+    source_dir = marked_source.parent
     runtime = source_dir / "revision_location_runtime.tex"
     runtime.write_text(
         (resources_root() / "revision" / "location_runtime.tex").read_text(
@@ -137,10 +133,11 @@ def build_review_locations(
         ),
         encoding="utf-8",
     )
-    text = source.read_text(encoding="utf-8")
+    text = marked_source.read_text(encoding="utf-8")
     marker = r"\begin{document}"
     if marker not in text:
         raise WorkflowError("Manuscript source does not contain \\begin{document}.")
+    source = source_dir / "manuscript_locations.tex"
     source.write_text(
         text.replace(marker, f"\\input{{revision_location_runtime.tex}}\n{marker}", 1),
         encoding="utf-8",

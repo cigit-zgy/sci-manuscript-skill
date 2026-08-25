@@ -21,9 +21,11 @@ from sci_manuscript.compile import (
     validate_revision_layout,
 )
 from sci_manuscript.diff import (
-    _align_bibliographies,
     _align_changed_display_equations,
+    _bibliography_change_states,
+    _current_bibliography_with_reference_provenance,
     _flatten_tex,
+    _lift_review_spans_from_moving_arguments,
     _replace_bibliography,
     _separate_inline_math_from_diff_markup,
 )
@@ -35,6 +37,7 @@ from sci_manuscript.metadata import (
     render_author_metadata,
     render_publisher_metadata,
 )
+from sci_manuscript.provenance import extract_provenance
 from sci_manuscript.review import parse_response_entries, parse_reviews
 from sci_manuscript.review_ids import validate_review_id_list
 from sci_manuscript.submission import ensure_submission_workspace
@@ -105,7 +108,44 @@ def test_small_labelled_equation_change_is_still_atomic() -> None:
     assert r"\SCIAddedEquation{x+y+w=z}{eq:fine}" in old_aligned
 
 
-def test_visible_bibliography_alignment_uses_keys_and_current_order() -> None:
+def test_changed_align_environment_is_replaced_as_one_formula() -> None:
+    parent = (
+        r"\begin{align}"
+        "\n"
+        r"x &= y \\ y &= z\label{eq:aligned}"
+        "\n"
+        r"\end{align}"
+    )
+    current = (
+        r"\review{2-2}{\begin{align}"
+        "\n"
+        r"x &= y+w \\ y &= z\label{eq:aligned}"
+        "\n"
+        r"\end{align}}"
+    )
+
+    old_aligned, new_aligned = _align_changed_display_equations(parent, current)
+
+    assert old_aligned == extract_provenance(new_aligned).text
+    assert r"\SCIDeletedDisplay{align*}" in old_aligned
+    assert r"\SCIReviewerAddedDisplay{align}" in old_aligned
+    assert r"\SCIReviewSpan{2-2}{" in old_aligned
+    assert r"\DIFaddReview{+w}" not in old_aligned
+
+
+def test_review_location_span_is_lifted_outside_section_title() -> None:
+    source = (
+        r"\subsection{\SCIReviewSpan{1-1,2-2}"
+        r"{\DIFaddReview{Revised title}}}"
+    )
+
+    assert _lift_review_spans_from_moving_arguments(source) == (
+        r"\SCIReviewSpan{1-1,2-2}{"
+        r"\subsection{\DIFaddReview{Revised title}}}"
+    )
+
+
+def test_bibliography_comparison_uses_keys_and_ignores_numbering() -> None:
     parent = r"""\providecommand{\EndOfBibitem}{}
 \begin{thebibliography}{2}
 \bibitem{a} Alpha old metadata.\EndOfBibitem
@@ -119,23 +159,17 @@ def test_visible_bibliography_alignment_uses_keys_and_current_order() -> None:
 \end{thebibliography}
 """
 
-    old_aligned, new_aligned = _align_bibliographies(parent, current)
+    assert _bibliography_change_states(parent, current) == {
+        "a": "modified",
+        "b": "deleted",
+        "c": "added",
+    }
 
-    assert old_aligned.index(r"\bibitem[Gamma(2026)]{c}") < old_aligned.index(
-        r"\bibitem{a}"
-    )
-    assert new_aligned.index(r"\bibitem[Gamma(2026)]{c}") < new_aligned.index(
-        r"\bibitem{a}"
-    )
-    assert r"\bibitem{b}" not in old_aligned
-    assert r"\bibitem{b}" not in new_aligned
-    assert "Alpha old metadata" in old_aligned
-    assert "Alpha corrected metadata" in new_aligned
-    assert "Gamma new metadata" not in old_aligned
-    assert "Gamma new metadata" in new_aligned
-    assert r"\SCIDeletedBibItem{" in old_aligned
-    assert "Beta deleted metadata" in old_aligned
-    assert r"\SCIDeletedBibItem{}" in new_aligned
+    renumbered = current.replace(r"\bibitem{a}", r"\bibitem[19]{a}")
+    assert _bibliography_change_states(current, renumbered) == {
+        "a": "unchanged",
+        "c": "unchanged",
+    }
 
     manuscript = r"""\documentclass{article}
 \bibliographystyle{style}
@@ -143,7 +177,7 @@ def test_visible_bibliography_alignment_uses_keys_and_current_order() -> None:
 \bibliography{references}
 \end{document}
 """
-    materialized = _replace_bibliography(manuscript, new_aligned)
+    materialized = _replace_bibliography(manuscript, current)
     assert r"\bibliographystyle" not in materialized
     assert r"\bibliography{references}" not in materialized
     assert "Gamma new metadata" in materialized
@@ -159,7 +193,8 @@ def test_visible_bibliography_alignment_uses_keys_and_current_order() -> None:
         ("Author. Title. 2024, 1, 1--2.", "Author. Title. 2024, 1, 1--2. DOI: 10.1/x."),
     ),
 )
-def test_visible_bibliography_alignment_preserves_metadata_corrections(
+def test_current_bibliography_provenance_wraps_only_real_current_changes(
+    tmp_path: Path,
     old_content: str,
     new_content: str,
 ) -> None:
@@ -178,14 +213,93 @@ def test_visible_bibliography_alignment_preserves_metadata_corrections(
         r"\end{thebibliography}"
     )
 
-    old_aligned, new_aligned = _align_bibliographies(parent, current)
+    responses = tmp_path / "responses.tex"
+    responses.write_text(
+        r"\ResponseLetter{Dear Editor.}"
+        "\n"
+        r"\ReviewReference{1-1}{stable-key}"
+        "\n",
+        encoding="utf-8",
+    )
+    visible, notices = _current_bibliography_with_reference_provenance(
+        parent, current, responses
+    )
 
-    assert old_content in old_aligned
-    assert new_content in new_aligned
-    assert new_content not in old_aligned
-    assert old_aligned != new_aligned
-    assert old_aligned.count(r"\bibitem{stable-key}") == 1
-    assert new_aligned.count(r"\bibitem{stable-key}") == 1
+    if old_content not in new_content:
+        assert old_content not in visible
+    assert new_content in visible
+    assert r"\SCIReviewSpan{1-1}{" in visible
+    assert notices == ()
+
+
+def test_review_reference_deleted_and_unchanged_keys_have_no_fake_location(
+    tmp_path: Path,
+) -> None:
+    parent = (
+        r"\begin{thebibliography}{2}"
+        "\n"
+        r"\bibitem{stable} Stable content."
+        "\n"
+        r"\bibitem{deleted} Deleted content."
+        "\n"
+        r"\end{thebibliography}"
+    )
+    current = (
+        r"\begin{thebibliography}{1}"
+        "\n"
+        r"\bibitem[20]{stable} Stable content."
+        "\n"
+        r"\end{thebibliography}"
+    )
+    responses = tmp_path / "responses.tex"
+    responses.write_text(
+        r"\ResponseLetter{Dear Editor.}"
+        "\n"
+        r"\ReviewReference{1-1}{stable,deleted}"
+        "\n",
+        encoding="utf-8",
+    )
+
+    visible, notices = _current_bibliography_with_reference_provenance(
+        parent, current, responses
+    )
+
+    assert r"\SCIReviewSpan" not in visible
+    assert "Deleted content" not in visible
+    assert {notice.code for notice in notices} == {
+        "REVIEW_REFERENCE_UNCHANGED",
+        "REVIEW_REFERENCE_DELETED",
+    }
+
+
+def test_review_reference_unknown_key_reports_id_key_and_absolute_path(
+    tmp_path: Path,
+) -> None:
+    bibliography = (
+        r"\begin{thebibliography}{1}"
+        "\n"
+        r"\bibitem{known} Known."
+        "\n"
+        r"\end{thebibliography}"
+    )
+    responses = tmp_path / "responses.tex"
+    responses.write_text(
+        r"\ResponseLetter{Dear Editor.}"
+        "\n"
+        r"\ReviewReference{2-5}{unknownKey}"
+        "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkflowError) as error:
+        _current_bibliography_with_reference_provenance(
+            bibliography, bibliography, responses
+        )
+
+    message = str(error.value)
+    assert "2-5" in message
+    assert "unknownKey" in message
+    assert str(responses.resolve()) in message
 
 
 def _metadata(publisher: str = "elsevier", language: str = "en") -> ManuscriptMetadata:
@@ -817,8 +931,8 @@ def test_response_source_uses_authoritative_ids_and_preserves_user_edits(
     source = config.round_dir(1) / "response" / "responses.tex"
     text = source.read_text(encoding="utf-8")
     assert parse_response_entries(source) == {"E-1": "", "1-1": ""}
-    assert "Clarify scope" not in text
-    assert "Revise text" not in text
+    assert "% Clarify scope." in text
+    assert "% Revise text." in text
     assert "\\documentclass" not in text
     assert not (source.parent / "response_letter.tex").exists()
     source.write_text(text + "\n% user-owned edit\n", encoding="utf-8")
@@ -835,6 +949,7 @@ def test_response_parser_supports_nested_latex(
     source = tmp_path / "responses.tex"
     source.write_text(
         "% editable response content\n"
+        "\\ResponseLetter{Dear Editor.}\n"
         "\\Response{E-1}{First {nested \\textbf{response}}.}\n"
         "\\Response{1-1}{Second response.}\n",
         encoding="utf-8",
@@ -878,7 +993,10 @@ def test_response_build_uses_current_package_template_without_editing_content(
     )
     config = _revision(_workspace(tmp_path), reviews)
     responses = config.round_dir(1) / "response" / "responses.tex"
-    responses.write_text("\\Response{E-1}{Stable user response.}\n", encoding="utf-8")
+    responses.write_text(
+        "\\ResponseLetter{Dear Editor.}\n\\Response{E-1}{Stable user response.}\n",
+        encoding="utf-8",
+    )
     original = responses.read_bytes()
     package_root = tmp_path / "upgraded_package"
     template_dir = package_root / "correspondence_templates" / "response"
@@ -887,6 +1005,7 @@ def test_response_build_uses_current_package_template_without_editing_content(
         "\\documentclass{article}\n"
         "\\begin{document}\n"
         "UPGRADED TEMPLATE\n"
+        "%%RESPONSE_LETTER%%\n"
         "%%RESPONSE_BODY%%\n"
         "\\end{document}\n",
         encoding="utf-8",
@@ -930,7 +1049,10 @@ def test_response_build_accepts_empty_response_for_response_only_comment(
     )
     config = _revision(_workspace(tmp_path), reviews)
     responses = config.round_dir(1) / "response" / "responses.tex"
-    responses.write_text("", encoding="utf-8")
+    responses.write_text(
+        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{}\n",
+        encoding="utf-8",
+    )
 
     def fake_compile(
         source: Path,
@@ -950,10 +1072,15 @@ def test_response_build_accepts_empty_response_for_response_only_comment(
     result = response_module.build_response(config, 1, {}, tmp_path / "run")
 
     assert result.is_file()
-    assert responses.read_text(encoding="utf-8") == ""
+    assert responses.read_text(encoding="utf-8") == (
+        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{}\n"
+    )
 
 
-def test_response_build_rejects_missing_marked_location(tmp_path: Path) -> None:
+def test_response_build_omits_unavailable_marked_location(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     reviews = tmp_path / "revised.md"
     reviews.write_text(
         "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
@@ -963,7 +1090,8 @@ def test_response_build_rejects_missing_marked_location(tmp_path: Path) -> None:
     config = _revision(_workspace(tmp_path), reviews)
     response_source = config.round_dir(1) / "response" / "responses.tex"
     response_source.write_text(
-        "\\Response{1-1}{Completed response.}\n", encoding="utf-8"
+        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{Completed response.}\n",
+        encoding="utf-8",
     )
     section = config.round_dir(1) / "sections" / "01_introduction.tex"
     section.write_text(
@@ -972,8 +1100,20 @@ def test_response_build_rejects_missing_marked_location(tmp_path: Path) -> None:
     )
     import sci_manuscript.response as response_module
 
-    with pytest.raises(WorkflowError, match="locations are missing for: 1-1"):
-        response_module.build_response(config, 1, {}, tmp_path / "run")
+    def fake_compile(
+        source: Path,
+        build_dir: Path,
+        _config: ProjectConfig,
+        _engine: str | None = None,
+    ) -> CompileResult:
+        assert r"\reviewlocation{" not in source.read_text(encoding="utf-8")
+        build_dir.mkdir(parents=True)
+        pdf = build_dir / "response_letter.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        return CompileResult(pdf, "")
+
+    monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    assert response_module.build_response(config, 1, {}, tmp_path / "run").is_file()
 
 
 def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(

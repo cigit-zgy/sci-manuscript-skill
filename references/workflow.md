@@ -171,19 +171,20 @@ are retained in a sidecar map. Actual additions are classified against that map
 after structural comparison. Therefore unchanged reviewer-scoped text remains
 unmarked.
 
-`response/responses.tex` stores editable response prose. The Skill generates one
-empty `\Response{ID}{...}` entry for each actual detailed comment, including
-editor comments, and no entry for summaries. When revision creation receives a
-populated `--reviews` file, generation is immediate; otherwise the first build
-after comments are entered creates the file. Users fill only response bodies and
-never enter line-number fields. Review completeness is derived at build time.
+`response/responses.tex` stores one editable `\ResponseLetter{...}`, one empty
+`\Response{ID}{...}` for each actual detailed comment, and optional
+`\ReviewReference{ID}{key[,keys...]}` declarations. `\ResponseOpening` and
+`\ResponseClosing` are not part of the interface. Comment-only reading aids are
+derived from authoritative `reviewer_comments.md`; summaries receive no
+response ID. User letter, response, and reference bodies are never overwritten
+by build or submission. Users never enter line-number fields.
 
 ### Review audit
 
 Every revision `build` and `submission` performs a three-way audit of:
 
 ```text
-reviewer_comments.md <-> responses.tex <-> manuscript \review{...}
+reviewer_comments.md <-> responses.tex <-> manuscript/reference provenance
 ```
 
 The audit computes these states:
@@ -223,11 +224,11 @@ build, while no untrusted response or submission PDF is generated. If the
 comment template is still empty, manuscript build remains available and the
 audit remains `INCOMPLETE`.
 
-Response locations are calculated in an independent transparent line-label
-compilation from `\review{ID}{...}`. Duplicate, overlapping, and adjacent ranges
-are normalized; multiple remaining ranges are ordered and localized. A
-response-only comment has no location sentence. Registries, flattened TeX,
-extracted text, and compiler files remain temporary.
+Response locations are calculated in a layout-equivalent line-label compilation
+of the final marked source. Actual `\review{ID}{...}` additions and eligible
+`\ReviewReference{ID}{key[,keys...]}` current entries feed one normalized range
+set. Duplicate, overlapping, and adjacent ranges are merged; a response-only or
+reference-deletion-only comment has no location sentence.
 
 Every user-visible section input participates in the same staged manuscript
 comparison, including title, abstract, and keywords supplied through
@@ -235,14 +236,13 @@ comparison, including title, abstract, and keywords supplied through
 funding, is compared in the same flattened runtime stream. This staging does not
 rewrite the user-owned composition root or any section source.
 
-The generated bibliography participates in that visible stream as well. Parent
-and current sources are staged separately, each bibliography is materialized by
-the real publisher style into `.bbl`, and entries are aligned by citation key.
-The aligned comparison uses current order and current `\bibitem` labels, so
-renumbering alone does not mark every reference and the marked PDF remains a
-readable current manuscript. Added or corrected bibliography content is
-author-blue; deleted content is light-gray strikeout; bibliography changes do
-not create reviewer locations or reviewer-red markup.
+Parent and current bibliography sources are staged separately and materialized
+by the real publisher style into `.bbl` for key-based machine comparison.
+Bibliography changes are rendered using the current revision only: the marked
+PDF contains current entries, order, numbering, DOI output, and normal link
+styling, without visual old/new diff markup. Reviewer attribution is declared
+with `\ReviewReference` and reflected through response locations rather than
+bibliography color.
 
 ## Revision comparison contract
 

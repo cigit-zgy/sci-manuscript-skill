@@ -12,7 +12,12 @@ from sci_manuscript.cli import _print_lifecycle
 from sci_manuscript.errors import WorkflowError
 from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
 from sci_manuscript.metadata import ManuscriptMetadata, SubmissionSettings
-from sci_manuscript.review import audit_reviews, parse_response_entries, parse_reviews
+from sci_manuscript.review import (
+    audit_reviews,
+    parse_response_entries,
+    parse_response_source,
+    parse_reviews,
+)
 from sci_manuscript.workspace import ProjectConfig, initialize_project
 
 
@@ -113,20 +118,25 @@ def test_revision_initializes_only_actual_response_entries(tmp_path: Path) -> No
         "1-2": "",
     }
     text = response_source.read_text(encoding="utf-8")
-    assert "Optional editor summary" not in text
-    assert "line numbers are calculated automatically" in text
+    assert "% Optional editor summary." in text
+    assert r"\ResponseLetter{" in text
+    assert "Revision locations are calculated automatically" in text
     assert all(token not in text for token in ("Location:", "Lines "))
     assert any(artifact.path == response_source for artifact in result.artifacts)
 
 
-def test_blank_revision_defers_response_source_until_comments_exist(
+def test_blank_revision_still_initializes_letter_and_editor_example(
     tmp_path: Path,
 ) -> None:
     config = _project(tmp_path)
 
     ManuscriptProject(config.project).start_revision(confirmed=True)
 
-    assert not (config.response_dir(1) / "responses.tex").exists()
+    source = config.response_dir(1) / "responses.tex"
+    assert source.is_file()
+    text = source.read_text(encoding="utf-8")
+    assert r"\ResponseLetter{" in text
+    assert "% Editor" in text
 
 
 def test_audit_reports_missing_empty_and_orphan_without_blocking(
@@ -141,6 +151,7 @@ def test_audit_reports_missing_empty_and_orphan_without_blocking(
     )
     responses = config.response_dir(1) / "responses.tex"
     responses.write_text(
+        "\\ResponseLetter{Dear Editor.}\n"
         "\\Response{E-1}{Completed.}\n"
         "\\Response{E-2}{}\n"
         "\\Response{1-2}{Completed.}\n"
@@ -169,7 +180,10 @@ def test_cli_completeness_output_is_concise_and_hides_source_paths(
         confirmed=True,
     )
     responses = config.response_dir(1) / "responses.tex"
-    responses.write_text("\\Response{E-1}{}\n", encoding="utf-8")
+    responses.write_text(
+        "\\ResponseLetter{Dear Editor.}\n\\Response{E-1}{}\n",
+        encoding="utf-8",
+    )
     audit = audit_reviews(config, 1)
 
     _print_lifecycle(LifecycleResult("build", "revision_01", (), audit), config.project)
@@ -194,7 +208,10 @@ def test_cli_malformed_response_prints_its_absolute_path(
         confirmed=True,
     )
     responses = config.response_dir(1) / "responses.tex"
-    responses.write_text("\\Response{invalid}{Body.}\n", encoding="utf-8")
+    responses.write_text(
+        "\\ResponseLetter{Dear Editor.}\n\\Response{invalid}{Body.}\n",
+        encoding="utf-8",
+    )
     audit = audit_reviews(config, 1)
 
     _print_lifecycle(LifecycleResult("build", "revision_01", (), audit), config.project)
@@ -251,6 +268,10 @@ def test_response_templates_own_localized_automatic_location_labels() -> None:
     assert "修改位置：#1。" in zh  # noqa: RUF001
     assert "Location of revisions: #1." in en
     assert "Location:" not in en
+    assert "给编辑的回复" not in zh
+    assert "Response to the Editor" not in en
+    assert "%%RESPONSE_LETTER%%" in zh
+    assert "%%RESPONSE_LETTER%%" in en
 
 
 def test_response_parser_preserves_multiline_latex_body_semantics(
@@ -258,7 +279,8 @@ def test_response_parser_preserves_multiline_latex_body_semantics(
 ) -> None:
     source = tmp_path / "responses.tex"
     source.write_text(
-        r"""\Response{1-1}{
+        r"""\ResponseLetter{Dear Editor.}
+\Response{1-1}{
 第一段包含 English、引用~\cite{example}、行内公式 $x_1+y$ 与转义符号 \% 和 \&。
 
 第二段包含 \textbf{nested {braces}}。
@@ -275,3 +297,35 @@ def test_response_parser_preserves_multiline_latex_body_semantics(
     assert r"$x_1+y$" in responses["1-1"]
     assert "第二段" in responses["1-1"]
     assert r"\textbf{nested {braces}}" in responses["1-1"]
+
+
+def test_response_parser_supports_letter_and_multiple_reference_keys(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "responses.tex"
+    source.write_text(
+        "% reading aid\n"
+        "\\ResponseLetter{Dear Editor, \\ManuscriptTitle.}\n"
+        "\\Response{2-5}{Completed.}\n"
+        "\\ReviewReference{2-5}{refA, refB,refA}\n",
+        encoding="utf-8",
+    )
+
+    parsed = parse_response_source(source)
+
+    assert parsed.letter == r"Dear Editor, \ManuscriptTitle."
+    assert parsed.responses == {"2-5": "Completed."}
+    assert parsed.references[0].citation_keys == ("refA", "refB")
+
+
+@pytest.mark.parametrize(
+    "command", (r"\ResponseOpening{Text}", r"\ResponseClosing{Text}")
+)
+def test_removed_response_commands_are_rejected(tmp_path: Path, command: str) -> None:
+    source = tmp_path / "responses.tex"
+    source.write_text(
+        f"\\ResponseLetter{{Dear Editor.}}\n{command}\n", encoding="utf-8"
+    )
+
+    with pytest.raises(WorkflowError, match="Unexpected"):
+        parse_response_source(source)

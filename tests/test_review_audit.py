@@ -61,7 +61,9 @@ def test_revision_creates_user_facing_chinese_review_template(tmp_path: Path) ->
     assert all(not block.comments for block in blocks)
     assert result.artifacts[0].label == "Reviewer comments"
     assert result.artifacts[0].path == comments
-    assert not (comments.parent / "responses.tex").exists()
+    response_source = comments.parent / "responses.tex"
+    assert response_source.is_file()
+    assert "% 编辑" in response_source.read_text(encoding="utf-8")
 
 
 def test_revision_creates_matching_english_review_template(tmp_path: Path) -> None:
@@ -82,7 +84,9 @@ def test_revision_creates_matching_english_review_template(tmp_path: Path) -> No
     blocks = parse_reviews(comments)
     assert all(not block.summary for block in blocks)
     assert all(not block.comments for block in blocks)
-    assert not (comments.parent / "responses.tex").exists()
+    response_source = comments.parent / "responses.tex"
+    assert response_source.is_file()
+    assert "% Editor" in response_source.read_text(encoding="utf-8")
 
 
 def test_numbered_list_parser_assigns_internal_ids_and_preserves_general_text(
@@ -195,7 +199,9 @@ def test_review_audit_computes_statuses_and_reports_all_paths(tmp_path: Path) ->
     )
     responses = version / "response" / "responses.tex"
     responses.write_text(
-        """\\Response{1-1}{Completed response.}
+        """\\ResponseLetter{Dear Editor.}
+
+\\Response{1-1}{Completed response.}
 
 \\Response{1-2}{}
 
@@ -372,7 +378,10 @@ def test_commented_review_commands_do_not_create_provenance(tmp_path: Path) -> N
         encoding="utf-8",
     )
     responses = version / "response" / "responses.tex"
-    responses.write_text("\\Response{1-1}{Completed.}\n", encoding="utf-8")
+    responses.write_text(
+        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{Completed.}\n",
+        encoding="utf-8",
+    )
     section = version / "sections" / "01_introduction.tex"
     section.write_text(
         section.read_text(encoding="utf-8") + "\n% \\review{1-1}{Disabled revision.}\n",
@@ -399,7 +408,10 @@ def test_cli_incomplete_responses_do_not_print_source_paths(
         encoding="utf-8",
     )
     responses = version / "response" / "responses.tex"
-    responses.write_text("\\Response{1-1}{}\n", encoding="utf-8")
+    responses.write_text(
+        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{}\n",
+        encoding="utf-8",
+    )
     audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
     result = LifecycleResult("build", "revision_01", (), audit)
     _print_lifecycle(result, config.project)
@@ -425,7 +437,7 @@ def test_missing_empty_and_orphan_responses_have_distinct_issue_codes(
     )
     responses = version / "response" / "responses.tex"
     responses.write_text(
-        "\\Response{1-2}{}\n\\Response{2-1}{Orphan.}\n",
+        "\\ResponseLetter{Dear Editor.}\n\\Response{1-2}{}\n\\Response{2-1}{Orphan.}\n",
         encoding="utf-8",
     )
 

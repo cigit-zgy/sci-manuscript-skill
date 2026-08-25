@@ -72,8 +72,9 @@ publisher resource only to diagnose that exact publisher build.
   with numbered list items. Comment IDs are derived from section identity and
   non-empty list order; review states are computed from comments, responses,
   and manuscript provenance.
-- `\review{ID}{text}` is the only manual reviewer-provenance scope for new
-  work. It is metadata, not visual markup. The wrapper is removed before
+- `\review{ID}{text}` records manuscript provenance, while
+  `\ReviewReference{ID}{key[,keys...]}` records bibliography provenance in
+  `responses.tex`. Both are metadata, not visual markup. The prose wrapper is removed before
   structural comparison and stored as a sidecar character interval map. Only
   actual additions that fall inside those intervals become reviewer-red;
   unchanged text remains ordinary manuscript text. Deletions remain light gray;
@@ -83,16 +84,13 @@ publisher resource only to diagnose that exact publisher build.
   structural diff, conservative refinement, then semantic rendering.
 - Visible manuscript state includes user scientific TeX, user frontmatter,
   generated visible metadata, and the publisher-rendered bibliography. Parent
-  and current bibliographies are materialized independently from their own
-  citation sets and BibTeX state. Generated `\bibitem` entries are aligned by
-  citation key, while the marked PDF retains current ordering and numbering.
-- Bibliography metadata changes are ordinary author revisions: additions are
-  blue and deletions are light-gray strikeout, never reviewer-red. Citation
-  keys remain machine identity and must not appear in the PDF.
+  and current bibliographies are materialized independently for machine
+  comparison by citation key. The marked PDF renders the current bibliography
+  only, with normal journal styling and no old entries or revision colors.
 - Character refinement is permitted only for TeX-structure-free prose with
   `SequenceMatcher` similarity at least `0.70` and a maximum replacement size
   of `2000` characters. Otherwise the replacement remains atomic.
-- Display and inline mathematics use fine-grained structural comparison with
+- Display and inline mathematics use atomic structural comparison with
   `latexdiff --math-markup=WHOLE`. Any formula change replaces the complete
   formula as one revision unit. Text decorators never scan mathematical
   content; math changes use the same semantic colors as prose.
@@ -107,8 +105,10 @@ publisher resource only to diagnose that exact publisher build.
 - `output/` contains final user PDFs, `state/` contains persistent machine state,
   and lazy `tmp/` contains reproducible run diagnostics. Successful operations
   remove `tmp/` unless diagnostics are explicitly retained.
-- Editable `response/responses.tex` is generated from the actual detailed
-  comments, and `submission/cover_letter_body.tex` is created once. Complete
+- Editable `response/responses.tex` contains exactly the active user commands
+  `\ResponseLetter`, `\Response`, and optional `\ReviewReference` declarations,
+  plus comment-only reading aids derived from the actual detailed comments.
+  `submission/cover_letter_body.tex` is created once. Complete
   correspondence documents are assembled from installed templates only in
   `tmp/`.
 - Author-library priority is configured user library, then the bundled

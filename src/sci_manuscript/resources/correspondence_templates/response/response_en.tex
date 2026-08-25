@@ -19,9 +19,10 @@
 \color{ink}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.72\baselineskip}
+\setlength{\emergencystretch}{2em}
 \pagestyle{plain}
 
-\newcommand{\ResponseSection}[1]{\clearpage\section*{Response to #1}}
+\newcommand{\ResponseSection}[1]{\section*{Response to #1}}
 \newenvironment{generalcomment}[1][General comment]
   {\begin{tcolorbox}[
     enhanced,breakable,frame hidden,colback=quotegray,
@@ -46,35 +47,16 @@
   \addvspace{1.2\baselineskip}}
 \newcommand{\ReviewLocation}[1]{#1}
 \newcommand{\ReviewerComment}[1]{#1\par\medskip}
-\newcommand{\ManuscriptIDLine}{%
-  \if\relax\detokenize\expandafter{\ManuscriptID}\relax
-  \else Manuscript ID: \ManuscriptID\fi}
-
 \begin{document}
 
-{\color{navy}\rule{\textwidth}{1.5pt}}\par
-\vspace{0.15in}
-{\sffamily\bfseries\LARGE Response to the Editor}\par
-\vspace{0.08in}
-{\color{graytext}\ManuscriptTitle}\par
-{\small\color{graytext}\JournalName\quad\ManuscriptIDLine}
-\vspace{0.28in}
+%%RESPONSE_LETTER%%
 
-Dear Editor,
-
-Thank you for the opportunity to revise our manuscript, ``\ManuscriptTitle,''
-for consideration in \textit{\JournalName}. We appreciate the editor's and
-reviewers' careful assessment and constructive suggestions.
-
-The corresponding responses are listed below in editor and reviewer order.
-Where the manuscript was revised, the location is generated automatically from
-the continuous line numbers in the marked manuscript.
-
-Sincerely,\par
 \vspace{0.25in}
 \CorrespondenceAuthorName\par
 on behalf of all authors\par
 \href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
+
+\vspace{0.35in}
 
 %%RESPONSE_BODY%%
 

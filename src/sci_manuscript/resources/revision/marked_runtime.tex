@@ -65,12 +65,7 @@
 \providecommand{\DIFdelbeginFL}{}
 \providecommand{\DIFdelendFL}{}
 \providecommand{\review}[2]{#2}
-\providecommand{\SCIDeletedBibItem}[1]{%
-  \item[]\begingroup
-    \hypersetup{urlcolor=RevisionDeletedColor}%
-    \color{RevisionDeletedColor}#1%
-  \endgroup
-}
+\providecommand{\SCIReviewSpan}[2]{#2}
 \providecommand{\SCIDeletedEquation}[1]{%
   \par\noindent\[\DIFdelMath{#1}\]\par
 }
@@ -80,12 +75,18 @@
 \providecommand{\SCIReviewerAddedEquation}[2]{%
   \begin{equation}\DIFaddReviewMath{#1}\label{#2}\end{equation}%
 }
-
-% Keep an empty registry for standalone runtime probes.
-% Real reviewer locations are compiled independently and copied over this file.
-\newwrite\MarkedReviewLocationFile
-\AtBeginDocument{%
-  \immediate\openout\MarkedReviewLocationFile=\jobname.reviewloc
-  \immediate\write\MarkedReviewLocationFile{sci-manuscript-reviewloc-v2}%
+\providecommand{\SCIDeletedDisplay}[2]{%
+  \begingroup\RevisionDeletedFont\color{RevisionDeletedColor}%
+  \begin{#1}#2\end{#1}%
+  \endgroup
 }
-\AtEndDocument{\immediate\closeout\MarkedReviewLocationFile}
+\providecommand{\SCIAddedDisplay}[3]{%
+  \begingroup\RevisionAddedFont\color{RevisionAddedColor}%
+  \begin{#1}#2\label{#3}\end{#1}%
+  \endgroup
+}
+\providecommand{\SCIReviewerAddedDisplay}[3]{%
+  \begingroup\RevisionReviewFont\color{RevisionReviewColor}%
+  \begin{#1}#2\label{#3}\end{#1}%
+  \endgroup
+}

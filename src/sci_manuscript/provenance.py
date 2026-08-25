@@ -42,10 +42,20 @@ def extract_provenance(text: str) -> ProvenanceSource:
     """Remove provenance wrappers and retain reviewer spans as a sidecar map.
 
     ``\\review{ids}{body}`` contributes ``body`` verbatim to the clean source and
-    records the resulting character interval. Nested reviewer scopes are rejected.
+    records non-overlapping effective reviewer intervals. Nested scopes inherit
+    and extend their parent IDs in first-seen order.
     """
 
-    def parse(fragment: str, *, inside_review: bool = False) -> ProvenanceSource:
+    def union_ids(
+        inherited: tuple[str, ...], declared: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((*inherited, *declared)))
+
+    def parse(
+        fragment: str,
+        *,
+        inherited: tuple[str, ...] = (),
+    ) -> ProvenanceSource:
         pieces: list[str] = []
         spans: list[ReviewSpan] = []
         length = 0
@@ -67,33 +77,53 @@ def extract_provenance(text: str) -> ProvenanceSource:
             if not is_escaped(fragment, cursor) and command_at(
                 fragment, cursor, "review"
             ):
-                if inside_review:
-                    raise WorkflowError(
-                        "Nested \\review scopes are ambiguous; combine reviewer IDs "
-                        "in one wrapper instead."
-                    )
                 ids_raw, after_ids = _provenance_field(
                     fragment, cursor + len(r"\review")
                 )
                 body, end = _provenance_field(fragment, after_ids)
-                ids = _parse_review_ids(ids_raw)
-                parsed = parse(body, inside_review=True)
+                ids = union_ids(inherited, _parse_review_ids(ids_raw))
+                parsed = parse(body, inherited=ids)
                 start = length
                 append(parsed.text)
                 spans.extend(
                     ReviewSpan(span.review_ids, span.start + start, span.end + start)
                     for span in parsed.review_spans
                 )
-                spans.append(ReviewSpan(ids, start, length))
                 cursor = end
                 continue
 
-            append(fragment[cursor])
-            cursor += 1
+            plain_start = cursor
+            while cursor < len(fragment):
+                if fragment[cursor] == "%" and not is_escaped(fragment, cursor):
+                    break
+                if not is_escaped(fragment, cursor) and command_at(
+                    fragment, cursor, "review"
+                ):
+                    break
+                cursor += 1
+            append(fragment[plain_start:cursor])
+            if inherited and plain_start != cursor:
+                spans.append(
+                    ReviewSpan(inherited, length - (cursor - plain_start), length)
+                )
+
+        merged: list[ReviewSpan] = []
+        for span in sorted(spans, key=lambda item: (item.start, item.end)):
+            if span.start == span.end:
+                continue
+            if (
+                merged
+                and merged[-1].end == span.start
+                and merged[-1].review_ids == span.review_ids
+            ):
+                previous = merged[-1]
+                merged[-1] = ReviewSpan(previous.review_ids, previous.start, span.end)
+            else:
+                merged.append(span)
 
         return ProvenanceSource(
             "".join(pieces),
-            tuple(sorted(spans, key=lambda item: (item.start, item.end))),
+            tuple(merged),
         )
 
     result = parse(text)
