@@ -11,7 +11,7 @@ confirms the exact target environment and installation method.
 | --- | --- |
 | Python | Python 3.11 or newer |
 | YAML | PyYAML 6.x |
-| LaTeX | Tectonic |
+| LaTeX | Tectonic (primary) or the traditional `latexmk` driver |
 | Revisions | `latexdiff` |
 | PDF QA | Poppler `pdftotext` and `pdftoppm` |
 | Bibliography | Tectonic-integrated BibTeX, external BibTeX, or Biber |
@@ -27,7 +27,7 @@ Identify the intended Python before running workflow imports:
 ```bash
 python3 --version
 command -v python3
-command -v tectonic
+command -v tectonic latexmk xelatex pdflatex
 command -v latexdiff pdftotext pdftoppm bibtex biber
 ```
 
@@ -82,7 +82,7 @@ For an existing Conda environment selected by the user:
 conda install -n <environment> "python>=3.11" "pyyaml>=6,<7"
 ```
 
-For the compact supported macOS toolchain:
+For the primary release-tested macOS toolchain:
 
 ```bash
 brew install tectonic latexdiff poppler
@@ -95,8 +95,16 @@ rerun `doctor`.
 
 ## Compiler policy
 
-`auto` resolves to Tectonic. `--engine tectonic` pins the same supported engine
-explicitly. There is no traditional-LaTeX fallback in the public contract.
+`doctor --engine tectonic` checks Tectonic and its integrated bibliography
+workflow. `doctor --engine latex` checks `latexmk`, the language-appropriate
+driver, and BibTeX/Biber. `doctor --engine auto` applies exactly the runtime
+resolution order: use Tectonic when present, otherwise use the traditional
+driver. It never silently changes an explicitly selected engine.
+
+Tectonic is the primary release-gated engine. The traditional driver is a
+supported recovery/deployment path when a suitable TeX distribution is already
+installed, but it does not have the same cross-platform release evidence.
+Chinese uses XeLaTeX. English uses pdfLaTeX unless its source requires XeLaTeX.
 
 The scientific preamble uses packages for mathematics, chemistry, units,
 tables, figures, algorithms, publisher references, engine detection, and

@@ -17,6 +17,7 @@ from .workspace import ProjectConfig
 
 REVIEWER_HEADING = re.compile(r"^#\s*(?:Reviewer|审稿人)\s*#?\s*([1-9]\d*)\s*$", re.I)
 EDITOR_HEADING = re.compile(r"^#\s*(?:Editor|编辑)\s*$", re.I)
+ASSOCIATE_EDITOR_HEADING = re.compile(r"^#\s*(?:Associate Editor|副编辑)\s*$", re.I)
 NUMBERED_COMMENT = re.compile(r"^\s*([1-9]\d*)[.)]\s*(.*)$")
 USER_SECTION_HEADING = re.compile(
     r"^##\s*(Main comment|Specific comments|主意见|具体意见)\s*$",
@@ -166,11 +167,14 @@ def parse_reviews(path: Path) -> tuple[ReviewBlock, ...]:
     for raw in lines:
         stripped = raw.strip()
         editor = EDITOR_HEADING.fullmatch(stripped)
+        associate_editor = ASSOCIATE_EDITOR_HEADING.fullmatch(stripped)
         reviewer = REVIEWER_HEADING.fullmatch(stripped)
-        if editor or reviewer:
+        if editor or associate_editor or reviewer:
             finish_block()
             if editor:
                 block_title, prefix = "Editor", "E"
+            elif associate_editor:
+                block_title, prefix = "Associate Editor", "AE"
             else:
                 assert reviewer is not None
                 prefix = reviewer.group(1)
@@ -283,7 +287,10 @@ def _review_ids_with_paths(version: Path) -> dict[str, set[Path]]:
     for path in paths:
         if not path.is_file():
             continue
-        provenance = extract_provenance(path.read_text(encoding="utf-8"))
+        try:
+            provenance = extract_provenance(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, WorkflowError) as exc:
+            raise WorkflowError(f"Invalid active \\review command: {path}") from exc
         for span in provenance.review_spans:
             for review_id in span.review_ids:
                 result.setdefault(review_id, set()).add(path.resolve())
@@ -457,7 +464,7 @@ def audit_reviews(
         previous_by_fingerprint.setdefault(fingerprint, set()).add(review_id)
     for review_id, fingerprint in current.items():
         current_by_fingerprint.setdefault(fingerprint, set()).add(review_id)
-    drift = False
+    integrity_issue = False
     for review_id, fingerprint in current.items():
         previous_ids = previous_by_fingerprint.get(fingerprint, set())
         current_ids = current_by_fingerprint[fingerprint]
@@ -465,7 +472,7 @@ def audit_reviews(
             continue
         previous_id = next(iter(previous_ids))
         if previous_id != review_id:
-            drift = True
+            integrity_issue = True
             issues.append(
                 ReviewAuditIssue(
                     "REVIEW_ID_DRIFT",
@@ -474,7 +481,35 @@ def audit_reviews(
                     (comment_path, config.review_index_path(round_number).resolve()),
                 )
             )
-    if record_index and comments and not drift:
+    for review_id in sorted(set(previous) & set(current)):
+        if previous[review_id] == current[review_id]:
+            continue
+        moved_old = previous[review_id] in current_by_fingerprint
+        moved_new = current[review_id] in previous_by_fingerprint
+        if moved_old or moved_new:
+            continue
+        integrity_issue = True
+        issues.append(
+            ReviewAuditIssue(
+                "REVIEW_COMMENT_CHANGED",
+                review_id,
+                "The indexed comment text changed for this review ID.",
+                (comment_path, config.review_index_path(round_number).resolve()),
+            )
+        )
+    for review_id in sorted(set(previous) - set(current)):
+        if previous[review_id] in current_by_fingerprint:
+            continue
+        integrity_issue = True
+        issues.append(
+            ReviewAuditIssue(
+                "REVIEW_COMMENT_REMOVED",
+                review_id,
+                "An indexed reviewer comment was removed.",
+                (comment_path, config.review_index_path(round_number).resolve()),
+            )
+        )
+    if record_index and comments and not integrity_issue:
         _write_review_index(config, round_number, comments)
 
     return ReviewAuditResult(

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 
 from .errors import WorkflowError
-from .review_ids import is_review_id
+from .review_ids import validate_review_id_list
 from .tex import command_at, extract_braced, is_escaped
 
 
@@ -35,15 +35,7 @@ def _provenance_field(text: str, start: int) -> tuple[str, int]:
 
 
 def _parse_review_ids(raw: str) -> tuple[str, ...]:
-    values = tuple(item.strip() for item in raw.split(",") if item.strip())
-    if not values:
-        raise WorkflowError("\\review requires at least one reviewer ID.")
-    invalid = [value for value in values if not is_review_id(value)]
-    if invalid:
-        raise WorkflowError(
-            "Invalid reviewer ID(s): " + ", ".join(invalid) + "; expected E-1 or 1-1."
-        )
-    return values
+    return validate_review_id_list(raw)
 
 
 def extract_provenance(text: str) -> ProvenanceSource:
@@ -72,7 +64,9 @@ def extract_provenance(text: str) -> ProvenanceSource:
                 cursor = end
                 continue
 
-            if command_at(fragment, cursor, "review"):
+            if not is_escaped(fragment, cursor) and command_at(
+                fragment, cursor, "review"
+            ):
                 if inside_review:
                     raise WorkflowError(
                         "Nested \\review scopes are ambiguous; combine reviewer IDs "

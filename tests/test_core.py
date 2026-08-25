@@ -30,6 +30,7 @@ from sci_manuscript.metadata import (
     MetadataError,
     SubmissionSettings,
     load_meta,
+    render_author_metadata,
     render_publisher_metadata,
 )
 from sci_manuscript.review import parse_response_entries, parse_reviews
@@ -137,15 +138,12 @@ def test_public_api_is_stable() -> None:
     assert "workspace" not in __all__
 
 
-def test_latex_engine_is_not_part_of_the_v2_public_contract(tmp_path: Path) -> None:
+def test_latex_engine_is_part_of_the_v2_public_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = ProjectConfig(tmp_path / "manuscript", _metadata())
-    with pytest.raises(WorkflowError, match="Unsupported engine"):
-        resolve_engine(config, "latex")
-
-    from sci_manuscript import cli
-
-    with pytest.raises(SystemExit):
-        cli._parser().parse_args(["doctor", "--engine", "latex"])
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert resolve_engine(config, "latex") == "latex"
 
 
 def test_flatten_tex_ignores_comments_and_rejects_root_escape(tmp_path: Path) -> None:
@@ -167,6 +165,28 @@ def test_flatten_tex_ignores_comments_and_rejects_root_escape(tmp_path: Path) ->
     source.write_text("\\input{../outside}\n", encoding="utf-8")
     with pytest.raises(WorkflowError, match="escapes permitted project roots"):
         _flatten_tex(source, (root,))
+
+
+def test_flatten_tex_ignores_malformed_commented_input_and_reports_active_path(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "revision_01"
+    sibling = tmp_path / "initial_submission"
+    current.mkdir()
+    sibling.mkdir()
+    (sibling / "secret.tex").write_text("parent round", encoding="utf-8")
+    source = current / "manuscript.tex"
+    source.write_text("% \\input{unfinished\nVisible.\n", encoding="utf-8")
+    assert "Visible." in _flatten_tex(source, (current,))
+
+    source.write_text("\\input{unfinished\n", encoding="utf-8")
+    with pytest.raises(WorkflowError, match="Malformed active TeX input") as error:
+        _flatten_tex(source, (current,))
+    assert str(source.resolve()) in str(error.value)
+
+    source.write_text("\\input{../initial_submission/secret}\n", encoding="utf-8")
+    with pytest.raises(WorkflowError, match="escapes permitted project roots"):
+        _flatten_tex(source, (current,))
 
 
 def test_runtime_staging_moves_all_visible_section_inputs_into_document() -> None:
@@ -236,12 +256,12 @@ def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
     sections = initial / "sections"
     assert {path.name for path in sections.iterdir()} == {
         "00_frontmatter.tex",
-        "01_introduction.tex",
+        "01_manuscript.tex",
     }
     manuscript = (initial / "manuscript.tex").read_text(encoding="utf-8")
     frontmatter_input = r"\input{sections/00_frontmatter}"
     assert manuscript.index(frontmatter_input) < manuscript.index(r"\begin{document}")
-    assert r"\input{sections/01_introduction}" in manuscript
+    assert r"\input{sections/01_manuscript}" in manuscript
     assert r"\input{preamble/zh}" in manuscript
     assert r"\usepackage{indentfirst}" not in manuscript
     assert r"\makeatletter" not in manuscript
@@ -305,6 +325,15 @@ def test_chinese_publisher_uses_full_width_commas_between_authors(
         r"\enauthor{First Author$^{1,*}$, Other Author$^{1}$, "
         r"Corresponding Author$^{1,*}$}"
     ) in rendered
+    shared = render_author_metadata(metadata, selection)
+    assert (
+        r"\newcommand{\SelectedAuthorNamesZh}{第一作者，其他作者，通讯作者}"  # noqa: RUF001
+        in shared
+    )
+    assert (
+        r"\newcommand{\CorrespondingAuthorNameZh}{第一作者，通讯作者}"  # noqa: RUF001
+        in shared
+    )
 
 
 def test_revision_provenance_definition_lives_only_in_shared_preamble() -> None:
@@ -361,7 +390,7 @@ def test_init_rejects_unsupported_publisher_language_before_workspace_creation(
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "unsupported matrix"
-    with pytest.raises(MetadataError, match="requires manuscript.language"):
+    with pytest.raises(MetadataError, match="accepted language"):
         initialize_manuscript(
             project,
             title="Unsupported Test",
@@ -510,7 +539,7 @@ def test_reindex_preserves_editable_submission_sources(tmp_path: Path) -> None:
     graphical = submission / "graphical_abstract"
     graphical.mkdir(parents=True, exist_ok=True)
     editable = {
-        "cover_letter.tex": b"user cover letter\n",
+        "cover_letter_body.tex": b"user cover letter\n",
         "highlights.tex": b"user highlights\n",
         "checklist.md": b"user checklist note\n",
         "supporting_note.txt": b"user submission note\n",
@@ -526,7 +555,6 @@ def test_reindex_preserves_editable_submission_sources(tmp_path: Path) -> None:
         "response_letter.pdf",
         "cover_letter.pdf",
         "highlights.pdf",
-        "graphical_abstract/graphical_abstract.pdf",
     ):
         path = submission / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -780,11 +808,11 @@ def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
             ),
         ),
     )
-    source = ensure_submission_workspace(config, 0) / "cover_letter.tex"
+    source = ensure_submission_workspace(config, 0) / "cover_letter_body.tex"
     original = source.read_text(encoding="utf-8")
     assert "\\guidance{" in original
     assert "\\documentclass" not in original
-    assert not (source.parent / "cover_letter_body.tex").exists()
+    assert not (source.parent / "cover_letter.tex").exists()
     source.write_text(original + "\n% user-owned cover edit\n", encoding="utf-8")
     ensure_submission_workspace(config, 0)
     assert source.read_text(encoding="utf-8").endswith("% user-owned cover edit\n")

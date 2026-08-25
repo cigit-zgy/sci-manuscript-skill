@@ -48,8 +48,9 @@ def test_revision_creates_user_facing_chinese_review_template(tmp_path: Path) ->
     assert "# 编辑" in text
     assert "# 审稿人 #1" in text
     assert "# 审稿人 #2" in text
-    assert text.count("## 主意见") == 3
-    assert text.count("## 具体意见") == 3
+    assert "# 副编辑" in text
+    assert text.count("## 主意见") == 4
+    assert text.count("## 具体意见") == 4
     assert "1." in text
     instructions = text.split("<!--", 1)[1].split("-->", 1)[0]
     assert "\n\n" not in instructions
@@ -71,8 +72,9 @@ def test_revision_creates_matching_english_review_template(tmp_path: Path) -> No
     assert "# Editor" in text
     assert "# Reviewer #1" in text
     assert "# Reviewer #2" in text
-    assert text.count("## Main comment") == 3
-    assert text.count("## Specific comments") == 3
+    assert "# Associate Editor" in text
+    assert text.count("## Main comment") == 4
+    assert text.count("## Specific comments") == 4
     instructions = text.split("<!--", 1)[1].split("-->", 1)[0]
     assert "\n\n" not in instructions
     for hidden_term in ("comment ID", "E-1", "1-1", "audit", "response linkage"):

@@ -18,7 +18,7 @@ from .metadata import generate_metadata
 from .templates import publisher_resource, resources_root
 from .workspace import ProjectConfig
 
-SUPPORTED_ENGINES = ("auto", "tectonic")
+SUPPORTED_ENGINES = ("auto", "tectonic", "latex")
 
 
 @dataclass(frozen=True)
@@ -180,11 +180,14 @@ def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
     """Compile and extract a minimal Chinese document with the selected engine."""
     selected = engine
     if selected == "auto":
-        selected = "tectonic"
+        selected = "tectonic" if shutil.which("tectonic") else "latex"
     if selected == "tectonic":
         executable = shutil.which("tectonic")
         if executable is None:
             return CjkProbeResult(False, "Tectonic is not available.")
+    elif selected == "latex":
+        if shutil.which("latexmk") is None or shutil.which("xelatex") is None:
+            return CjkProbeResult(False, "latexmk and XeLaTeX are required.")
     else:
         return CjkProbeResult(False, f"Unsupported engine: {selected}")
     pdftotext = shutil.which("pdftotext")
@@ -210,12 +213,20 @@ def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
             "\\end{document}\n"
         )
         source.write_text(source_text, encoding="utf-8")
+        command: list[str]
         if selected == "tectonic":
             command = [
-                executable,
+                executable or "tectonic",
                 "-X",
                 "compile",
                 f"--outdir={output}",
+                str(source),
+            ]
+        else:
+            command = [
+                shutil.which("latexmk") or "latexmk",
+                "-xelatex",
+                f"-outdir={output}",
                 str(source),
             ]
         compiled = subprocess.run(
@@ -266,14 +277,48 @@ def ensure_cjk_environment(config: ProjectConfig, engine: str | None = None) -> 
 
 def resolve_engine(config: ProjectConfig, override: str | None = None) -> str:
     """Resolve a configured compiler without changing the environment."""
-    requested = override or config.engine
+    requested = select_engine(override or config.engine)
+    if requested == "tectonic":
+        return requested
+    if requested == "latex":
+        _latex_driver(config)
+        if shutil.which("bibtex") is None and shutil.which("biber") is None:
+            raise WorkflowError("BibTeX or Biber is required for latex mode.")
+        return requested
+    raise WorkflowError(f"Unsupported engine: {requested}")
+
+
+def select_engine(requested: str) -> str:
+    """Apply the canonical explicit/automatic engine selection policy."""
     if requested == "auto":
-        requested = "tectonic"
+        if shutil.which("tectonic") is not None:
+            requested = "tectonic"
+        elif shutil.which("latexmk") is not None:
+            requested = "latex"
+        else:
+            raise WorkflowError("No supported LaTeX engine is available.")
     if requested == "tectonic":
         if shutil.which("tectonic") is None:
             raise WorkflowError("Tectonic is not available.")
         return requested
+    if requested == "latex":
+        if shutil.which("latexmk") is None:
+            raise WorkflowError("latexmk is not available.")
+        return requested
     raise WorkflowError(f"Unsupported engine: {requested}")
+
+
+def _latex_driver(config: ProjectConfig) -> tuple[str, str]:
+    """Return the latexmk flag and executable selected for one manuscript."""
+    if config.language == "zh" or config.metadata.publisher == "chinese":
+        if shutil.which("xelatex") is None:
+            raise WorkflowError("XeLaTeX is required for Chinese latex mode.")
+        return "-xelatex", "xelatex"
+    if shutil.which("pdflatex") is not None:
+        return "-pdf", "pdflatex"
+    if shutil.which("xelatex") is not None:
+        return "-xelatex", "xelatex"
+    raise WorkflowError("pdfLaTeX or XeLaTeX is required for latex mode.")
 
 
 def run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -294,6 +339,19 @@ def run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[st
     return result
 
 
+def publish_file_atomically(source: Path, target: Path) -> Path:
+    """Copy one generated file through a sibling temporary and atomic replace."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.new")
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return target
+
+
 def compile_tex(
     source: Path,
     build_dir: Path,
@@ -306,16 +364,27 @@ def compile_tex(
     if not source.is_file():
         raise WorkflowError(f"TeX source is missing: {source}")
     build_dir.mkdir(parents=True, exist_ok=True)
-    resolve_engine(config, engine_override)
-    command = [
-        shutil.which("tectonic") or "tectonic",
-        "-X",
-        "compile",
-        f"--outdir={build_dir}",
-    ]
-    if keep_intermediates:
-        command.append("--keep-intermediates")
-    command.append(str(source))
+    selected = resolve_engine(config, engine_override)
+    if selected == "tectonic":
+        command = [
+            shutil.which("tectonic") or "tectonic",
+            "-X",
+            "compile",
+            f"--outdir={build_dir}",
+        ]
+        if keep_intermediates:
+            command.append("--keep-intermediates")
+        command.append(str(source))
+    else:
+        driver_flag, _driver = _latex_driver(config)
+        command = [
+            shutil.which("latexmk") or "latexmk",
+            driver_flag,
+            f"-outdir={build_dir}",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            str(source),
+        ]
     result = run_command(command, cwd=source.parent)
     diagnostics = "\n".join(part for part in (result.stdout, result.stderr) if part)
     (build_dir / f"{source.stem}.compiler.log").write_text(
@@ -392,8 +461,11 @@ def stage_runtime_resources(
                 shutil.copytree(source, target / directory, dirs_exist_ok=True)
     shutil.copy2(config.references / "references.bib", target / "references.bib")
     for resource in publisher_resource(config).iterdir():
-        if resource.is_file():
-            shutil.copy2(resource, target / resource.name)
+        destination = target / resource.name
+        if resource.is_dir():
+            shutil.copytree(resource, destination, dirs_exist_ok=True)
+        else:
+            shutil.copy2(resource, destination)
     _render_preamble(config, target / "preamble")
     (target / "preamble.tex").write_text(
         f"\\input{{preamble/{config.language}}}\n", encoding="utf-8"
@@ -416,8 +488,6 @@ def build_clean_manuscript(
     )
     compiled = compile_tex(source, run_dir / "clean_build", config, engine_override)
     output_dir = config.output_dir(round_number)
-    output_dir.mkdir(exist_ok=True)
     filename = "manuscript.pdf" if round_number == 0 else "manuscript_clean.pdf"
     target = output_dir / filename
-    shutil.copy2(compiled.pdf, target)
-    return target
+    return publish_file_atomically(compiled.pdf, target)

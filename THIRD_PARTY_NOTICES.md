@@ -40,18 +40,14 @@ These files are distributed under the LaTeX Project Public License 1.3c or
 later. The bundled `src/sci_manuscript/resources/journal_templates/acs/LICENSE.md` preserves the
 upstream notice.
 
-## Chinese journal resource `kxtbcas`
+## Chinese numeric bibliography style `kxtbcas-numeric`
 
-Files:
+File:
 
-- `src/sci_manuscript/resources/journal_templates/chinese/kxtbcas.cls`
-- `src/sci_manuscript/resources/journal_templates/chinese/template.tex`
+- `src/sci_manuscript/resources/journal_templates/chinese/kxtbcas-numeric.bst`
 
-The class was supplied by the repository maintainer from a Chinese-journal
-manuscript workspace and was included for future Chinese-journal use at the
-maintainer's direction. The supplied class did not contain an embedded license
-notice or public source URL. Its resource README records the local compatibility
-adaptation. For the v2.0.0 release, the repository maintainer has explicitly
-confirmed that this maintainer-provided template may be distributed publicly
-with this project. This statement records that project-specific permission; it
-does not claim that the class is an official template for every Chinese journal.
+This renamed generated bibliography style is derived from `achemso.bst` and is
+governed by the upstream LPPL/generated-file terms. The corresponding upstream
+source `achemso.dtx` is included under the ACS resources. The original
+`kxtbcas.cls` is project-owned MIT-licensed work and is therefore not listed as
+a third-party resource.

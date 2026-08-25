@@ -62,6 +62,7 @@ def _parser() -> argparse.ArgumentParser:
             default=[],
         )
     init.add_argument("--bib", type=Path)
+    init.add_argument("--custom-template", type=Path)
     init.add_argument("--engine", choices=SUPPORTED_ENGINES, default="auto")
     for command, help_text in (
         ("status", "Show project status."),
@@ -293,6 +294,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.corresponding,
                     args.other,
                     args.bib,
+                    args.custom_template,
                 )
             ):
                 lifecycle_result = initialize_manuscript_draft(args.project)
@@ -310,6 +312,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 corresponding_authors=corresponding,
                 other_authors=other,
                 bibliography_path=args.bib,
+                custom_template=args.custom_template,
                 engine=args.engine,
             )
             _print_lifecycle(lifecycle_result, args.project, language=args.language)

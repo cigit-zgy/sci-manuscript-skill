@@ -93,6 +93,12 @@ publishes final PDFs. User rounds therefore do not contain `preamble/`,
 `revision_style.template.tex` so users can configure revision colors and the
 deletion strikeout.
 
+For a custom publisher, initialize with `publisher: custom` and
+`--custom-template /absolute/path/to/template`. Its `sections.yaml` declares
+supported languages. The resource is validated for path traversal and copied
+once to `references/journal_template/`; runtime staging resolves nested assets
+from that sole project-owned copy.
+
 ## Initial submission
 
 ```bash
@@ -103,7 +109,7 @@ sci-manuscript submission --project /absolute/path/to/project
 The clean PDF is `initial_submission/output/manuscript.pdf`. Submission sources
 are created on demand under `initial_submission/submission/`; final submission
 files are published directly in that flat directory without exposing compiler
-intermediates. `cover_letter.tex`, `highlights.tex`,
+intermediates. `cover_letter_body.tex`, `highlights.tex`,
 the graphical-abstract directory, and `checklist.md` are user-editable;
 generated PDFs share the same submission directory.
 
@@ -119,9 +125,9 @@ sci-manuscript revision --project /absolute/path/to/project --yes
 ```
 
 automatically creates `revision_NN/response/reviewer_comments.md` from the
-project language. The Chinese template contains `编辑`, `审稿人 #1`, and
-`审稿人 #2`; the English template contains the corresponding `Editor` and
-`Reviewer` headings. Each specific comment is entered as one numbered list
+project language. The Chinese template contains `副编辑`, `编辑`, `审稿人 #1`,
+and `审稿人 #2`; the English template contains the corresponding `Associate
+Editor`, `Editor`, and `Reviewer` headings. Each specific comment is entered as one numbered list
 item under `Specific comments` or `具体意见`; the unnumbered `Main comment` or
 `主意见` records the overall assessment. Empty template items and empty main
 comments are ignored, and users may add or remove list items or reviewer sections.
@@ -149,7 +155,7 @@ General assessment from Reviewer 1.
 2. Second specific comment.
 ```
 
-The parser derives `E-1`, `1-1`, `1-2`, and subsequent IDs from section identity
+The parser derives `AE-1`, `E-1`, `1-1`, `1-2`, and subsequent IDs from section identity
 and non-empty list order. Summary text must appear under `Main comment` or
 `主意见`; numbered details must appear under `Specific comments` or `具体意见`.
 The summary receives no response ID and is excluded from per-comment audit.
@@ -285,6 +291,28 @@ letters, highlights, and graphical abstracts do not use manuscript line
 numbering. Editable submission and response sources are created once and survive
 later builds.
 
+The package-owned cover-letter document consumes the user-owned
+`submission/cover_letter_body.tex`. Cover `\guidance{...}` blocks, unresolved
+template tokens, and pending markers in enabled highlights or graphical
+abstract sources must be resolved before formal submission. A user-supplied
+final graphical-abstract PDF is a source artifact; generated-artifact ownership
+is hash-verified so overwriting the same path transfers ownership back to the
+user.
+
+Reindex and rollback protect all user-owned submission source. They remove only
+known generated PDFs and hash-matching paths recorded in
+`state/<round>/generated_artifacts.yaml`; cover body, highlights source,
+checklist source, graphical source/assets, and user-supplied PDFs are preserved.
+Publication is staged and installed atomically, so a failed operation restores
+the previous complete set rather than leaving mixed old/new final artifacts.
+
+Each successful build or submission atomically updates
+`state/<round>/build_manifest.yaml`. The manifest records the round and parent,
+package/Python/engine/tool identities, effective author source, fonts,
+publisher-resource hashes, scientific input hashes, and final output hashes.
+It contains no private absolute project or temporary path, is not a scientific
+source, and never enters the submission directory.
+
 ## Bibliography synchronization
 
 Every version reads the single root `references/references.bib`. Explicit Better
@@ -304,3 +332,13 @@ Every command lazily uses `project/manuscript/tmp/run_<timestamp>_<pid>_<id>/`.
 A successful run removes its run directory and the empty `tmp/`. A failure
 retains it and reports a project-relative path. `--keep-temp` retains a
 successful run only for explicit diagnostics.
+
+## v1 workspace detection
+
+Version 2.0 does not silently migrate ambiguous v1 state. Detection of legacy
+`authors.first_author`/`corresponding_author`/`other_author`, editable
+`response_letter.tex`, nested `submission/package/`, or
+`revision_creation.yaml` stops with an explicit message: archive the workspace,
+read this migration note and the 2.0 changelog, then deliberately convert to the
+single 2.0 contract. There are no dual-schema aliases or migration-on-read
+adapters.

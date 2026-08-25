@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: test-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -11,12 +14,13 @@ concurrency:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e ".[dev]"
@@ -31,15 +35,38 @@ jobs:
           python -m venv /tmp/sci-wheel-${{ matrix.python-version }}
           /tmp/sci-wheel-${{ matrix.python-version }}/bin/pip install dist/*.whl
           cd /tmp
-          /tmp/sci-wheel-${{ matrix.python-version }}/bin/python -c "from sci_manuscript import ManuscriptProject; from importlib.resources import files; assert (files('sci_manuscript.resources') / 'revision_style.template.tex').is_file()"
+          /tmp/sci-wheel-${{ matrix.python-version }}/bin/python - <<'PY'
+          from importlib.resources import files
+          required = (
+              "authors.yaml",
+              "revision_style.template.tex",
+              "manuscript_preamble/common.tex",
+              "manuscript_preamble/en.tex",
+              "manuscript_preamble/zh.tex",
+              "revision/marked_runtime.tex",
+              "revision/location_runtime.tex",
+              "correspondence_templates/cover_letter/cover_letter_en.tex",
+              "correspondence_templates/response/response_en.tex",
+              "reviewer_comments/reviewer_comments_en.md",
+              "reviewer_comments/reviewer_comments_zh.md",
+              "journal_templates/chinese/kxtbcas.cls",
+              "journal_templates/chinese/kxtbcas-numeric.bst",
+              "journal_templates/elsevier/workflow.tex",
+              "journal_templates/nature/workflow.tex",
+              "journal_templates/acs/workflow.tex",
+          )
+          root = files("sci_manuscript.resources")
+          assert all((root / path).is_file() for path in required)
+          PY
           /tmp/sci-wheel-${{ matrix.python-version }}/bin/sci-manuscript --help
           /tmp/sci-wheel-${{ matrix.python-version }}/bin/sci-manuscript authors --help
 
   integration-release:
     runs-on: macos-14
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install real LaTeX and PDF toolchain

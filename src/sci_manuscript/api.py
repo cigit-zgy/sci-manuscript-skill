@@ -12,9 +12,12 @@ from .authors import load_author_library, resolve_author_library_path, resolve_a
 from .bibliography import sync_bibliography
 from .compile import (
     SUPPORTED_ENGINES,
+    CjkProbeResult,
     build_clean_manuscript,
     ensure_cjk_environment,
     probe_cjk_environment,
+    publish_file_atomically,
+    select_engine,
 )
 from .diff import build_marked_manuscript
 from .errors import WorkflowError
@@ -25,10 +28,16 @@ from .metadata import (
     validate_publisher_language,
 )
 from .response import build_response, ensure_response_source, init_response
-from .review import ReviewAuditResult, audit_reviews, parse_reviews
+from .review import (
+    ReviewAuditResult,
+    audit_reviews,
+    parse_reviews,
+    review_ids_from_sources,
+)
 from .submission import prepare_submission_artifacts
 from .templates import ensure_manuscript_sources
 from .workspace import (
+    GENERATED_SUBMISSION_PATHS,
     ProjectConfig,
     finalize_revision_creation,
     initialize_draft_project,
@@ -43,6 +52,14 @@ from .workspace import (
     round_name,
     start_revision,
     temporary_run,
+    write_build_manifest,
+)
+
+OUTPUT_PDF_NAMES = (
+    "manuscript.pdf",
+    "manuscript_clean.pdf",
+    "manuscript_marked.pdf",
+    "response_letter.pdf",
 )
 
 
@@ -76,6 +93,49 @@ class StatusResult:
     publisher: str
     authors: tuple[str, ...]
     artifacts: tuple[Path, ...]
+
+
+def _snapshot_files(
+    paths: tuple[Path, ...], backup_root: Path
+) -> dict[Path, Path | None]:
+    """Copy an exact final-artifact set before a multi-file publication."""
+    backup_root.mkdir(parents=True, exist_ok=True)
+    snapshot: dict[Path, Path | None] = {}
+    for index, path in enumerate(dict.fromkeys(paths)):
+        if path.is_file():
+            backup = backup_root / f"{index:03d}"
+            shutil.copy2(path, backup)
+            snapshot[path] = backup
+        else:
+            snapshot[path] = None
+    return snapshot
+
+
+def _restore_files(snapshot: dict[Path, Path | None]) -> None:
+    """Restore an artifact snapshot without touching any unlisted user source."""
+    for target, backup in snapshot.items():
+        if backup is None:
+            if target.is_file() or target.is_symlink():
+                target.unlink()
+            continue
+        publish_file_atomically(backup, target)
+
+
+def _output_pdf_paths(config: ProjectConfig, round_number: int) -> tuple[Path, ...]:
+    output = config.output_dir(round_number)
+    return tuple(output / name for name in OUTPUT_PDF_NAMES)
+
+
+def _submission_publication_paths(
+    config: ProjectConfig, round_number: int
+) -> tuple[Path, ...]:
+    submission = config.submission_dir(round_number)
+    return (
+        *(submission / relative for relative in GENERATED_SUBMISSION_PATHS),
+        submission / "graphical_abstract" / "graphical_abstract.pdf",
+        submission / "checklist.md",
+        config.generated_artifacts_path(round_number),
+    )
 
 
 @dataclass(frozen=True)
@@ -112,6 +172,7 @@ def doctor(
     """Inspect required manuscript tooling without changing the environment."""
     if engine not in SUPPORTED_ENGINES:
         raise WorkflowError(f"Unsupported engine: {engine}")
+    engine_error = ""
     try:
         yaml_version = importlib.metadata.version("PyYAML")
         yaml_ok = True
@@ -119,9 +180,52 @@ def doctor(
         yaml_version = "not installed"
         yaml_ok = False
     tectonic = _tool_detail("tectonic")
+    latexmk = _tool_detail("latexmk")
+    xelatex = _tool_detail("xelatex")
+    pdflatex = _tool_detail("pdflatex")
+    bibtex = _tool_detail("bibtex")
+    biber = _tool_detail("biber")
     pdftotext = _tool_detail("pdftotext")
     pdftoppm = _tool_detail("pdftoppm")
     latexdiff = _tool_detail("latexdiff")
+    try:
+        selected = select_engine(engine)
+    except WorkflowError as exc:
+        selected = None
+        engine_error = str(exc)
+    if selected == "tectonic":
+        engine_check = DoctorCheck("Tectonic", tectonic[0], tectonic[1], True)
+        bibliography_check = DoctorCheck(
+            "BibTeX/Biber backend",
+            tectonic[0],
+            "Tectonic integrated" if tectonic[0] else "Tectonic is unavailable",
+            True,
+        )
+    elif selected == "latex":
+        chinese = language == "zh" or publisher == "chinese"
+        driver_ok = xelatex[0] if chinese else pdflatex[0] or xelatex[0]
+        driver_detail = (
+            f"xelatex={xelatex[1]}"
+            if chinese
+            else f"pdflatex={pdflatex[1]}; xelatex={xelatex[1]}"
+        )
+        engine_check = DoctorCheck(
+            "latexmk and driver",
+            latexmk[0] and driver_ok,
+            f"latexmk={latexmk[1]}; {driver_detail}",
+            True,
+        )
+        bibliography_check = DoctorCheck(
+            "BibTeX/Biber backend",
+            bibtex[0] or biber[0],
+            f"bibtex={bibtex[1]}; biber={biber[1]}",
+            True,
+        )
+    else:
+        engine_check = DoctorCheck("LaTeX engine", False, engine_error, True)
+        bibliography_check = DoctorCheck(
+            "BibTeX/Biber backend", False, "No engine was selected", True
+        )
     checks: tuple[DoctorCheck, ...] = (
         DoctorCheck(
             "Python >= 3.11",
@@ -130,12 +234,7 @@ def doctor(
             True,
         ),
         DoctorCheck("PyYAML", yaml_ok, yaml_version, True),
-        DoctorCheck(
-            "LaTeX engine",
-            tectonic[0],
-            tectonic[1],
-            True,
-        ),
+        engine_check,
         DoctorCheck("latexdiff", latexdiff[0], latexdiff[1], True),
         DoctorCheck(
             "Poppler PDF tools",
@@ -143,17 +242,16 @@ def doctor(
             f"pdftotext={pdftotext[1]}; pdftoppm={pdftoppm[1]}",
             True,
         ),
-        DoctorCheck(
-            "BibTeX/Biber backend",
-            tectonic[0],
-            "Tectonic integrated" if tectonic[0] else "Tectonic is unavailable",
-            True,
-        ),
+        bibliography_check,
         DoctorCheck("Ruff", _tool_detail("ruff")[0], _tool_detail("ruff")[1], False),
         DoctorCheck("Mypy", _tool_detail("mypy")[0], _tool_detail("mypy")[1], False),
     )
     if language == "zh" or publisher == "chinese":
-        cjk = probe_cjk_environment(engine)
+        cjk = (
+            probe_cjk_environment(selected)
+            if selected is not None
+            else CjkProbeResult(False, engine_error)
+        )
         checks = (
             *checks,
             DoctorCheck("CJK compilation probe", cjk.ready, cjk.detail, True),
@@ -175,6 +273,7 @@ def initialize_manuscript(
     corresponding_authors: tuple[str, ...],
     other_authors: tuple[str, ...] = (),
     bibliography_path: str | Path | None = None,
+    custom_template: str | Path | None = None,
     engine: str = "auto",
 ) -> LifecycleResult:
     """Initialize and compile ``path/manuscript/initial_submission``."""
@@ -203,6 +302,11 @@ def initialize_manuscript(
     initialize_project(
         config,
         (Path(bibliography_path).expanduser().resolve() if bibliography_path else None),
+        (
+            Path(custom_template).expanduser().resolve()
+            if custom_template is not None
+            else None
+        ),
     )
     with temporary_run(manuscript_root) as run_dir:
         manuscript = build_clean_manuscript(config, 0, run_dir, engine)
@@ -289,29 +393,46 @@ class ManuscriptProject:
         ensure_manuscript_sources(config, selected)
         audit: ReviewAuditResult | None = None
         response_output = config.output_dir(selected) / "response_letter.pdf"
-        if selected > 0 and response_output.exists():
-            response_output.unlink()
+        if selected > 0:
+            review_ids_from_sources(config, selected)
         with temporary_run(self.root, keep_temp) as run_dir:
-            clean = build_clean_manuscript(config, selected, run_dir, engine)
-            artifacts = [Artifact("Clean manuscript", clean)]
-            if selected > 0:
-                marked = build_marked_manuscript(config, selected, run_dir, engine)
-                artifacts.append(Artifact("Marked manuscript", marked.pdf))
-                ensure_response_source(config, selected)
-                audit = audit_reviews(config, selected, record_index=True)
-                malformed = any(
-                    issue.code in {"COMMENTS_INVALID", "RESPONSES_INVALID"}
-                    for issue in audit.issues
-                )
-                if audit.total and not malformed:
-                    response = build_response(
-                        config,
-                        selected,
-                        marked.locations,
-                        run_dir,
-                        engine,
+            snapshot = _snapshot_files(
+                _output_pdf_paths(config, selected), run_dir / "output_rollback"
+            )
+            try:
+                clean = build_clean_manuscript(config, selected, run_dir, engine)
+                artifacts = [Artifact("Clean manuscript", clean)]
+                if selected > 0:
+                    marked = build_marked_manuscript(config, selected, run_dir, engine)
+                    artifacts.append(Artifact("Marked manuscript", marked.pdf))
+                    ensure_response_source(config, selected)
+                    audit = audit_reviews(config, selected, record_index=True)
+                    malformed = any(
+                        issue.code in {"COMMENTS_INVALID", "RESPONSES_INVALID"}
+                        for issue in audit.issues
                     )
-                    artifacts.append(Artifact("Response letter", response))
+                    if audit.total and not malformed:
+                        response = build_response(
+                            config,
+                            selected,
+                            marked.locations,
+                            run_dir,
+                            engine,
+                        )
+                        artifacts.append(Artifact("Response letter", response))
+                    elif response_output.exists():
+                        response_output.unlink()
+                write_build_manifest(
+                    config,
+                    selected,
+                    "build",
+                    tuple(item.path for item in artifacts),
+                    engine,
+                    run_dir,
+                )
+            except Exception:
+                _restore_files(snapshot)
+                raise
         return LifecycleResult(
             "build",
             revision_directory_name(selected),
@@ -433,13 +554,32 @@ class ManuscriptProject:
         else:
             audit = None
         with temporary_run(self.root, keep_temp) as run_dir:
-            submission_artifacts = prepare_submission_artifacts(
-                config,
-                selected,
-                run_dir,
-                engine,
-                audit,
+            snapshot = _snapshot_files(
+                (
+                    *_output_pdf_paths(config, selected),
+                    *_submission_publication_paths(config, selected),
+                ),
+                run_dir / "publication_rollback",
             )
+            try:
+                submission_artifacts = prepare_submission_artifacts(
+                    config,
+                    selected,
+                    run_dir,
+                    engine,
+                    audit,
+                )
+                write_build_manifest(
+                    config,
+                    selected,
+                    "submission",
+                    tuple(item.path for item in submission_artifacts),
+                    engine,
+                    run_dir,
+                )
+            except Exception:
+                _restore_files(snapshot)
+                raise
         artifacts = [Artifact(item.label, item.path) for item in submission_artifacts]
         return LifecycleResult(
             "submission",

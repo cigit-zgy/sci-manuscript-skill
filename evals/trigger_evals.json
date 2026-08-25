@@ -12,7 +12,7 @@
     "should_trigger": true
   },
   {
-    "query": "revision_01 的回复已经填写完了，请生成 clean、marked、response PDF 和这一轮的 submission package。",
+    "query": "revision_01 的回复已经填写完了，请生成 clean、marked、response PDF 和这一轮的正式 submission artifacts。",
     "should_trigger": true
   },
   {
@@ -37,6 +37,10 @@
   },
   {
     "query": "My manuscript build failed and left a tmp diagnostic directory. Diagnose the LaTeX workflow without installing anything yet.",
+    "should_trigger": true
+  },
+  {
+    "query": "副编辑和审稿人的回复还没填完，先 build 当前 revision 并报告 AE-1 和其他未完成项，不要 submission。",
     "should_trigger": true
   },
   {

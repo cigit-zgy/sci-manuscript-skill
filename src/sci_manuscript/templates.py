@@ -59,11 +59,24 @@ def render_template(source: Path, target: Path, values: dict[str, str]) -> None:
 
 
 def publisher_resource(config: ProjectConfig) -> Path:
-    """Resolve one built-in package publisher resource."""
-    resource = resources_root() / "journal_templates" / config.metadata.publisher
+    """Resolve one built-in resource or the project-owned custom template."""
+    resource = (
+        config.references / "journal_template"
+        if config.metadata.publisher == "custom"
+        else resources_root() / "journal_templates" / config.metadata.publisher
+    )
     if not resource.is_dir():
         raise WorkflowError(f"Publisher package resource is missing: {resource}")
     return resource
+
+
+def _relative_tex_path(value: object, location: str) -> Path:
+    path = Path(str(value))
+    if path.is_absolute() or ".." in path.parts or path.suffix != ".tex":
+        raise WorkflowError(
+            f"{location} must be a relative .tex path without '..': {path}"
+        )
+    return path
 
 
 def _publisher_layout(
@@ -77,6 +90,14 @@ def _publisher_layout(
     sections = data.get("sections") if isinstance(data, dict) else None
     bibliography = data.get("bibliography") if isinstance(data, dict) else None
     frontmatter = data.get("frontmatter") if isinstance(data, dict) else None
+    languages = data.get("languages") if isinstance(data, dict) else None
+    if config.metadata.publisher == "custom":
+        if not isinstance(languages, list) or config.language not in languages:
+            accepted = ", ".join(str(item) for item in languages or ()) or "none"
+            raise WorkflowError(
+                f"publisher='custom' selected language={config.language!r}; "
+                f"accepted languages: {accepted}."
+            )
     if (
         not isinstance(sections, list)
         or not sections
@@ -96,8 +117,12 @@ def _publisher_layout(
         ):
             raise WorkflowError(f"Invalid publisher frontmatter mapping: {path}")
         frontmatter_plan = {
-            "file": str(frontmatter["file"]),
-            "source": str(frontmatter["source"]),
+            "file": _relative_tex_path(
+                frontmatter["file"], "frontmatter.file"
+            ).as_posix(),
+            "source": _relative_tex_path(
+                frontmatter["source"], "frontmatter.source"
+            ).as_posix(),
             "title": "",
         }
     plan: list[dict[str, str]] = []
@@ -106,11 +131,34 @@ def _publisher_layout(
             raise WorkflowError(f"Invalid section mapping item {index}: {path}")
         plan.append(
             {
-                "file": str(item["file"]),
-                "source": str(item["source"]),
+                "file": _relative_tex_path(
+                    item["file"], f"sections[{index}].file"
+                ).as_posix(),
+                "source": _relative_tex_path(
+                    item["source"], f"sections[{index}].source"
+                ).as_posix(),
                 "title": str(item.get("title", "")),
             }
         )
+    targets = [item["file"] for item in plan]
+    if frontmatter_plan is not None:
+        targets.append(frontmatter_plan["file"])
+    if len(targets) != len(set(targets)):
+        raise WorkflowError(f"Publisher section mapping has duplicate targets: {path}")
+    resource = publisher_resource(config)
+    for item in ([frontmatter_plan] if frontmatter_plan else []) + plan:
+        assert item is not None
+        source = (
+            resource / item["source"]
+            if config.metadata.publisher == "custom"
+            else resources_root()
+            / "manuscript"
+            / "sections"
+            / "default"
+            / item["source"]
+        )
+        if not source.is_file():
+            raise WorkflowError(f"Publisher section source is missing: {source}")
     return frontmatter_plan, plan, package, style
 
 
@@ -135,7 +183,11 @@ def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
             "BIBLIOGRAPHY_PATH": "references",
         },
     )
-    defaults = resources_root() / "manuscript" / "sections" / "default"
+    defaults = (
+        publisher_resource(config)
+        if config.metadata.publisher == "custom"
+        else resources_root() / "manuscript" / "sections" / "default"
+    )
     source_plan = ([frontmatter] if frontmatter is not None else []) + plan
     for item in source_plan:
         values = {"SECTION_TITLE": item["title"]}

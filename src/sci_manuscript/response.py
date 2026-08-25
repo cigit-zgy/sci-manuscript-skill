@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import re
-import shutil
 from pathlib import Path
 
 from . import review
-from .compile import compile_tex, stage_cjk_fonts
+from .compile import compile_tex, publish_file_atomically, stage_cjk_fonts
 from .errors import WorkflowError
 from .metadata import generate_metadata
 from .review_ids import is_review_id
@@ -100,7 +99,12 @@ def init_response(config: ProjectConfig, round_number: int) -> Path | None:
         if not review_ids:
             continue
         if config.language == "zh":
-            title = "编辑" if block.prefix == "E" else f"审稿人 #{block.prefix}"
+            if block.prefix == "E":
+                title = "编辑"
+            elif block.prefix == "AE":
+                title = "副编辑"
+            else:
+                title = f"审稿人 #{block.prefix}"
         else:
             title = block.title
         entries = "\n\n".join(
@@ -136,7 +140,12 @@ def _body_tex(
             continue
         title = block.title
         if language == "zh":
-            title = "编辑" if block.prefix == "E" else f"审稿人 #{block.prefix}"
+            if block.prefix == "E":
+                title = "编辑"
+            elif block.prefix == "AE":
+                title = "副编辑"
+            else:
+                title = f"审稿人 #{block.prefix}"
         general_title = "总体意见" if language == "zh" else "General comment"
         lines.extend([f"\\ResponseSection{{{_escape_latex(title)}}}", ""])
         if block.summary:
@@ -225,6 +234,4 @@ def build_response(
         engine_override,
     )
     output = config.output_dir(round_number) / "response_letter.pdf"
-    output.parent.mkdir(exist_ok=True)
-    shutil.copy2(compiled.pdf, output)
-    return output
+    return publish_file_atomically(compiled.pdf, output)

@@ -1,3 +1,6 @@
+% SPDX-License-Identifier: MIT
+% Copyright (c) 2026 Guangyao Zhao
+% Original manuscript class developed for sci-manuscript-skill.
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesClass{kxtbcas}[2026/03/08 CASAD-style journal template]
 

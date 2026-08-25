@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "我准备开始一篇 Elsevier 体系的英文 LaTeX 论文。请把 /path/to/authors.yaml 配置为我的作者库，BibTeX 在 /path/to/references.bib，然后创建 initial submission 环境。",
-      "expected_output": "The agent checks the environment, configures the reusable author library, initializes only initial_submission with the supplied bibliography, builds the first manuscript, and identifies user-editable placeholders without writing scientific content.",
+      "expected_output": "The agent checks the environment, configures the reusable author library, initializes only initial_submission with the supplied bibliography, and identifies user-editable metadata and manuscript sources without compiling or writing scientific content.",
       "files": [],
       "expectations": [
         "The agent runs doctor before initialization when the environment is not already verified and asks before any dependency installation.",
         "The generated project/manuscript contains initial_submission and does not contain revision_01.",
         "The author library is configured outside the project; only the BibTeX data is copied into the manuscript-level references directory.",
-        "initial_submission/output/manuscript.pdf exists and the successful run leaves tmp empty.",
+        "Initialization does not compile; the agent reports that the user must complete meta.yaml and frontmatter before build.",
         "The agent identifies manuscript sections, figures, bibliography, and author data as user-owned content rather than generating scientific replacements."
       ]
     },
@@ -41,13 +41,13 @@
     {
       "id": 4,
       "prompt": "revision 1 已经修改完成，回复也已填写。生成完整投稿材料。",
-      "expected_output": "The agent builds the clean manuscript, r00-to-r01 marked manuscript, response letter, and revision_01 submission package.",
+      "expected_output": "After confirming a complete review audit and complete enabled submission sources, the agent builds the clean manuscript, r00-to-r01 marked manuscript, response letter, and flat revision_01 submission artifacts.",
       "files": [],
       "expectations": [
         "revision_01/output contains manuscript_clean.pdf, manuscript_marked.pdf, and response_letter.pdf.",
         "The marked manuscript compares r00 directly with r01.",
         "Clean and marked manuscript PDFs have continuous line numbers while the response letter does not use manuscript line numbering.",
-        "The version-local submission package contains the enabled final artifacts and no compiler intermediates.",
+        "The flat version-local submission directory contains enabled sources and final artifacts but no package subdirectory or compiler intermediates.",
         "The successful run leaves tmp empty."
       ]
     },
@@ -83,6 +83,50 @@
         "The skill is not used as a scientific-writing or claim-assessment workflow.",
         "No manuscript project, revision, response letter, or submission artifact is created.",
         "The agent does not fabricate scientific claims or decide whether the reviewer is correct."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "revision_01 的回复还没有填写完整，但我想先检查当前 clean、marked 和回复预览 PDF。",
+      "expected_output": "The agent runs build, preserves incomplete review items as non-blocking diagnostics, and reports current parseable preview artifacts without attempting formal submission.",
+      "files": [],
+      "expectations": [
+        "Clean and direct-parent marked PDFs are generated.",
+        "A response preview is generated only when responses.tex is syntactically trustworthy.",
+        "Missing or empty response IDs are reported and no submission artifacts are assembled."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "请生成 revision_01 的正式投稿材料；当前审稿回复还有两条为空。",
+      "expected_output": "The agent reports the incomplete review audit and does not assemble or replace formal submission artifacts.",
+      "files": [],
+      "expectations": [
+        "Submission stops before publication because the audit is incomplete.",
+        "The unresolved IDs are reported concisely.",
+        "Previous final artifacts remain intact and no scientific source is modified."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "审稿人意见包含副编辑的一条具体意见。请建立修回，并保证注释中的 \\review{9-9}{ignored} 不参与审计。",
+      "expected_output": "The agent preserves the Associate Editor workflow as AE-N and treats commented TeX provenance as inactive.",
+      "files": [],
+      "expectations": [
+        "Associate Editor detailed comments generate AE-N response entries.",
+        "Commented review commands do not create provenance or audit issues.",
+        "No response prose or manuscript change is invented."
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "revision 目录编号需要重建索引，但 submission 中的 cover body、highlights 和 graphical abstract 都是我编辑过的。",
+      "expected_output": "The agent explains the digest/archive transaction, obtains confirmation, and uses reindex while preserving every user-owned submission source.",
+      "files": [],
+      "expectations": [
+        "Reindex is not run without confirmation.",
+        "User-owned cover, highlights, checklist, graphical source/assets, and user-supplied PDFs are preserved.",
+        "Only known or hash-registered generated artifacts are cleared."
       ]
     }
   ]

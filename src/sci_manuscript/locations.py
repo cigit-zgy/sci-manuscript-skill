@@ -106,7 +106,7 @@ def calculate_locations(
         for review_id in (item.strip() for item in ids.split(",")):
             if not is_review_id(review_id):
                 raise WorkflowError(
-                    f"Invalid reviewer ID {review_id!r}; expected E-1 or 1-1."
+                    f"Invalid reviewer ID {review_id!r}; expected E-1, AE-1, or 1-1."
                 )
             if location not in by_comment[review_id]:
                 by_comment[review_id].append(location)

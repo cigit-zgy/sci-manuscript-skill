@@ -50,8 +50,10 @@ publisher resource only to diagnose that exact publisher build.
   Builds resolve the configured user author library, then the bundled
   Skill-level library. Projects and revision directories never contain an
   author library or version-local `references/`.
-- The only publishers are the installed Chinese, Elsevier, Nature, and ACS
-  resources. They are package data and are never copied into user projects.
+- Built-in publisher/language pairs are Chinese/`zh`, Elsevier/`en`, Nature/`en`,
+  and ACS/`en`. A custom template supplied at initialization declares its own
+  supported languages and is copied once to `references/journal_template/`;
+  built-in resources remain package data and are never copied into projects.
 - `sections/00_frontmatter.tex` owns manuscript title, abstract, and keyword
   text. `meta.yaml` owns funding,
   language, article type,
@@ -62,7 +64,8 @@ publisher resource only to diagnose that exact publisher build.
 - `manuscript.tex` is a user-owned composition root. Builds read it but never
   overwrite it.
 - `revision` creates `response/reviewer_comments.md` automatically from the
-  project language. The editable template contains Editor and Reviewer sections
+  project language. The editable template contains Associate Editor, Editor,
+  and Reviewer sections
   with numbered list items. Comment IDs are derived from section identity and
   non-empty list order; review states are computed from comments, responses,
   and manuscript provenance.
@@ -93,7 +96,7 @@ publisher resource only to diagnose that exact publisher build.
   and lazy `tmp/` contains reproducible run diagnostics. Successful operations
   remove `tmp/` unless diagnostics are explicitly retained.
 - Editable `response/responses.tex` is generated from the actual detailed
-  comments, and `submission/cover_letter.tex` is created once. Complete
+  comments, and `submission/cover_letter_body.tex` is created once. Complete
   correspondence documents are assembled from installed templates only in
   `tmp/`.
 - Author-library priority is configured user library, then the bundled
@@ -102,15 +105,22 @@ publisher resource only to diagnose that exact publisher build.
 - Correspondence uses the selected corresponding authors. A sole corresponding
   author signs automatically; multiple corresponding authors require an
   explicit `correspondence.signing_author` before submission.
-- Cover-letter `\guidance{...}` blocks and unresolved template tokens still
-  block submission because they are unresolved submission content rather than
-  review-completeness warnings.
+- Cover-letter `\guidance{...}` blocks, unresolved template tokens, and pending
+  highlights/graphical-abstract markers block submission because they are
+  unresolved submission content rather than review-completeness warnings.
 - Built-in journal templates and manuscript preambles remain package resources.
   They are staged only under `tmp/<run>/`; user rounds never contain
   `preamble/`, `manuscript_preamble/`, `journal_templates/`, publisher
   `.cls`/`.bst`, `workflow.tex`, or `sections.yaml`.
 - Submission artifacts, editable sources, and their final PDFs share the flat
   user-facing `submission/` directory.
+- Every successful build/submission atomically updates
+  `state/<round>/build_manifest.yaml` with input/output/resource hashes and the
+  effective engine/toolchain without private absolute project paths. Failed
+  operations leave the previous successful manifest unchanged.
+- Tectonic is the primary release-gated engine. `--engine latex` uses the
+  traditional `latexmk` driver with XeLaTeX for Chinese, pdfLaTeX for English
+  unless the source requires XeLaTeX, and BibTeX/Biber as appropriate.
 
 ## Entrypoints
 

@@ -25,7 +25,7 @@ __all__ = [
     "load_meta",
 ]
 
-PUBLISHERS = ("elsevier", "nature", "acs", "chinese")
+PUBLISHERS = ("elsevier", "nature", "acs", "chinese", "custom")
 PUBLISHER_LANGUAGES = {
     "chinese": "zh",
     "elsevier": "en",
@@ -212,11 +212,13 @@ def revision_directory_name(round_number: int) -> str:
 
 def validate_publisher_language(publisher: str, language: str) -> None:
     """Reject publisher and language combinations outside the release matrix."""
+    if publisher == "custom":
+        return
     required_language = PUBLISHER_LANGUAGES[publisher]
     if language != required_language:
         raise MetadataError(
-            f"journal.publisher {publisher!r} requires "
-            f"manuscript.language: {required_language}."
+            f"selected publisher={publisher!r}, selected language={language!r}; "
+            f"accepted language: {required_language}."
         )
 
 
@@ -284,6 +286,17 @@ def load_meta(path: Path) -> ManuscriptMetadata:
     )
     unexpected_authors = set(authors) - {"first", "corresponding", "other"}
     if unexpected_authors:
+        legacy = unexpected_authors & {
+            "first_author",
+            "corresponding_author",
+            "other_author",
+        }
+        if legacy:
+            raise MetadataError(
+                "Detected a v1 workspace author schema while running 2.0. "
+                "Archive the workspace before migration and read the CHANGELOG "
+                "and workflow migration section."
+            )
         raise MetadataError(
             "Canonical authors schema contains unsupported keys: "
             + ", ".join(sorted(unexpected_authors))
@@ -679,14 +692,16 @@ def render_author_metadata(
 ) -> str:
     """Render shared correspondence macros."""
     names_en = ", ".join(_latex_escape(item.name_en) for item in selection.authors)
-    names_zh = "、".join(_latex_escape(item.name_zh) for item in selection.authors)
+    names_zh = "，".join(  # noqa: RUF001 - intentional Chinese author separator
+        _latex_escape(item.name_zh) for item in selection.authors
+    )
     first_names = ", ".join(
         _latex_escape(item.name_en) for item in selection.first_authors
     )
     corresponding_names = ", ".join(
         _latex_escape(item.name_en) for item in selection.corresponding_authors
     )
-    corresponding_names_zh = "、".join(
+    corresponding_names_zh = "，".join(  # noqa: RUF001
         _latex_escape(item.name_zh) for item in selection.corresponding_authors
     )
     emails = "; ".join(
@@ -837,7 +852,10 @@ def render_publisher_metadata(
             if bio:
                 return _latex_escape(bio)
             name = author.name_zh if language == "zh" else author.name_en
-            return f"{_latex_escape(name)}, {_latex_escape(author.email)}"
+            escaped_name = _latex_escape(name)
+            if not author.email:
+                return escaped_name
+            return f"{escaped_name}, {_latex_escape(author.email)}"
 
         selected_biographies = set(metadata.author_biographies)
         first_biographies = tuple(

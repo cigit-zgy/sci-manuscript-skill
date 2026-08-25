@@ -5,9 +5,12 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import hashlib
+import importlib.metadata
 import os
+import platform
 import re
 import shutil
+import subprocess
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,7 +44,9 @@ GENERATED_SUBMISSION_PATHS = (
     Path("response_letter.pdf"),
     Path("cover_letter.pdf"),
     Path("highlights.pdf"),
-    Path("graphical_abstract/graphical_abstract.pdf"),
+)
+REVIEW_COMPLETENESS_LINE = re.compile(
+    rb"(?m)^- Review completeness: \*\*(?:COMPLETE|INCOMPLETE)\*\*\.\r?\n?"
 )
 
 
@@ -110,6 +115,14 @@ class ProjectConfig:
     def creation_record_path(self, round_number: int) -> Path:
         """Return the canonical rollback-protection record path."""
         return self.state_dir(round_number) / "creation.yaml"
+
+    def generated_artifacts_path(self, round_number: int) -> Path:
+        """Return the ownership record for generated submission artifacts."""
+        return self.state_dir(round_number) / "generated_artifacts.yaml"
+
+    def build_manifest_path(self, round_number: int) -> Path:
+        """Return the reproducibility manifest for one round."""
+        return self.state_dir(round_number) / "build_manifest.yaml"
 
     def tmp_root(self) -> Path:
         """Return the lazy reproducible run-diagnostics root."""
@@ -217,6 +230,22 @@ def _validate_no_symlinks(version: Path) -> None:
                 )
 
 
+def _detect_v1_workspace(version: Path) -> None:
+    legacy = (
+        version / "response" / "response_letter.tex",
+        version / "submission" / "package",
+        version / "revision_creation.yaml",
+    )
+    detected = [path for path in legacy if path.exists()]
+    if detected:
+        names = ", ".join(path.relative_to(version).as_posix() for path in detected)
+        raise WorkflowError(
+            "Detected a v1 workspace while running 2.0: "
+            f"{names}. Archive the workspace before migration and read the "
+            "CHANGELOG and workflow migration section."
+        )
+
+
 def load_project(
     path: str | Path,
     round_number: int | None = None,
@@ -230,6 +259,7 @@ def load_project(
     for number in numbers:
         version = project / revision_directory_name(number)
         _validate_no_symlinks(version)
+        _detect_v1_workspace(version)
         if (version / "references").exists():
             raise WorkflowError(f"Version-local references are forbidden: {version}")
         metadata = load_meta(version / "meta.yaml")
@@ -247,6 +277,7 @@ def load_project(
 def initialize_project(
     config: ProjectConfig,
     bibliography_source: Path | None = None,
+    custom_template: Path | None = None,
 ) -> ProjectConfig:
     """Create ``project/manuscript`` without requiring an empty parent project."""
     root = config.project
@@ -276,6 +307,12 @@ def initialize_project(
         config,
         bibliography,
     )
+    if config.metadata.publisher == "custom":
+        if custom_template is None or not custom_template.is_dir():
+            raise WorkflowError("publisher='custom' requires --custom-template PATH.")
+        shutil.copytree(custom_template, config.references / "journal_template")
+    elif custom_template is not None:
+        raise WorkflowError("--custom-template is valid only for publisher='custom'.")
     initialize_manuscript_sources(config, initial)
     save_meta(initial / "meta.yaml", config.metadata)
     return config
@@ -316,6 +353,55 @@ def strip_provenance_wrappers(text: str) -> str:
     return extract_provenance(text).text
 
 
+def _generated_submission_paths(version: Path) -> set[Path]:
+    registry = version.parent / "state" / version.name / "generated_artifacts.yaml"
+    if not registry.is_file():
+        return set()
+    try:
+        data = yaml.safe_load(registry.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise WorkflowError(f"Invalid generated artifact registry: {registry}") from exc
+    values = data.get("paths") if isinstance(data, dict) else None
+    hashes = data.get("sha256") if isinstance(data, dict) else None
+    if not isinstance(values, list) or not isinstance(hashes, dict):
+        raise WorkflowError(f"Invalid generated artifact registry: {registry}")
+    generated: set[Path] = set()
+    submission = version / "submission"
+    for value in values:
+        if not isinstance(value, str):
+            raise WorkflowError(f"Invalid generated artifact registry: {registry}")
+        relative = Path(value)
+        expected = hashes.get(relative.as_posix())
+        target = submission / relative
+        if (
+            relative.is_absolute()
+            or not relative.parts
+            or relative == Path(".")
+            or ".." in relative.parts
+            or not isinstance(expected, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected) is None
+        ):
+            raise WorkflowError(f"Invalid generated artifact registry: {registry}")
+        if (
+            not target.is_file()
+            or hashlib.sha256(target.read_bytes()).hexdigest() == expected
+        ):
+            generated.add(relative)
+    return generated
+
+
+def _submission_source_entries(version: Path) -> list[Path]:
+    submission = version / "submission"
+    if not submission.is_dir():
+        return []
+    generated = set(GENERATED_SUBMISSION_PATHS) | _generated_submission_paths(version)
+    return [
+        path
+        for path in sorted(submission.rglob("*"))
+        if path.is_file() and path.relative_to(submission) not in generated
+    ]
+
+
 def _digest_entries(version: Path, *, scientific_only: bool) -> list[Path]:
     paths = [version / "manuscript.tex"]
     if not scientific_only:
@@ -325,6 +411,8 @@ def _digest_entries(version: Path, *, scientific_only: bool) -> list[Path]:
         root = version / directory
         if root.exists():
             paths.extend(path for path in sorted(root.rglob("*")) if path.is_file())
+    if not scientific_only:
+        paths.extend(_submission_source_entries(version))
     return [path for path in paths if path.is_file()]
 
 
@@ -334,9 +422,166 @@ def source_digest(version: Path, *, scientific_only: bool = False) -> str:
     for path in _digest_entries(version, scientific_only=scientific_only):
         digest.update(path.relative_to(version).as_posix().encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        content = path.read_bytes()
+        if path.name == "checklist.md" and path.parent.name == "submission":
+            content = REVIEW_COMPLETENESS_LINE.sub(b"", content)
+            content = re.sub(rb"\n{2,}\Z", b"\n", content)
+        digest.update(content)
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _path_digest(path: Path) -> str:
+    if path.is_file():
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    paths = sorted(item for item in path.rglob("*") if item.is_file())
+    for item in paths:
+        digest.update(item.relative_to(path.parent).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _tool_version(name: str) -> str:
+    executable = shutil.which(name)
+    if executable is None:
+        return "unknown"
+    for option in ("--version", "-v"):
+        try:
+            result = subprocess.run(
+                [executable, option],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode != 0:
+            continue
+        first = next(
+            (
+                line.strip()
+                for line in (result.stdout + result.stderr).splitlines()
+                if line.strip()
+            ),
+            "unknown",
+        )
+        return first[:200]
+    return "unknown"
+
+
+def write_build_manifest(
+    config: ProjectConfig,
+    round_number: int,
+    operation: str,
+    outputs: tuple[Path, ...],
+    engine_override: str | None,
+    run_dir: Path,
+) -> Path:
+    """Atomically record one successful build without private absolute paths."""
+    from .authors import resolve_author_library_path
+    from .compile import _latex_driver, resolve_engine
+    from .templates import publisher_resource
+
+    selected_engine = resolve_engine(config, engine_override)
+    driver = selected_engine
+    if selected_engine == "latex":
+        _flag, driver = _latex_driver(config)
+    try:
+        skill_version = importlib.metadata.version("sci-manuscript-skill")
+    except importlib.metadata.PackageNotFoundError:
+        skill_version = "unknown"
+    author_source = resolve_author_library_path()
+    bundled = resources_root() / "authors.yaml"
+    author_kind = (
+        "bundled" if author_source.resolve() == bundled.resolve() else "configured"
+    )
+    font_paths = sorted(
+        {path.resolve() for path in run_dir.rglob("Fandol*.otf") if path.is_file()}
+    )
+    publisher = publisher_resource(config)
+    preamble = resources_root() / "manuscript_preamble"
+    version = config.round_dir(round_number)
+    output_files = {
+        path.resolve()
+        for path in outputs
+        if path.is_file() and path.resolve().is_relative_to(config.project.resolve())
+    }
+    if operation == "submission":
+        submission = config.submission_dir(round_number)
+        submission_outputs = set(GENERATED_SUBMISSION_PATHS) | {
+            Path("checklist.md"),
+            Path("graphical_abstract/graphical_abstract.pdf"),
+        }
+        output_files.update(
+            (submission / relative).resolve()
+            for relative in submission_outputs
+            if (submission / relative).is_file()
+        )
+    manifest = {
+        "schema": "sci-manuscript-build-manifest/v1",
+        "operation": operation,
+        "round": round_name(round_number),
+        "parent": None if round_number == 0 else round_name(round_number - 1),
+        "skill_version": skill_version,
+        "python_version": platform.python_version(),
+        "engine": {
+            "name": selected_engine,
+            "version": _tool_version(
+                "tectonic" if selected_engine == "tectonic" else "latexmk"
+            ),
+            "driver": driver,
+        },
+        "tools": {
+            "latexdiff": _tool_version("latexdiff"),
+            "pdftotext": _tool_version("pdftotext"),
+            "pdftoppm": _tool_version("pdftoppm"),
+            "bibtex_or_biber": _tool_version("bibtex")
+            if shutil.which("bibtex")
+            else _tool_version("biber"),
+        },
+        "resources": {
+            "publisher": {
+                "key": config.metadata.publisher,
+                "sha256": _path_digest(publisher),
+            },
+            "manuscript_preamble_sha256": _path_digest(preamble),
+            "revision_style_sha256": _path_digest(
+                config.references / "revision_style.tex"
+            ),
+        },
+        "inputs": {
+            "scientific_source_sha256": source_digest(version, scientific_only=True),
+            "protected_user_source_sha256": source_digest(version),
+            "references_bib_sha256": _path_digest(config.references / "references.bib"),
+            "effective_authors_source": author_kind,
+            "effective_authors_sha256": _path_digest(author_source),
+        },
+        "fonts": [
+            {"name": path.name, "sha256": _path_digest(path)} for path in font_paths
+        ],
+        "outputs": {
+            path.relative_to(config.project.resolve()).as_posix(): _path_digest(path)
+            for path in sorted(output_files)
+        },
+    }
+    target = config.build_manifest_path(round_number)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".yaml.new")
+    try:
+        temporary.write_text(
+            yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        os.replace(temporary, target)
+    finally:
+        if temporary.is_file():
+            temporary.unlink()
+    return target
 
 
 def start_revision(
@@ -464,7 +709,9 @@ def rollback_revision(config: ProjectConfig) -> tuple[Path, int]:
     return archived, latest.current_round - 1
 
 
-def _clear_generated(version: Path) -> None:
+def _clear_generated(
+    version: Path, *, additional_generated: set[Path] | None = None
+) -> None:
     output = version / "output"
     if output.exists():
         shutil.rmtree(output)
@@ -475,6 +722,14 @@ def _clear_generated(version: Path) -> None:
         generated = submission / relative
         if generated.is_file() or generated.is_symlink():
             generated.unlink()
+    dynamic = _generated_submission_paths(version) | (additional_generated or set())
+    for relative in dynamic:
+        generated = submission / relative
+        if generated.is_file() or generated.is_symlink():
+            generated.unlink()
+    checklist = submission / "checklist.md"
+    if checklist.is_file():
+        checklist.write_bytes(REVIEW_COMPLETENESS_LINE.sub(b"", checklist.read_bytes()))
 
 
 def reindex_revisions(
@@ -525,7 +780,10 @@ def reindex_revisions(
         shutil.copytree(source, target)
         metadata = load_meta(target / "meta.yaml")
         save_meta(target / "meta.yaml", with_revision(metadata, new_number))
-        _clear_generated(target)
+        _clear_generated(
+            target,
+            additional_generated=_generated_submission_paths(source),
+        )
         state_target = state_stage / revision_directory_name(new_number)
         state_source = state_root / revision_directory_name(old_number)
         if state_source.is_dir():

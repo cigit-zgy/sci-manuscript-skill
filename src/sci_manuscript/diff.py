@@ -8,15 +8,19 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from .compile import compile_tex, run_command, stage_runtime_resources
+from .compile import (
+    compile_tex,
+    publish_file_atomically,
+    run_command,
+    stage_runtime_resources,
+)
 from .errors import WorkflowError
 from .locations import build_review_locations
 from .provenance import ProvenanceSource, extract_provenance, split_by_review_provenance
 from .templates import resources_root
-from .tex import extract_braced, is_commented, is_escaped
+from .tex import extract_braced, is_escaped, scan_tex_commands
 from .workspace import ProjectConfig, strip_provenance_wrappers
 
-INPUT_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
 DIF_COMMENT_PATTERN = re.compile(r"(?m)^%DIF[^\n]*(?:\n|$)")
 DIF_CONTROL_PATTERN = re.compile(r"\\DIF(?:add|del|mod)(?:begin|end)(?:FL)?\s*")
 STYLE_BEGIN = "% SCI_DIFF_STYLE_BEGIN"
@@ -92,12 +96,10 @@ def _flatten_tex(
         raise WorkflowError(f"TeX input escapes permitted project roots: {resolved}")
     text = resolved.read_text(encoding="utf-8")
 
-    def replace_input(match: re.Match[str]) -> str:
-        if is_commented(text, match.start()):
-            return match.group(0)
-        name = match.group(1).strip()
+    def replace_input(name: str, original: str) -> str:
+        name = name.strip()
         if name == "preamble" or name.startswith("preamble/"):
-            return match.group(0)
+            return original
         candidate = resolved.parent / name
         if candidate.suffix == "":
             candidate = candidate.with_suffix(".tex")
@@ -110,11 +112,27 @@ def _flatten_tex(
                     candidate = alternate
                     break
         if not candidate.exists():
-            return match.group(0)
+            return original
         nested = _flatten_tex(candidate, roots, (*active, resolved))
         return f"\n% BEGIN INPUT {name}\n{nested}\n% END INPUT {name}\n"
 
-    return INPUT_PATTERN.sub(replace_input, text)
+    try:
+        commands = scan_tex_commands(
+            text,
+            ("input", "include"),
+            field_count=1,
+        )
+    except ValueError as exc:
+        raise WorkflowError(f"Malformed active TeX input in {resolved}.") from exc
+    pieces: list[str] = []
+    cursor = 0
+    for command in commands:
+        pieces.append(text[cursor : command.start])
+        original = text[command.start : command.end]
+        pieces.append(replace_input(command.fields[0], original))
+        cursor = command.end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def _copy_resources(config: ProjectConfig, target: Path) -> None:
@@ -637,13 +655,13 @@ def build_marked_manuscript(
     old_text = strip_provenance_wrappers(
         _flatten_tex(
             old_runtime_source,
-            (old_runtime, config.project),
+            (old_runtime,),
         )
     )
     provenance = extract_provenance(
         _flatten_tex(
             new_runtime_source,
-            (new_runtime, config.project),
+            (new_runtime,),
         )
     )
     old_source = source_dir / "old.tex"
@@ -707,6 +725,5 @@ def build_marked_manuscript(
         engine_override,
     )
     output = config.output_dir(round_number) / "manuscript_marked.pdf"
-    output.parent.mkdir(exist_ok=True)
-    shutil.copy2(compiled.pdf, output)
+    publish_file_atomically(compiled.pdf, output)
     return MarkedResult(pdf=output, locations=locations)

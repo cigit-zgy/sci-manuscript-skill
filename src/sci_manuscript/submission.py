@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
+import os
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 from .authors import (
     load_author_library,
@@ -25,10 +30,16 @@ from .metadata import generate_metadata
 from .response import build_response
 from .review import ReviewAuditResult, parse_reviews
 from .templates import render_template, resources_root, template_values
-from .workspace import GENERATED_SUBMISSION_PATHS, ProjectConfig
+from .workspace import (
+    GENERATED_SUBMISSION_PATHS,
+    ProjectConfig,
+    _generated_submission_paths,
+    revision_directory_name,
+)
 
 GUIDANCE_USE = re.compile(r"\\guidance\s*\{")
 TEMPLATE_TOKEN = re.compile(r"%%[A-Z0-9_]+%%")
+PENDING_MARKER = "SCI_MANUSCRIPT_PENDING:"
 REVIEW_COMPLETENESS_LINE = re.compile(
     r"(?m)^- Review completeness: \*\*(?:COMPLETE|INCOMPLETE)\*\*\.\n?"
 )
@@ -52,7 +63,25 @@ def ensure_submission_workspace(config: ProjectConfig, round_number: int) -> Pat
     values["AUTHOR_METADATA_PATH"] = "author_metadata.tex"
     settings = config.metadata.submission
     resources = resources_root() / "submission"
-    cover_source = target / "cover_letter.tex"
+    cover_source = target / "cover_letter_body.tex"
+    legacy_cover = target / "cover_letter.tex"
+    if legacy_cover.exists():
+        if cover_source.exists():
+            raise WorkflowError(
+                "Detected a v1 cover-letter workspace with both cover_letter.tex "
+                "and cover_letter_body.tex. Archive the workspace and resolve the "
+                "duplicate before using the 2.0 runtime."
+            )
+        archive = (
+            config.archive_root()
+            / "migrations"
+            / dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            / revision_directory_name(round_number)
+            / "submission"
+        )
+        archive.mkdir(parents=True, exist_ok=False)
+        shutil.copy2(legacy_cover, archive / legacy_cover.name)
+        os.replace(legacy_cover, cover_source)
     if settings.cover_letter and not cover_source.exists():
         render_template(
             resources / f"cover_letter_body_{config.language}.tex",
@@ -161,6 +190,14 @@ def _review_comments_available(config: ProjectConfig, round_number: int) -> bool
         return False
 
 
+def _unresolved_tokens(path: Path) -> tuple[str, ...]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise WorkflowError(f"Cannot read submission source: {path}") from exc
+    return tuple(sorted(set(TEMPLATE_TOKEN.findall(text))))
+
+
 def prepare_submission_artifacts(
     config: ProjectConfig,
     round_number: int,
@@ -174,13 +211,17 @@ def prepare_submission_artifacts(
         config.metadata,
         load_author_library(resolve_author_library_path()),
     )
-    resolve_signing_author(
-        config.metadata,
-        selection,
-        require_explicit_multiple=True,
+    needs_response = round_number > 0 and _review_comments_available(
+        config, round_number
     )
+    if config.metadata.submission.cover_letter or needs_response:
+        resolve_signing_author(
+            config.metadata,
+            selection,
+            require_explicit_multiple=True,
+        )
     if config.metadata.submission.cover_letter:
-        cover_source = submission / "cover_letter.tex"
+        cover_source = submission / "cover_letter_body.tex"
         try:
             cover_text = cover_source.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
@@ -190,12 +231,44 @@ def prepare_submission_artifacts(
                 "Cover letter still contains \\guidance{...} blocks; "
                 "replace or remove them before submission."
             )
-        unresolved = sorted(set(TEMPLATE_TOKEN.findall(cover_text)))
-        if unresolved:
+        cover_unresolved = sorted(set(TEMPLATE_TOKEN.findall(cover_text)))
+        if cover_unresolved:
             raise WorkflowError(
                 "Cover letter still contains unresolved template placeholders: "
-                + ", ".join(unresolved)
+                + ", ".join(cover_unresolved)
             )
+    settings = config.metadata.submission
+    if settings.highlights:
+        highlights = submission / "highlights.tex"
+        highlights_text = highlights.read_text(encoding="utf-8")
+        if PENDING_MARKER in highlights_text:
+            raise WorkflowError(
+                f"Highlights are still pending; remove the marker after editing: {highlights}"
+            )
+        highlights_unresolved = _unresolved_tokens(highlights)
+        if highlights_unresolved:
+            raise WorkflowError(
+                "Highlights contain unresolved placeholders: "
+                + ", ".join(highlights_unresolved)
+            )
+    if settings.graphical_abstract:
+        graphical = submission / "graphical_abstract"
+        final_pdf = graphical / "graphical_abstract.pdf"
+        source = graphical / "graphical_abstract.tex"
+        if not final_pdf.is_file() and (
+            not source.is_file() or PENDING_MARKER in source.read_text(encoding="utf-8")
+        ):
+            raise WorkflowError(
+                "Graphical abstract is still pending; provide a final PDF or remove "
+                f"the marker after editing: {source}"
+            )
+        if not final_pdf.is_file():
+            graphical_unresolved = _unresolved_tokens(source)
+            if graphical_unresolved:
+                raise WorkflowError(
+                    "Graphical abstract contains unresolved placeholders: "
+                    + ", ".join(graphical_unresolved)
+                )
     clean = build_clean_manuscript(config, round_number, run_dir, engine)
     marked: MarkedResult | None = None
     response_pdf: Path | None = None
@@ -224,9 +297,10 @@ def prepare_submission_artifacts(
             )
     stage = run_dir / "package_stage"
     stage.mkdir(parents=True, exist_ok=True)
-    settings = config.metadata.submission
     if settings.cover_letter:
-        _compile_cover_letter(submission / "cover_letter.tex", config, run_dir, engine)
+        _compile_cover_letter(
+            submission / "cover_letter_body.tex", config, run_dir, engine
+        )
     if settings.highlights:
         _compile_submission_source(
             submission / "highlights.tex", "highlights", config, run_dir, engine
@@ -236,7 +310,15 @@ def prepare_submission_artifacts(
         supplied = graphical_dir / "graphical_abstract.pdf"
         staged_graphical = stage / "graphical_abstract" / "graphical_abstract.pdf"
         staged_graphical.parent.mkdir(parents=True, exist_ok=True)
-        if supplied.is_file():
+        registered_generated = _generated_submission_paths(
+            config.round_dir(round_number)
+        )
+        supplied_is_user_source = (
+            supplied.is_file()
+            and Path("graphical_abstract/graphical_abstract.pdf")
+            not in registered_generated
+        )
+        if supplied_is_user_source:
             shutil.copy2(supplied, staged_graphical)
         else:
             compiled_graphical = _compile_submission_source(
@@ -259,16 +341,16 @@ def prepare_submission_artifacts(
         state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
         checklist_text += f"\n\n- Review completeness: **{state}**."
     checklist.write_text(checklist_text + "\n", encoding="utf-8")
-    for relative in GENERATED_SUBMISSION_PATHS:
-        generated = submission / relative
-        if generated.is_file():
-            generated.unlink()
-    for generated in stage.iterdir():
-        target = submission / generated.name
-        if generated.is_dir():
-            shutil.copytree(generated, target, dirs_exist_ok=True)
-        else:
-            shutil.copy2(generated, target)
+    generated_paths = set(GENERATED_SUBMISSION_PATHS)
+    if settings.graphical_abstract and not supplied_is_user_source:
+        generated_paths.add(Path("graphical_abstract/graphical_abstract.pdf"))
+    _publish_submission_stage(
+        config,
+        round_number,
+        stage,
+        generated_paths,
+        run_dir,
+    )
     artifacts = [SubmissionArtifact("Clean manuscript", clean)]
     if marked is not None:
         if layout_report is None:
@@ -289,3 +371,102 @@ def prepare_submission_artifacts(
         artifacts.append(SubmissionArtifact("Graphical abstract", graphical_pdf))
     artifacts.append(SubmissionArtifact("Submission files", submission))
     return artifacts
+
+
+def _publish_submission_stage(
+    config: ProjectConfig,
+    round_number: int,
+    stage: Path,
+    generated_paths: set[Path],
+    run_dir: Path,
+) -> None:
+    """Atomically install generated files and restore every old file on failure."""
+    submission = config.submission_dir(round_number)
+    rollback = run_dir / "publication_rollback"
+    rollback.mkdir(parents=True, exist_ok=True)
+    old_registry = config.generated_artifacts_path(round_number)
+    registry_backup = rollback / "generated_artifacts.yaml"
+    if old_registry.is_file():
+        shutil.copy2(old_registry, registry_backup)
+    backups: dict[Path, Path] = {}
+    installed: list[Path] = []
+    removed: list[Path] = []
+    temporary_paths: set[Path] = set()
+    try:
+        old_generated = _generated_submission_paths(config.round_dir(round_number))
+        staged_paths = sorted(
+            (path.relative_to(stage) for path in stage.rglob("*") if path.is_file()),
+            key=lambda item: item.as_posix(),
+        )
+        for relative in staged_paths:
+            staged = stage / relative
+            target = submission / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_file():
+                backup = rollback / relative
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, backup)
+                backups[target] = backup
+            temporary = target.with_name(f".{target.name}.new")
+            temporary_paths.add(temporary)
+            shutil.copy2(staged, temporary)
+            os.replace(temporary, target)
+            temporary_paths.discard(temporary)
+            installed.append(target)
+        managed = set(GENERATED_SUBMISSION_PATHS) | old_generated | generated_paths
+        for relative in sorted(
+            managed - set(staged_paths), key=lambda item: item.as_posix()
+        ):
+            target = submission / relative
+            if not target.is_file():
+                continue
+            backup = rollback / relative
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, backup)
+            backups[target] = backup
+            target.unlink()
+            removed.append(target)
+        owned = {
+            relative.as_posix(): hashlib.sha256(
+                (submission / relative).read_bytes()
+            ).hexdigest()
+            for relative in sorted(generated_paths, key=lambda item: item.as_posix())
+            if (submission / relative).is_file()
+        }
+        registry = old_registry.with_suffix(".yaml.new")
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(
+            yaml.safe_dump(
+                {
+                    "schema": "sci-manuscript-generated-artifacts/v1",
+                    "paths": list(owned),
+                    "sha256": owned,
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        os.replace(registry, old_registry)
+    except Exception:
+        for temporary in temporary_paths:
+            if temporary.is_file():
+                temporary.unlink()
+        registry_temporary = old_registry.with_suffix(".yaml.new")
+        if registry_temporary.is_file():
+            registry_temporary.unlink()
+        for target in reversed(installed):
+            target_backup = backups.get(target)
+            if target_backup is not None:
+                shutil.copy2(target_backup, target)
+            elif target.exists():
+                target.unlink()
+        for target in removed:
+            backup = backups[target]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup, target)
+        if registry_backup.is_file():
+            old_registry.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(registry_backup, old_registry)
+        elif old_registry.exists():
+            old_registry.unlink()
+        raise

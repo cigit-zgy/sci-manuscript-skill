@@ -25,6 +25,9 @@ def test_readme_screenshots_are_real_equal_size_pngs() -> None:
     assert marked.stat().st_size > 100_000
     assert response.stat().st_size > 50_000
     assert _png_size(marked) == _png_size(response) == (1275, 1754)
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "docs/images/marked_manuscript.png" in readme
+    assert "docs/images/response_letter.png" in readme
 
 
 def test_runtime_resources_are_package_data() -> None:
@@ -42,7 +45,7 @@ def test_runtime_resources_are_package_data() -> None:
         "manuscript/sections/default/00_frontmatter_zh.tex",
         "manuscript/sections/default/00_frontmatter_en.tex",
         "manuscript/sections/default/01_introduction.tex",
-        "manuscript/sections/default/01_introduction_zh.tex",
+        "manuscript/sections/default/01_manuscript_zh.tex",
         "correspondence_templates/response/response_en.tex",
         "correspondence_templates/cover_letter/cover_letter_en.tex",
         "submission/cover_letter_body_en.tex",
@@ -101,9 +104,7 @@ def test_no_obsolete_public_architecture_strings() -> None:
     for obsolete in (
         "project `authors.yaml`",
         "--authors",
-        "custom publisher",
-        "--custom-template",
-        "--engine latex",
+        "There is no traditional-LaTeX fallback",
         "math-markup=WHOLE",
         "v3.0.0",
     ):
@@ -236,8 +237,8 @@ def test_review_workflow_has_one_public_interface() -> None:
                 pending.extend(choices.values())
     assert "--allow-" + "placeholders" not in option_strings
     assert "--authors" not in option_strings
-    assert "--custom-template" not in option_strings
-    assert engine_choices == {"auto", "tectonic"}
+    assert "--custom-template" in option_strings
+    assert engine_choices == {"auto", "tectonic", "latex"}
 
 
 def test_current_docs_have_one_revision_rendering_contract() -> None:

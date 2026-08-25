@@ -148,11 +148,11 @@ def test_publisher_language_matrix_is_explicit(
     text = text.replace("  publisher: chinese", f"  publisher: {publisher}")
     path.write_text(text, encoding="utf-8")
 
-    with pytest.raises(MetadataError, match=r"requires manuscript.language"):
+    with pytest.raises(MetadataError, match=r"accepted language"):
         load_meta(path)
 
 
-def test_custom_publisher_is_not_a_canonical_option(tmp_path: Path) -> None:
+def test_custom_publisher_is_a_canonical_option(tmp_path: Path) -> None:
     path = tmp_path / "custom-publisher.yaml"
     _write_meta(
         path,
@@ -165,8 +165,7 @@ def test_custom_publisher_is_not_a_canonical_option(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(MetadataError, match=r"journal.publisher must be one of"):
-        load_meta(path)
+    assert load_meta(path).publisher == "custom"
 
 
 @pytest.mark.parametrize(
@@ -183,7 +182,7 @@ def test_noncanonical_authors_schemas_are_rejected(
     path = tmp_path / "obsolete.yaml"
     _write_meta(path, authors)
 
-    with pytest.raises(MetadataError, match="Canonical authors schema"):
+    with pytest.raises(MetadataError, match=r"Canonical authors schema|Detected a v1"):
         load_meta(path)
 
 

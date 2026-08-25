@@ -92,7 +92,7 @@ def _complete_responses(source: Path, review_ids: tuple[str, ...]) -> None:
 
 def _complete_cover(manuscript: Path, round_number: int) -> Path:
     config = load_project(manuscript, round_number)
-    source = ensure_submission_workspace(config, round_number) / "cover_letter.tex"
+    source = ensure_submission_workspace(config, round_number) / "cover_letter_body.tex"
     text = re.sub(
         r"\\guidance\{.*?\}",
         "Approved anonymous cover-letter statement.",
@@ -101,6 +101,17 @@ def _complete_cover(manuscript: Path, round_number: int) -> Path:
     )
     assert "\\guidance{" not in text
     source.write_text(text, encoding="utf-8")
+    submission = source.parent
+    for pending in (
+        submission / "highlights.tex",
+        submission / "graphical_abstract" / "graphical_abstract.tex",
+    ):
+        pending.write_text(
+            pending.read_text(encoding="utf-8")
+            .replace("% SCI_MANUSCRIPT_PENDING: highlights\n", "")
+            .replace("% SCI_MANUSCRIPT_PENDING: graphical_abstract\n", ""),
+            encoding="utf-8",
+        )
     return source
 
 
@@ -108,6 +119,49 @@ def _replace_once(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
     assert text.count(old) == 1
     path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def _custom_release_template(root: Path) -> Path:
+    root.mkdir()
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "style.tex").write_text(
+        "\\newcommand{\\CustomResourceMarker}{Custom resource loaded.}\n",
+        encoding="utf-8",
+    )
+    (root / "workflow.tex").write_text(
+        "\\documentclass{article}\n"
+        "\\input{author_metadata}\n"
+        "\\input{preamble/en}\n"
+        "\\input{nested/style}\n"
+        "\\title{\\ManuscriptTitle}\n"
+        "\\author{\\SelectedAuthorNames}\n"
+        "\\begin{document}\n\\maketitle\n"
+        "\\CustomResourceMarker\n"
+        "%%FRONTMATTER_INPUT%%\n%%SECTION_INPUTS%%\n"
+        "\\bibliographystyle{%%BIBLIOGRAPHY_STYLE%%}\n"
+        "\\bibliography{%%BIBLIOGRAPHY_PATH%%}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (root / "sections.yaml").write_text(
+        "languages: [en]\n"
+        "bibliography:\n  package: '% article supplies bibliography'\n"
+        "  style: plain\n"
+        "frontmatter:\n  file: 00_frontmatter.tex\n  source: frontmatter.tex\n"
+        "sections:\n  - file: 01_body.tex\n    source: body.tex\n"
+        "    title: Body\n",
+        encoding="utf-8",
+    )
+    (root / "frontmatter.tex").write_text(
+        "\\begin{abstract}\nCustom abstract.\n\\end{abstract}\n",
+        encoding="utf-8",
+    )
+    (root / "body.tex").write_text(
+        "\\section{%%SECTION_TITLE%%}\nCustom body.\n",
+        encoding="utf-8",
+    )
+    return root
 
 
 def _pdf_text(path: Path) -> str:
@@ -264,7 +318,7 @@ def _assert_artifacts(result: LifecycleResult, version: Path) -> None:
     }
     assert {path.name for path in submission.iterdir()} == {
         "checklist.md",
-        "cover_letter.tex",
+        "cover_letter_body.tex",
         "cover_letter.pdf",
         "graphical_abstract",
         "highlights.tex",
@@ -337,9 +391,9 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
     initial = manuscript / "initial_submission"
     assert {path.name for path in (initial / "sections").iterdir()} == {
         "00_frontmatter.tex",
-        "01_introduction.tex",
+        "01_manuscript.tex",
     }
-    body = initial / "sections" / "01_introduction.tex"
+    body = initial / "sections" / "01_manuscript.tex"
     _replace_once(
         body,
         "Replace this placeholder with the manuscript body.",
@@ -440,6 +494,75 @@ def test_non_chinese_initial_workflows_own_scientific_frontmatter(
         assert r"\keywords{\ManuscriptKeywordsText}" in source
     else:
         assert "canonical" in pdf_text and "frontmatter" in pdf_text
+    project = ManuscriptProject(manuscript)
+    project.start_revision(confirmed=True)
+    revision = manuscript / "revision_01"
+    introduction = revision / "sections" / "01_introduction.tex"
+    _replace_once(
+        introduction,
+        "Replace this placeholder and its example citation~\\cite{replace_me} with the\n"
+        "introduction.",
+        "User-approved revision with citation~\\cite{replace_me}.",
+    )
+    before = source_digest(revision, scientific_only=True)
+    revision_result = project.build(engine="tectonic")
+    assert source_digest(revision, scientific_only=True) == before
+    assert {artifact.label for artifact in revision_result.artifacts} >= {
+        "Clean manuscript",
+        "Marked manuscript",
+    }
+    assert (revision / "output" / "manuscript_marked.pdf").is_file()
+    assert not (manuscript / "tmp").exists()
+
+
+def test_custom_publisher_initial_and_revision_workflow(tmp_path: Path) -> None:
+    _require_toolchain()
+    template = _custom_release_template(tmp_path / "custom-template")
+    project_dir = tmp_path / "Custom Publisher Project"
+    initialize_manuscript(
+        project_dir,
+        title="Custom Publisher Validation",
+        journal="Custom Journal",
+        publisher="custom",
+        language="en",
+        article_type="Article",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        custom_template=template,
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    copied = manuscript / "references" / "journal_template"
+    assert (copied / "nested" / "style.tex").is_file()
+    initial_pdf = manuscript / "initial_submission" / "output" / "manuscript.pdf"
+    assert "Custom resource loaded" in _pdf_text(initial_pdf)
+
+    reviews = tmp_path / "custom-reviews.md"
+    reviews.write_text(
+        "# Associate Editor\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Revise the custom body.\n",
+        encoding="utf-8",
+    )
+    project = ManuscriptProject(manuscript)
+    project.start_revision(reviews=reviews, confirmed=True)
+    revision = manuscript / "revision_01"
+    body = revision / "sections" / "01_body.tex"
+    _replace_once(body, "Custom body.", "\\review{AE-1}{Custom revised body.}")
+    before = source_digest(revision, scientific_only=True)
+
+    result = project.build(engine="tectonic")
+
+    assert source_digest(revision, scientific_only=True) == before
+    assert {artifact.label for artifact in result.artifacts} == {
+        "Clean manuscript",
+        "Marked manuscript",
+        "Response letter",
+    }
+    assert "Custom revised body" in _pdf_text(
+        revision / "output" / "manuscript_marked.pdf"
+    )
+    assert (manuscript / "state" / "revision_01" / "build_manifest.yaml").is_file()
+    assert not (manuscript / "tmp").exists()
 
 
 def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
@@ -558,7 +681,7 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
         reviews=_review_file(tmp_path / "reviews_zh.md", 1), confirmed=True
     )
     revision = manuscript / "revision_01"
-    introduction = revision / "sections" / "01_introduction.tex"
+    introduction = revision / "sections" / "01_manuscript.tex"
     _replace_once(
         introduction,
         "Replace this placeholder with the manuscript body.",
@@ -596,9 +719,9 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
     assert "位置不可用" not in assembled_text
     assert assembled_text.count("\\reviewlocation{第 ") == 2
     assert not (revision / "response" / "response_letter.tex").exists()
-    assert (revision / "submission" / "cover_letter.tex").is_file()
+    assert (revision / "submission" / "cover_letter_body.tex").is_file()
     assert "\\documentclass" not in response_source_text
-    cover_body = revision / "submission" / "cover_letter.tex"
+    cover_body = revision / "submission" / "cover_letter_body.tex"
     assert "\\documentclass" not in cover_body.read_text(encoding="utf-8")
     logs = list(retained_runs[0].rglob("*.compiler.log"))
     diagnostics = "\n".join(path.read_text(errors="replace") for path in logs)
@@ -633,9 +756,7 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     )
     manuscript = project_dir / "manuscript"
     project = ManuscriptProject(manuscript)
-    initial_body = (
-        manuscript / "initial_submission" / "sections" / "01_introduction.tex"
-    )
+    initial_body = manuscript / "initial_submission" / "sections" / "01_manuscript.tex"
     old_paragraph = (
         "原始中文段落包含行内公式 $A \\longrightarrow B$、引用"
         "~\\cite{replace_me}，并保留足够长的连续文字来验证自动差异标记"
@@ -648,7 +769,7 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     )
     project.start_revision(reviews=reviews, confirmed=True)
     revision = manuscript / "revision_01"
-    body = revision / "sections" / "01_introduction.tex"
+    body = revision / "sections" / "01_manuscript.tex"
     _replace_once(
         body,
         old_paragraph,
@@ -714,7 +835,7 @@ def test_chinese_revision_submission_generates_registry_and_locations(
     assert (retained_runs[0] / "response_source" / "response_letter.tex").is_file()
     assert (retained_runs[0] / "cover_source" / "cover_letter.tex").is_file()
     assert not (revision / "response" / "response_letter.tex").exists()
-    cover_source = revision / "submission" / "cover_letter.tex"
+    cover_source = revision / "submission" / "cover_letter_body.tex"
     assert cover_source.is_file()
     assert "\\documentclass" not in cover_source.read_text(encoding="utf-8")
     shutil.rmtree(manuscript / "tmp")
@@ -735,7 +856,7 @@ def test_math_revision_semantics_are_fine_grained_and_rendered(tmp_path: Path) -
         engine="tectonic",
     )
     manuscript = project_dir / "manuscript"
-    initial = manuscript / "initial_submission" / "sections" / "01_introduction.tex"
+    initial = manuscript / "initial_submission" / "sections" / "01_manuscript.tex"
     old = r"""Deleted inline $\mathcal{O}_{\mathrm{P}}$ with a subscript.
 Reviewer inline $a+b$ and parenthesized \(\mathcal{O}_{\mathrm{M},old}\), plus unchanged math $u=v$.
 \begin{equation}
@@ -756,7 +877,7 @@ Stable anchor.
     project = ManuscriptProject(manuscript)
     project.start_revision(reviews=reviews, confirmed=True)
     revision = manuscript / "revision_01"
-    current = revision / "sections" / "01_introduction.tex"
+    current = revision / "sections" / "01_manuscript.tex"
     new = r"""\review{1-1}{Reviewer inline $a+c$ and parenthesized \(\mathcal{O}_{\mathrm{M},new}\), plus unchanged math $u=v$.
 \begin{equation}
 x+y+w=z\label{eq:partial}
@@ -979,7 +1100,7 @@ def test_response_body_reaches_response_letter_during_build(tmp_path: Path) -> N
     project = ManuscriptProject(manuscript)
     project.start_revision(reviews=reviews, confirmed=True)
     revision = manuscript / "revision_01"
-    body = revision / "sections" / "01_introduction.tex"
+    body = revision / "sections" / "01_manuscript.tex"
     _replace_once(
         body,
         "Replace this placeholder with the manuscript body.",
@@ -1018,6 +1139,22 @@ def test_response_body_reaches_response_letter_during_build(tmp_path: Path) -> N
     rebuilt_text = _pdf_text(response_pdf)
     assert "ResponseSentinelUpdated" in rebuilt_text
     assert "ResponseSentinelOne" not in rebuilt_text
+
+    response_source.write_text("\\Response{1-1}{Unbalanced.\n", encoding="utf-8")
+    malformed = project.build(engine="tectonic")
+
+    assert not response_pdf.exists()
+    assert {artifact.label for artifact in malformed.artifacts} == {
+        "Clean manuscript",
+        "Marked manuscript",
+    }
+    assert malformed.review_audit is not None
+    invalid = next(
+        issue
+        for issue in malformed.review_audit.issues
+        if issue.code == "RESPONSES_INVALID"
+    )
+    assert invalid.paths == (response_source.resolve(),)
 
 
 def test_frontmatter_reviewer_addition_is_red_and_location_is_generated(

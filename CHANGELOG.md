@@ -2,42 +2,59 @@
 
 ## 2.0.0
 
-- Removed the superseded project author-library override, custom publisher
-  template, traditional-LaTeX engine, implicit bibliography discovery, and
-  manuscript frontmatter fields from the public contract.
-- Defined the supported publisher/language matrix as Chinese/`zh`,
-  Elsevier/`en`, Nature/`en`, and ACS/`en`.
-- Formal revision submission now requires a complete review audit; ordinary
-  manuscript builds remain available while responses are incomplete.
-- Reindexing clears only generated submission artifacts and preserves editable
-  cover-letter, highlights, and graphical-abstract sources.
-- TeX command scanners ignore commented provenance, and ambiguous duplicate
-  review-comment fingerprints no longer produce false drift reports.
-- Failed revision creation removes partial round, state, response, and temporary
-  transaction data.
-- Bibliography synchronization now requires an explicit user-supplied BibTeX
-  path.
-- Revision builds now refresh the response letter from the current user-owned
-  `responses.tex` after marked-manuscript location extraction; incomplete
-  response bodies remain non-blocking while malformed sources cannot leave a
-  trusted-looking response artifact.
-- User-visible section inputs staged before `\begin{document}` now participate
-  in the same direct-parent comparison and location pipeline as body sections,
-  covering title, abstract, keywords, reviewer provenance, and inline math.
+Version 2.0.0 establishes one strict workspace and submission contract. It does
+not silently migrate v1 workspaces; archive the project before deliberately
+converting it with the migration note in `references/workflow.md`.
 
-- Revision-round `build` retains both clean and direct-parent marked PDFs.
-- Reviewer provenance is separated from structural comparison: `\review{ID}{text}` records reviewer scope, while only actual additions inside that scope render as red text without an underline; unchanged scoped text remains unmarked.
-- Deletions render as light-gray strikeout and ordinary author additions render as blue text without an underline or wave.
-- Pure-prose replacements are refined at character level only when `SequenceMatcher(..., autojunk=False).ratio() >= 0.70` and the replacement is at most 2000 characters; dissimilar, long, or TeX-bearing replacements remain atomic.
-- Display and inline mathematics use fine-grained comparison (`latexdiff --math-markup=FINE`) with the same semantic colors as prose; mathematics is excluded from CJK/ulem text-decoration scanners except for the dedicated deletion strikeout.
-- Persistent revision creation and review-index records live under `state/revision_NN/`; `output/` contains final user PDFs only and reproducible diagnostics remain under the current `tmp/<run>/`.
-- Malformed response sources produce `RESPONSES_INVALID` with the absolute
-  source path. Clean and marked manuscript builds remain available, while formal
-  submission and untrusted response output are blocked.
-- Reviewer-comment input uses one Editor/Reviewer structure with an optional summary and numbered detailed comments. IDs are assigned internally only to non-empty detailed comments.
-- Editable response entries are generated from the actual detailed comments. Users write only each `\Response{ID}{body}` body; missing, empty, and orphan entries remain non-blocking completeness issues.
-- Response-letter locations are derived automatically from `\review{ID}{...}`, with localized and normalized multiple ranges; response-only comments omit the location sentence.
-- Publisher-independent title ownership lives in user-editable `sections/00_frontmatter.tex`; runtime manuscript and correspondence metadata resolve that source without duplicating title text in `meta.yaml`.
-- Chinese abstract and keyword macros participate in the same provenance classification as body text.
-- Reviewer line locations are compiled independently from marked-manuscript color rendering.
-- Added regression coverage for provenance extraction, refinement policy, Chinese front matter, mathematical markup, three-color rendering, and clean-versus-marked layout QA.
+Breaking changes:
+
+- Author roles use only list-valued `authors.first`, `authors.corresponding`, and
+  `authors.other`; the v1 role keys are rejected.
+- Visible title, abstract, and keywords are user-owned in
+  `sections/00_frontmatter.tex`; `meta.yaml` owns workflow metadata rather than
+  rendered frontmatter prose.
+- Reviewer responses use generated `\Response{ID}{body}` entries. Associate
+  Editor IDs (`AE-N`) join Editor (`E-N`) and Reviewer (`N-N`) IDs, while line
+  locations remain automatic and never appear as user-editable fields.
+- User cover prose is `submission/cover_letter_body.tex`; complete cover and
+  response documents are assembled from package-owned templates at runtime.
+- Revision `build` refreshes clean, direct-parent marked, and parseable current
+  response PDFs while reporting incomplete review items. Formal `submission`
+  requires a complete review audit and complete enabled submission sources.
+- Creation records, review indexes, generated-artifact ownership, and the
+  successful build manifest live under `state/<round>/`. Final user PDFs live in
+  `output/`; reproducible diagnostics live in `tmp/`.
+- Submission artifacts and sources share one flat `submission/` directory;
+  nested `submission/package/` is rejected. Reindex/rollback preserve user
+  submission sources and hash-verify ownership of generated paths.
+- Built-in templates support Chinese/`zh`, Elsevier/`en`, Nature/`en`, and
+  ACS/`en`. Custom templates are explicitly supplied at initialization, declare
+  their languages, and live only in `references/journal_template/`.
+- Bibliography synchronization requires an explicit BibTeX path. Tectonic is
+  the primary release-gated engine; the traditional `latexmk` driver is an
+  explicit supported engine with engine-aware diagnostics.
+- Publisher infrastructure remains package-owned. The Chinese default body is
+  semantic-free, and user composition roots remain editable.
+
+Reliability and audit changes:
+
+- TeX input and provenance scanning is comment-aware, nested-brace aware, and
+  rejects path traversal or malformed active commands with concrete source
+  paths.
+- Review audit detects changed/removed comments, drift, orphan provenance,
+  duplicate IDs, malformed response source, and incomplete responses without
+  blocking ordinary manuscript rendering.
+- Revision provenance, fine-grained mathematical comparison, automatic response
+  locations, and the red/blue/light-gray visual semantics are unchanged.
+- Output and submission publication is staged and atomic. A failed operation
+  preserves the previous complete final artifacts and successful manifest.
+- Each successful build/submission writes a private-path-free manifest of
+  source, resource, toolchain, font, and output hashes.
+- The project-maintained Chinese class is MIT licensed; the derived
+  `kxtbcas-numeric.bst` provenance and third-party license are documented.
+
+## 1.0.0
+
+- First public release of the manuscript initialization, build, revision,
+  response, submission, rollback, reindex, and bibliography workflow.
+- Established package-owned journal resources and user-owned scientific source.
