@@ -16,6 +16,7 @@ from sci_manuscript.compile import (
     CjkProbeResult,
     CompileResult,
     parse_overfull_boxes,
+    relocate_pre_document_section_inputs,
     resolve_engine,
     validate_revision_layout,
 )
@@ -166,6 +167,28 @@ def test_flatten_tex_ignores_comments_and_rejects_root_escape(tmp_path: Path) ->
     source.write_text("\\input{../outside}\n", encoding="utf-8")
     with pytest.raises(WorkflowError, match="escapes permitted project roots"):
         _flatten_tex(source, (root,))
+
+
+def test_runtime_staging_moves_all_visible_section_inputs_into_document() -> None:
+    source = r"""\documentclass{article}
+\input{publisher_metadata}
+\input{preamble/en}
+\input{sections/frontmatter_custom}
+% \input{sections/commented_out}
+\begin{document}
+\input{sections/body}
+\end{document}
+"""
+
+    relocated = relocate_pre_document_section_inputs(source)
+
+    boundary = relocated.index(r"\begin{document}")
+    assert relocated.index(r"\input{publisher_metadata}") < boundary
+    assert relocated.index(r"\input{preamble/en}") < boundary
+    assert relocated.index(r"\input{sections/frontmatter_custom}") > boundary
+    assert relocated.index(r"\input{sections/body}") > boundary
+    assert relocated.count(r"\input{sections/frontmatter_custom}") == 1
+    assert "% \\input{sections/commented_out}" in relocated
 
 
 def test_workspace_contract_and_meta(tmp_path: Path) -> None:

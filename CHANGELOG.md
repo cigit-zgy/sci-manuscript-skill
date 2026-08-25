@@ -17,6 +17,13 @@
   transaction data.
 - Bibliography synchronization now requires an explicit user-supplied BibTeX
   path.
+- Revision builds now refresh the response letter from the current user-owned
+  `responses.tex` after marked-manuscript location extraction; incomplete
+  response bodies remain non-blocking while malformed sources cannot leave a
+  trusted-looking response artifact.
+- User-visible section inputs staged before `\begin{document}` now participate
+  in the same direct-parent comparison and location pipeline as body sections,
+  covering title, abstract, keywords, reviewer provenance, and inline math.
 
 - Revision-round `build` retains both clean and direct-parent marked PDFs.
 - Reviewer provenance is separated from structural comparison: `\review{ID}{text}` records reviewer scope, while only actual additions inside that scope render as red text without an underline; unchanged scoped text remains unmarked.

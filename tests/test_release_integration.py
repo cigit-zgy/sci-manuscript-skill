@@ -858,3 +858,230 @@ def test_chinese_funding_metadata_participates_in_revision_diff(
     assert "52131003" not in old_runtime.read_text(encoding="utf-8")
     assert "52131003" in new_runtime.read_text(encoding="utf-8")
     assert "52327813" in new_runtime.read_text(encoding="utf-8")
+
+
+def test_frontmatter_abstract_addition_is_marked(tmp_path: Path) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "Frontmatter Abstract Revision Project"
+    initialize_manuscript(
+        project_dir,
+        title="摘要修订覆盖测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    project = ManuscriptProject(manuscript)
+    project.start_revision(confirmed=True)
+    revision = manuscript / "revision_01"
+    frontmatter = revision / "sections" / "00_frontmatter.tex"
+    _replace_once(
+        frontmatter,
+        "\\end{abstract}",
+        "FrontmatterAbstractSentinel\n\\end{abstract}",
+    )
+
+    project.build(engine="tectonic", keep_temp=True)
+
+    output = revision / "output"
+    assert "FrontmatterAbstractSentinel" in _pdf_text(output / "manuscript_clean.pdf")
+    assert "FrontmatterAbstractSentinel" in _pdf_text(output / "manuscript_marked.pdf")
+    run = next((manuscript / "tmp").glob("run_*"))
+    old_source = (run / "marked_source" / "old.tex").read_text(encoding="utf-8")
+    new_source = (run / "marked_source" / "new.tex").read_text(encoding="utf-8")
+    marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
+    assert "FrontmatterAbstractSentinel" not in old_source
+    assert "FrontmatterAbstractSentinel" in new_source
+    assert re.search(
+        r"\\DIFadd(?:FL)?\{FrontmatterAbstractSentinel\s*\}", marked_source
+    )
+
+
+@pytest.mark.parametrize(
+    ("placeholder", "addition"),
+    (
+        ("% Chinese title", "中文标题新增片段"),
+        ("% English title", "EnglishTitleAddition"),
+        ("% English abstract", "EnglishAbstractAddition"),
+        (r"\keywords{\n\n}", "\\keywords{中文关键词新增}"),
+        (r"\enkeywords{\n\n}", "\\enkeywords{EnglishKeywordAddition}"),
+    ),
+)
+def test_frontmatter_visible_field_addition_is_marked(
+    tmp_path: Path,
+    placeholder: str,
+    addition: str,
+) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / f"Frontmatter Field {addition}"
+    initialize_manuscript(
+        project_dir,
+        title="前置信息字段覆盖测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    project = ManuscriptProject(manuscript)
+    project.start_revision(confirmed=True)
+    revision = manuscript / "revision_01"
+    frontmatter = revision / "sections" / "00_frontmatter.tex"
+    current = frontmatter.read_text(encoding="utf-8")
+    old = placeholder.replace(r"\n", "\n")
+    assert current.count(old) == 1
+    frontmatter.write_text(current.replace(old, addition), encoding="utf-8")
+
+    project.build(engine="tectonic", keep_temp=True)
+
+    run = next((manuscript / "tmp").glob("run_*"))
+    marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
+    visible = addition
+    if addition.startswith((r"\keywords", r"\enkeywords")):
+        visible = addition.split("{", 1)[1][:-1]
+    assert visible in _pdf_text(revision / "output" / "manuscript_marked.pdf")
+    assert re.search(rf"\\DIFadd(?:FL)?\{{[^}}]*{re.escape(visible)}", marked_source)
+
+
+def test_response_body_reaches_response_letter_during_build(tmp_path: Path) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "Build Response Revision Project"
+    initialize_manuscript(
+        project_dir,
+        title="回复构建链路测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        engine="tectonic",
+    )
+    reviews = tmp_path / "build_response_reviews.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Please revise the manuscript.\n"
+        "2. Please explain without a manuscript change.\n",
+        encoding="utf-8",
+    )
+    manuscript = project_dir / "manuscript"
+    project = ManuscriptProject(manuscript)
+    project.start_revision(reviews=reviews, confirmed=True)
+    revision = manuscript / "revision_01"
+    body = revision / "sections" / "01_introduction.tex"
+    _replace_once(
+        body,
+        "Replace this placeholder with the manuscript body.",
+        "\\review{1-1}{BuildReviewSentinel}",
+    )
+    response_source = revision / "response" / "responses.tex"
+    response_source.write_text(
+        "\\Response{1-1}{ResponseSentinelOne}\n\\Response{1-2}{ResponseSentinelTwo}\n",
+        encoding="utf-8",
+    )
+
+    result = project.build(engine="tectonic", keep_temp=True)
+
+    response_pdf = revision / "output" / "response_letter.pdf"
+    assert response_pdf.is_file()
+    response_text = _pdf_text(response_pdf)
+    assert "ResponseSentinelOne" in response_text
+    assert "ResponseSentinelTwo" in response_text
+    assert "第" in response_text and "行" in response_text
+    assert "Location unavailable" not in response_text
+    assert "位置不可用" not in response_text
+    assert any(artifact.path == response_pdf for artifact in result.artifacts)
+    run = next((manuscript / "tmp").glob("run_*"))
+    assembled = (run / "response_source" / "response_letter.tex").read_text(
+        encoding="utf-8"
+    )
+    assert assembled.count(r"\reviewlocation{") == 1
+    response_source.write_text(
+        "\\Response{1-1}{ResponseSentinelUpdated}\n"
+        "\\Response{1-2}{ResponseSentinelTwo}\n",
+        encoding="utf-8",
+    )
+
+    project.build(engine="tectonic")
+
+    rebuilt_text = _pdf_text(response_pdf)
+    assert "ResponseSentinelUpdated" in rebuilt_text
+    assert "ResponseSentinelOne" not in rebuilt_text
+
+
+def test_frontmatter_reviewer_addition_is_red_and_location_is_generated(
+    tmp_path: Path,
+) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "Frontmatter Provenance Revision Project"
+    initialize_manuscript(
+        project_dir,
+        title="摘要审稿来源测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    initial = manuscript / "initial_submission" / "sections" / "00_frontmatter.tex"
+    _replace_once(
+        initial,
+        "% Chinese abstract",
+        "摘要稳定文本。待删除摘要内容。行内公式 $\\mathrm{ASM2d}_{old}$。",
+    )
+    reviews = tmp_path / "frontmatter_reviews.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Please revise the abstract.\n",
+        encoding="utf-8",
+    )
+    project = ManuscriptProject(manuscript)
+    project.start_revision(reviews=reviews, confirmed=True)
+    revision = manuscript / "revision_01"
+    frontmatter = revision / "sections" / "00_frontmatter.tex"
+    _replace_once(
+        frontmatter,
+        "摘要稳定文本。待删除摘要内容。行内公式 $\\mathrm{ASM2d}_{old}$。",
+        "摘要稳定文本。作者普通新增。"
+        "\\review{1-1}{审稿关联新增，行内公式 $\\mathrm{ASM2d}_{new}$。}",
+    )
+    (revision / "response" / "responses.tex").write_text(
+        "\\Response{1-1}{FrontmatterResponseSentinel}\n",
+        encoding="utf-8",
+    )
+
+    project.build(engine="tectonic", keep_temp=True)
+
+    output = revision / "output"
+    marked_pdf = output / "manuscript_marked.pdf"
+    response_pdf = output / "response_letter.pdf"
+    assert "作者普通新增" in _pdf_text(marked_pdf)
+    response_text = _pdf_text(response_pdf)
+    assert "FrontmatterResponseSentinel" in response_text
+    assert "第" in response_text and "行" in response_text
+    run = next((manuscript / "tmp").glob("run_*"))
+    marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
+    assert r"\DIFaddReview{" in marked_source
+    assert r"\DIFadd{" in marked_source
+    assert r"\DIFdel{" in marked_source
+    assert r"\DIFaddReviewMath{" in marked_source
+    assert r"\DIFdelMath{" in marked_source
+    registry = run / "marked_build" / "manuscript_marked.reviewloc"
+    assert "1-1|" in registry.read_text(encoding="utf-8")
+    _assert_provenance_colors(marked_pdf, tmp_path / "frontmatter_colors")

@@ -144,7 +144,9 @@ the light-gray strikeout.
 - publication-order author IDs and corresponding-author IDs.
 
 `sections/00_frontmatter.tex` stores the user-owned manuscript title, abstract,
-and keywords.
+and keywords. These visible fields participate in the same direct-parent
+revision comparison as body sections; generated visible funding metadata is
+included in that comparison as well.
 
 The active author library stores only person-level names, email, affiliations,
 and bilingual biography strings. Names, affiliations, email, and biographies
@@ -175,6 +177,12 @@ Templates Compiler Revision engine
 ```
 
 The project directory contains scientific content. The Skill package contains reusable infrastructure.
+
+For revision rounds, `build` deterministically refreshes clean, marked, and
+response PDFs. The response PDF reads reply bodies only from the current
+`response/responses.tex` and inserts locations derived from current
+`\review{ID}{...}` provenance; incomplete replies remain non-blocking audit
+items, while malformed response syntax suppresses untrusted response output.
 
 ## Development
 

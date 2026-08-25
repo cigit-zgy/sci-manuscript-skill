@@ -24,7 +24,7 @@ from .metadata import (
     SubmissionSettings,
     validate_publisher_language,
 )
-from .response import ensure_response_source, init_response
+from .response import build_response, ensure_response_source, init_response
 from .review import ReviewAuditResult, audit_reviews, parse_reviews
 from .submission import prepare_submission_artifacts
 from .templates import ensure_manuscript_sources
@@ -288,6 +288,9 @@ class ManuscriptProject:
         config = load_project(self.root, selected)
         ensure_manuscript_sources(config, selected)
         audit: ReviewAuditResult | None = None
+        response_output = config.output_dir(selected) / "response_letter.pdf"
+        if selected > 0 and response_output.exists():
+            response_output.unlink()
         with temporary_run(self.root, keep_temp) as run_dir:
             clean = build_clean_manuscript(config, selected, run_dir, engine)
             artifacts = [Artifact("Clean manuscript", clean)]
@@ -296,6 +299,19 @@ class ManuscriptProject:
                 artifacts.append(Artifact("Marked manuscript", marked.pdf))
                 ensure_response_source(config, selected)
                 audit = audit_reviews(config, selected, record_index=True)
+                malformed = any(
+                    issue.code in {"COMMENTS_INVALID", "RESPONSES_INVALID"}
+                    for issue in audit.issues
+                )
+                if audit.total and not malformed:
+                    response = build_response(
+                        config,
+                        selected,
+                        marked.locations,
+                        run_dir,
+                        engine,
+                    )
+                    artifacts.append(Artifact("Response letter", response))
         return LifecycleResult(
             "build",
             revision_directory_name(selected),

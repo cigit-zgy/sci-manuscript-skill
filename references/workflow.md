@@ -204,8 +204,11 @@ sci-manuscript build --project /absolute/path/to/project --round r01
 sci-manuscript submission --project /absolute/path/to/project --round r01
 ```
 
-A revision build publishes clean and marked manuscript PDFs even when the audit
-is `INCOMPLETE`. Formal submission requires `COMPLETE` and stops before
+A revision build publishes clean and marked manuscript PDFs and rebuilds the
+response letter from the current syntactically valid `responses.tex`, even when
+the audit is `INCOMPLETE`. Missing and empty entries remain audit issues, while
+filled response bodies and automatically derived locations are never served
+from an older output. Formal submission requires `COMPLETE` and stops before
 assembling submission artifacts otherwise. A malformed response source produces
 `RESPONSES_INVALID` with its absolute path: clean and marked manuscripts still
 build, while no untrusted response or submission PDF is generated. If the
@@ -217,6 +220,12 @@ compilation from `\review{ID}{...}`. Duplicate, overlapping, and adjacent ranges
 are normalized; multiple remaining ranges are ordered and localized. A
 response-only comment has no location sentence. Registries, flattened TeX,
 extracted text, and compiler files remain temporary.
+
+Every user-visible section input participates in the same staged manuscript
+comparison, including title, abstract, and keywords supplied through
+`sections/00_frontmatter.tex`. Publisher-visible generated metadata, including
+funding, is compared in the same flattened runtime stream. This staging does not
+rewrite the user-owned composition root or any section source.
 
 ## Revision comparison contract
 

@@ -11,7 +11,6 @@ from pathlib import Path
 from .compile import compile_tex, run_command, stage_runtime_resources
 from .errors import WorkflowError
 from .locations import build_review_locations
-from .metadata import generate_metadata
 from .provenance import ProvenanceSource, extract_provenance, split_by_review_provenance
 from .templates import resources_root
 from .tex import extract_braced, is_commented, is_escaped
@@ -33,6 +32,7 @@ CHINESE_TEXT_COMMANDS = (
     "firstauthoren",
     "funding",
     "entitle",
+    "keywords",
 )
 PUBLISHER_METADATA_CONTEXT_COMMANDS = (
     "author",
@@ -622,18 +622,28 @@ def build_marked_manuscript(
     source_dir.mkdir(parents=True)
     old_runtime = source_dir / "old_runtime"
     new_runtime = source_dir / "new_runtime"
-    generate_metadata(previous, old_runtime)
-    generate_metadata(current, new_runtime)
+    old_runtime_source = stage_runtime_resources(
+        config,
+        round_number - 1,
+        old_runtime,
+        include_manuscript=True,
+    )
+    new_runtime_source = stage_runtime_resources(
+        config,
+        round_number,
+        new_runtime,
+        include_manuscript=True,
+    )
     old_text = strip_provenance_wrappers(
         _flatten_tex(
-            previous / "manuscript.tex",
-            (previous, old_runtime, config.project),
+            old_runtime_source,
+            (old_runtime, config.project),
         )
     )
     provenance = extract_provenance(
         _flatten_tex(
-            current / "manuscript.tex",
-            (current, new_runtime, config.project),
+            new_runtime_source,
+            (new_runtime, config.project),
         )
     )
     old_source = source_dir / "old.tex"

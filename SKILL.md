@@ -31,7 +31,7 @@ not write reviewer-response prose on the user's behalf.
 | --- | --- |
 | Check environment | Run `sci-manuscript doctor`; read [environment.md](references/environment.md) only for a blocker |
 | Start a paper | Run `init --project PATH` to create commented metadata without inventing values; the user edits `meta.yaml` before the first build. The parameter-rich form remains supported for automation. |
-| Build | Run `build`; r00 retains clean output, while revision rounds retain both clean and adjacent marked PDFs; revision rounds also print the review audit without blocking rendering |
+| Build | Run `build`; r00 retains clean output, while revision rounds retain clean, adjacent marked, and current response PDFs when response sources are syntactically valid; revision rounds also print the review audit without blocking rendering |
 | Start revision | Read the response/revision parts of [workflow.md](references/workflow.md) and the normative [revision semantics](references/revision_semantics.md); run `revision` only after explicit confirmation |
 | Prepare submission | Run `submission`; a revision must have a complete review audit before formal submission artifacts are assembled |
 | Roll back or reindex | Explain the archive/digest transaction, obtain confirmation, then run the exact command |
@@ -142,8 +142,11 @@ path only when the CLI identifies malformed source. Do not hide incomplete
 responses simply because PDFs compiled.
 
 For every revision, `build` produces clean and direct-parent marked PDFs from
-the same source and shared bibliography. `submission` requires a complete audit
-before assembling the response and submission artifacts. The workflow parses clean and marked compiler
+the same source and shared bibliography, derives review locations, and rebuilds
+the response PDF from the current user-owned `responses.tex` when that source is
+syntactically valid. Incomplete entries remain visible in the audit but do not
+make a valid response source stale. `submission` requires a complete audit
+before assembling formal submission artifacts. The workflow parses clean and marked compiler
 logs, compares overfull boxes, and fails if marked introduces an overflow absent
 from clean; the per-run result remains in
 `tmp/<run>/revision_layout_qa.txt` only when diagnostics are retained or the run

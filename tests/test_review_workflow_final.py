@@ -251,3 +251,27 @@ def test_response_templates_own_localized_automatic_location_labels() -> None:
     assert "修改位置：#1。" in zh  # noqa: RUF001
     assert "Location of revisions: #1." in en
     assert "Location:" not in en
+
+
+def test_response_parser_preserves_multiline_latex_body_semantics(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "responses.tex"
+    source.write_text(
+        r"""\Response{1-1}{
+第一段包含 English、引用~\cite{example}、行内公式 $x_1+y$ 与转义符号 \% 和 \&。
+
+第二段包含 \textbf{nested {braces}}。
+}
+""",
+        encoding="utf-8",
+    )
+
+    responses = parse_response_entries(source)
+
+    assert set(responses) == {"1-1"}
+    assert "第一段包含 English" in responses["1-1"]
+    assert r"\cite{example}" in responses["1-1"]
+    assert r"$x_1+y$" in responses["1-1"]
+    assert "第二段" in responses["1-1"]
+    assert r"\textbf{nested {braces}}" in responses["1-1"]

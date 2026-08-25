@@ -55,6 +55,10 @@ OVERFULL_BOX = re.compile(
     re.I,
 )
 UNDERFULL_BOX = re.compile(r"Underfull \\[hv]box", re.I)
+PRE_DOCUMENT_SECTION_INPUT = re.compile(
+    r"(?m)^[ \t]*\\(?:input|include)\s*\{sections/[^}\n]+\}"
+    r"[ \t]*(?:%[^\n]*)?\n?"
+)
 
 
 def parse_overfull_boxes(output: str) -> tuple[OverfullBox, ...]:
@@ -324,6 +328,23 @@ def compile_tex(
     return CompileResult(pdf, diagnostics)
 
 
+def relocate_pre_document_section_inputs(text: str) -> str:
+    """Move visible section inputs into the document in a staged source copy."""
+    marker = r"\begin{document}"
+    boundary = text.find(marker)
+    if boundary < 0:
+        raise WorkflowError("Manuscript source does not contain \\begin{document}.")
+    preamble = text[:boundary]
+    matches = tuple(PRE_DOCUMENT_SECTION_INPUT.finditer(preamble))
+    if not matches:
+        return text
+    visible_inputs = "".join(match.group(0) for match in matches).rstrip()
+    for match in reversed(matches):
+        preamble = preamble[: match.start()] + preamble[match.end() :]
+    document = text[boundary + len(marker) :]
+    return f"{preamble.rstrip()}\n\n{marker}\n\n{visible_inputs}\n{document.lstrip()}"
+
+
 def _render_preamble(config: ProjectConfig, target: Path) -> None:
     source = resources_root() / "manuscript_preamble"
     mapping_path = publisher_resource(config) / "sections.yaml"
@@ -351,7 +372,15 @@ def stage_runtime_resources(
     if config.language == "zh" or config.metadata.publisher == "chinese":
         stage_cjk_fonts(target)
     if include_manuscript:
-        shutil.copy2(version / "manuscript.tex", target / "manuscript.tex")
+        manuscript = target / "manuscript.tex"
+        shutil.copy2(version / "manuscript.tex", manuscript)
+        if config.metadata.publisher == "chinese":
+            manuscript.write_text(
+                relocate_pre_document_section_inputs(
+                    manuscript.read_text(encoding="utf-8")
+                ),
+                encoding="utf-8",
+            )
         for directory in ("sections", "figures", "tables"):
             source = version / directory
             if source.exists():
