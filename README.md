@@ -1,6 +1,6 @@
 # sci-manuscript-skill
 
-A reproducible manuscript lifecycle framework for scientific writing projects. It manages manuscript initialization, journal-aware compilation, peer-review revision, reviewer response linkage, and submission preparation while keeping scientific content under author control.
+An isolated manuscript lifecycle framework for scientific writing projects. It manages manuscript initialization, journal-aware compilation, peer-review revision, reviewer response linkage, and submission preparation while keeping scientific content under author control.
 
 ## Overview
 
@@ -31,11 +31,15 @@ The framework supports:
 - Clean manuscript generation
 - Marked manuscript generation
 
-### Reproducible compilation
+### Isolated compilation
 
 - Built-in journal resources
 - Isolated build environment
 - PDF validation and layout checks
+
+The build is deterministic with respect to the selected source, installed Skill
+resources, author library, bibliography, toolchain, and fonts. It does not
+promise byte-identical PDFs across different toolchain or font installations.
 
 ## Quick start
 
@@ -82,10 +86,10 @@ manuscript/
 Users edit:
 
 - `meta.yaml`
-- optional project `references/authors.yaml` overrides
+- `sections/00_frontmatter.tex` for title, abstract, and keywords
 - manuscript sections
 - figures and tables
-- reviewer responses
+- reviewer comments and responses
 
 The Skill manages internally:
 
@@ -94,10 +98,10 @@ The Skill manages internally:
 - compiler resources;
 - temporary build files.
 
-The bundled `resources/authors.yaml` is the default reusable person-level
-library and is not copied by metadata-first initialization. A pre-existing
-project author library is resolved first. Packaged resources are resolved
-during compilation and do not need to be copied into user projects.
+The active author library is the configured user library, falling back to the
+bundled `resources/authors.yaml`. It is never copied into a project. Packaged
+resources are resolved during compilation and do not need to be copied into
+user projects.
 
 ## Workflow
 
@@ -139,16 +143,17 @@ the light-gray strikeout.
 - journal and publisher;
 - publication-order author IDs and corresponding-author IDs.
 
-`sections/00_frontmatter.tex` stores the user-owned manuscript title;
-publisher-appropriate section sources store abstract and keyword text.
+`sections/00_frontmatter.tex` stores the user-owned manuscript title, abstract,
+and keywords.
 
 The active author library stores only person-level names, email, affiliations,
 and bilingual biography strings. Names, affiliations, email, and biographies
 are not duplicated in `meta.yaml`.
 
-For a Chinese publisher, the build resolves `meta.yaml` plus the active author
-library into the runtime-only `tmp/<run>/publisher_metadata.tex`. It generates
-Chinese and English titles and abstracts, funding, and
+For a Chinese publisher, the build resolves the user frontmatter, `meta.yaml`,
+and the active author library into the runtime-only
+`tmp/<run>/publisher_metadata.tex`. It generates Chinese and English titles and
+abstracts, funding, and
 `firstauthorcn`/`firstauthoren`/`corrauthorcn`/`corrauthoren`; it is never written
 into `initial_submission/`.
 
@@ -180,6 +185,10 @@ ruff check .
 mypy src tests
 python -m build
 ```
+
+The supported matrix is Chinese/`zh`, Elsevier/`en`, Nature/`en`, and ACS/`en`.
+Python 3.11 or newer and Tectonic are required; macOS ARM and Linux x86_64 are
+covered by the release workflow, with real CJK integration on macOS.
 
 ## Documentation
 

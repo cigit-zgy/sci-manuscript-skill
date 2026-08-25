@@ -1,7 +1,7 @@
 # Lifecycle workflow
 
-Read this reference before creating a revision, resolving response
-placeholders, synchronizing BibTeX, or preparing a submission package. The
+Read this reference before creating a revision, resolving responses,
+synchronizing BibTeX, or preparing a submission package. The
 marked-manuscript algorithm is defined normatively in
 [revision_semantics.md](revision_semantics.md); consuming manuscript projects
 must not add local diff semantics.
@@ -14,8 +14,8 @@ revision_01/          r01, parent r00
 revision_02/          r02, parent r01
 ```
 
-The project root contains the only `references/` tree: author library,
-bibliography, and revision style. Built-in publisher resources come from the
+The project root contains the only `references/` tree: bibliography and
+revision style. Built-in publisher resources come from the
 installed package. No version may contain `references/`. `sci-manuscript
 revision` is the only normal revision creator. It copies manuscript state from
 the current highest version, removes inherited provenance wrappers from
@@ -40,11 +40,9 @@ publisher-appropriate manuscript sources. The user then maintains title,
 abstract, and keyword text in `sections/00_frontmatter.tex`.
 Explicit command-line fields remain available for automated initialization.
 
-The author-library priority for existing and explicit workspaces is a project
-`references/authors.yaml`, then the configured user library, then the bundled
-role-free Skill library in `resources/authors.yaml`. Metadata-first init does
-not copy the bundled library into the project. Configure a reusable override
-once with:
+The author-library priority is the configured user library, then the bundled
+role-free Skill library in `resources/authors.yaml`. No author library is
+copied into the project. Configure a reusable user library once with:
 
 ```bash
 sci-manuscript authors configure /absolute/path/to/authors.yaml
@@ -69,14 +67,13 @@ sci-manuscript init \
   --publisher elsevier \
   --language en \
   --article-type "Research Article" \
-  --authors /absolute/path/to/authors.yaml \
   --first-author author_one \
   --corresponding-author author_two \
   --bib /absolute/path/to/references.bib
 ```
 
-Omitting `--authors` uses a configured user library or the bundled fallback.
-Neither source assigns manuscript roles: interactive initialization asks for
+The configured user library or bundled default never assigns manuscript roles:
+interactive initialization asks for
 them, and non-interactive initialization still requires explicit
 `--first-author` and `--corresponding-author`. Omitting `--bib` uses the package
 bibliography placeholder and must be reported as requiring replacement.
@@ -207,15 +204,13 @@ sci-manuscript build --project /absolute/path/to/project --round r01
 sci-manuscript submission --project /absolute/path/to/project --round r01
 ```
 
-A revision build publishes clean and marked manuscript PDFs. Submission also
-publishes the available correspondence and submission artifacts. Missing or empty
-responses keep the audit `INCOMPLETE` without altering manuscript rendering or
-blocking manuscript rendering. A malformed response source instead produces
-`RESPONSES_INVALID` with its absolute
-path: clean and marked manuscripts still build, the checklist remains
-`INCOMPLETE`, and no untrusted response PDF is generated. If the comment template
-is still empty, the manuscript PDFs can still be built and the audit remains
-`INCOMPLETE`.
+A revision build publishes clean and marked manuscript PDFs even when the audit
+is `INCOMPLETE`. Formal submission requires `COMPLETE` and stops before
+assembling submission artifacts otherwise. A malformed response source produces
+`RESPONSES_INVALID` with its absolute path: clean and marked manuscripts still
+build, while no untrusted response or submission PDF is generated. If the
+comment template is still empty, manuscript build remains available and the
+audit remains `INCOMPLETE`.
 
 Response locations are calculated in an independent transparent line-label
 compilation from `\review{ID}{...}`. Duplicate, overlapping, and adjacent ranges
@@ -253,25 +248,20 @@ Chinese deletion strikeout remains continuous through CJK punctuation.
 
 ## Submission and artifact contract
 
-`submission` builds the clean manuscript and version-local submission material;
-for a revision it also builds the adjacent marked comparison. A response letter
-is assembled when parsed review comments are available. Review-completeness
-warnings do not suppress manuscript rendering or the rest of the package.
+`submission` first verifies review completeness. For a revision, any incomplete
+or malformed audit blocks formal artifact assembly; authors use `build` to
+continue inspecting clean and adjacent marked manuscript PDFs. A complete audit
+allows the response letter and version-local submission material to be built.
 
-The staged `submission/checklist.md` receives one generated line:
+For a revision that passes the audit, the staged `submission/checklist.md`
+receives the generated line:
 
 ```text
 Review completeness: COMPLETE
 ```
 
-or
-
-```text
-Review completeness: INCOMPLETE
-```
-
-The terminal audit remains the detailed source of unresolved IDs and concrete
-paths.
+Incomplete revisions do not reach formal submission staging. The terminal audit
+is the source of unresolved IDs and concrete malformed-source paths.
 
 After clean and marked compilation, the workflow parses both compiler logs and
 compares their unique overfull boxes. Any marked-specific overfull box fails the

@@ -3,13 +3,13 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "我准备开始一篇 Elsevier 体系的英文 LaTeX 论文。作者信息在 /path/to/authors.yaml，BibTeX 在 /path/to/references.bib。请创建 initial submission 环境。",
-      "expected_output": "The agent checks the environment, obtains any missing project metadata, initializes only initial_submission with the supplied author and bibliography files, builds the first manuscript, and identifies user-editable placeholders without writing scientific content.",
+      "prompt": "我准备开始一篇 Elsevier 体系的英文 LaTeX 论文。请把 /path/to/authors.yaml 配置为我的作者库，BibTeX 在 /path/to/references.bib，然后创建 initial submission 环境。",
+      "expected_output": "The agent checks the environment, configures the reusable author library, initializes only initial_submission with the supplied bibliography, builds the first manuscript, and identifies user-editable placeholders without writing scientific content.",
       "files": [],
       "expectations": [
         "The agent runs doctor before initialization when the environment is not already verified and asks before any dependency installation.",
         "The generated project/manuscript contains initial_submission and does not contain revision_01.",
-        "The supplied author YAML and BibTeX data are copied into the single manuscript-level references directory.",
+        "The author library is configured outside the project; only the BibTeX data is copied into the manuscript-level references directory.",
         "initial_submission/output/manuscript.pdf exists and the successful run leaves tmp empty.",
         "The agent identifies manuscript sections, figures, bibliography, and author data as user-owned content rather than generating scientific replacements."
       ]
@@ -29,10 +29,10 @@
     {
       "id": 3,
       "prompt": "我正在 revision 1 中修改论文，只重新渲染一下当前 PDF。",
-      "expected_output": "The agent runs build for revision_01 only and reports the clean manuscript PDF.",
+      "expected_output": "The agent runs build for revision_01 only and reports the clean and direct-parent marked manuscript PDFs plus review completeness.",
       "files": [],
       "expectations": [
-        "The current revision clean manuscript is rebuilt.",
+        "The current revision clean and direct-parent marked manuscripts are rebuilt.",
         "No revision_02 is created.",
         "No new submission workspace is created.",
         "No manuscript source or scientific content is modified by the agent."

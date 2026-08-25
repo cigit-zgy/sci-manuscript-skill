@@ -19,24 +19,6 @@ from sci_manuscript.templates import resources_root
 from sci_manuscript.workspace import ProjectConfig, initialize_project
 
 
-def _authors(path: Path) -> Path:
-    path.write_text(
-        """affiliations:
-  institute:
-    name_en: Anonymous Institute, Example City, Country
-    name_zh: 示例研究机构
-authors:
-  author_one:
-    name_en: Anonymous One
-    name_zh: 匿名甲
-    email: one@example.invalid
-    affiliations: [institute]
-""",
-        encoding="utf-8",
-    )
-    return path
-
-
 def _metadata() -> ManuscriptMetadata:
     return ManuscriptMetadata(
         title="Architecture Contract",
@@ -57,7 +39,6 @@ def _project(tmp_path: Path) -> ProjectConfig:
     root = tmp_path / "project" / "manuscript"
     return initialize_project(
         ProjectConfig(root, _metadata()),
-        _authors(tmp_path / "authors.yaml"),
     )
 
 
@@ -84,7 +65,6 @@ def test_initialized_user_project_contains_no_latex_infrastructure(
         for path in config.project.rglob("*")
     )
     assert {path.name for path in config.references.iterdir()} == {
-        "authors.yaml",
         "references.bib",
         "revision_style.tex",
     }

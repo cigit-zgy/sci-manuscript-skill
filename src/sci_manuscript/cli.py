@@ -23,6 +23,7 @@ from .authors import (
     load_author_library,
     resolve_author_library_path,
 )
+from .compile import SUPPORTED_ENGINES
 from .errors import ManuscriptError
 from .metadata import PUBLISHERS
 
@@ -39,9 +40,7 @@ def _parser() -> argparse.ArgumentParser:
     doctor_parser = commands.add_parser("doctor", help="Inspect the local toolchain.")
     doctor_parser.add_argument("--language", choices=("en", "zh"))
     doctor_parser.add_argument("--publisher", choices=PUBLISHERS)
-    doctor_parser.add_argument(
-        "--engine", choices=("auto", "tectonic", "latex"), default="auto"
-    )
+    doctor_parser.add_argument("--engine", choices=SUPPORTED_ENGINES, default="auto")
     authors = commands.add_parser("authors", help="Manage the user author library.")
     author_commands = authors.add_subparsers(dest="authors_command", required=True)
     configure = author_commands.add_parser("configure", help="Install a library.")
@@ -62,10 +61,8 @@ def _parser() -> argparse.ArgumentParser:
             action="append",
             default=[],
         )
-    init.add_argument("--authors", type=Path)
     init.add_argument("--bib", type=Path)
-    init.add_argument("--custom-template", type=Path)
-    init.add_argument("--engine", choices=("auto", "tectonic", "latex"), default="auto")
+    init.add_argument("--engine", choices=SUPPORTED_ENGINES, default="auto")
     for command, help_text in (
         ("status", "Show project status."),
         ("build", "Compile clean output and a marked PDF for revisions."),
@@ -75,7 +72,7 @@ def _parser() -> argparse.ArgumentParser:
         child.add_argument("--project", type=Path, required=True)
         if command != "status":
             child.add_argument("--round")
-            child.add_argument("--engine", choices=("auto", "tectonic", "latex"))
+            child.add_argument("--engine", choices=SUPPORTED_ENGINES)
         if command == "build":
             child.add_argument("--keep-temp", action="store_true")
     revision = commands.add_parser("revision", help="Create the next revision.")
@@ -107,7 +104,7 @@ def _prompt(value: str | None, label: str) -> str:
 def _selected_authors(
     args: argparse.Namespace,
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    library_path = resolve_author_library_path(args.authors)
+    library_path = resolve_author_library_path()
     library = load_author_library(library_path)
     selected = (
         tuple(args.first),
@@ -295,9 +292,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.first,
                     args.corresponding,
                     args.other,
-                    args.authors,
                     args.bib,
-                    args.custom_template,
                 )
             ):
                 lifecycle_result = initialize_manuscript_draft(args.project)
@@ -314,9 +309,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 first_authors=first,
                 corresponding_authors=corresponding,
                 other_authors=other,
-                authors_path=args.authors,
                 bibliography_path=args.bib,
-                custom_template=args.custom_template,
                 engine=args.engine,
             )
             _print_lifecycle(lifecycle_result, args.project, language=args.language)

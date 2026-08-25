@@ -22,18 +22,27 @@ from .metadata import (
     revision_directory_name,
     round_name,
     save_meta,
+    validate_publisher_language,
     with_revision,
     write_meta_template,
 )
+from .provenance import extract_provenance
 from .templates import initialize_manuscript_sources, install_reference_resources
 from .templates import resources_root as resources_root
-from .tex import extract_braced
 
 REVISION_DIRECTORY_PATTERN = re.compile(r"^revision_(\d{2,})$")
 ROUND_PATTERN = re.compile(r"^r(\d{2,})$")
 PROTECTED_DIRECTORIES = ("sections", "figures", "tables", "response", "preamble")
 SCIENTIFIC_DIRECTORIES = ("sections", "figures", "tables")
 INHERITED_DIRECTORIES = SCIENTIFIC_DIRECTORIES
+GENERATED_SUBMISSION_PATHS = (
+    Path("manuscript.pdf"),
+    Path("marked_manuscript.pdf"),
+    Path("response_letter.pdf"),
+    Path("cover_letter.pdf"),
+    Path("highlights.pdf"),
+    Path("graphical_abstract/graphical_abstract.pdf"),
+)
 
 
 @dataclass(frozen=True)
@@ -188,6 +197,26 @@ def is_initialized(path: str | Path) -> bool:
     return (project / "initial_submission" / "meta.yaml").is_file()
 
 
+def _validate_no_symlinks(version: Path) -> None:
+    """Reject links that could make managed reads or copies escape the workspace."""
+    roots = (
+        version / "manuscript.tex",
+        version / "meta.yaml",
+        *(version / name for name in (*PROTECTED_DIRECTORIES, "submission")),
+    )
+    for root in roots:
+        if root.is_symlink():
+            raise WorkflowError(
+                f"Symbolic links are forbidden in managed manuscript sources: {root}"
+            )
+        candidates = root.rglob("*") if root.is_dir() else ()
+        for path in candidates:
+            if path.is_symlink():
+                raise WorkflowError(
+                    f"Symbolic links are forbidden in managed manuscript sources: {path}"
+                )
+
+
 def load_project(
     path: str | Path,
     round_number: int | None = None,
@@ -200,6 +229,7 @@ def load_project(
         raise WorkflowError(f"Round {round_name(selected)} does not exist.")
     for number in numbers:
         version = project / revision_directory_name(number)
+        _validate_no_symlinks(version)
         if (version / "references").exists():
             raise WorkflowError(f"Version-local references are forbidden: {version}")
         metadata = load_meta(version / "meta.yaml")
@@ -216,9 +246,7 @@ def load_project(
 
 def initialize_project(
     config: ProjectConfig,
-    authors_source: Path,
     bibliography_source: Path | None = None,
-    custom_template: Path | None = None,
 ) -> ProjectConfig:
     """Create ``project/manuscript`` without requiring an empty parent project."""
     root = config.project
@@ -226,6 +254,7 @@ def initialize_project(
         raise WorkflowError(f"Refusing to overwrite existing manuscript/: {root}")
     if config.current_round != 0 or config.metadata.parent_round is not None:
         raise WorkflowError("Initialization metadata must describe r00 with no parent.")
+    validate_publisher_language(config.metadata.publisher, config.metadata.language)
     root.mkdir(parents=True)
     initial = config.round_dir(0)
     for directory in (
@@ -241,15 +270,11 @@ def initialize_project(
     bibliography = (
         bibliography_source or resources_root() / "manuscript" / "references.bib"
     )
-    if not authors_source.is_file():
-        raise WorkflowError(f"Author library is missing: {authors_source}")
     if not bibliography.is_file():
         raise WorkflowError(f"Bibliography is missing: {bibliography}")
     install_reference_resources(
         config,
-        authors_source,
         bibliography,
-        custom_template,
     )
     initialize_manuscript_sources(config, initial)
     save_meta(initial / "meta.yaml", config.metadata)
@@ -288,37 +313,7 @@ def initialize_draft_project(path: str | Path) -> Path:
 
 def strip_provenance_wrappers(text: str) -> str:
     """Make inherited reviewer provenance transparent in a child revision."""
-    output = text
-    changed = True
-    while changed:
-        changed = False
-        for command, fields in ((r"\review", 2),):
-            cursor = 0
-            pieces: list[str] = []
-            while True:
-                start = output.find(command, cursor)
-                if start < 0:
-                    pieces.append(output[cursor:])
-                    break
-                end = start + len(command)
-                if end < len(output) and output[end].isalpha():
-                    pieces.append(output[cursor:end])
-                    cursor = end
-                    continue
-                try:
-                    values: list[str] = []
-                    for _ in range(fields):
-                        value, end = extract_braced(output, end)
-                        values.append(value)
-                except ValueError:
-                    pieces.append(output[cursor:end])
-                    cursor = end
-                    continue
-                pieces.extend((output[cursor:start], values[-1]))
-                cursor = end
-                changed = True
-            output = "".join(pieces)
-    return output
+    return extract_provenance(text).text
 
 
 def _digest_entries(version: Path, *, scientific_only: bool) -> list[Path]:
@@ -470,11 +465,16 @@ def rollback_revision(config: ProjectConfig) -> tuple[Path, int]:
 
 
 def _clear_generated(version: Path) -> None:
-    for name in ("output", "submission"):
-        target = version / name
-        if target.exists():
-            shutil.rmtree(target)
-        target.mkdir()
+    output = version / "output"
+    if output.exists():
+        shutil.rmtree(output)
+    output.mkdir()
+    submission = version / "submission"
+    submission.mkdir(exist_ok=True)
+    for relative in GENERATED_SUBMISSION_PATHS:
+        generated = submission / relative
+        if generated.is_file() or generated.is_symlink():
+            generated.unlink()
 
 
 def reindex_revisions(

@@ -11,13 +11,16 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
+from sci_manuscript.authors import load_author_library, resolve_authors
 from sci_manuscript.compile import (
     CjkProbeResult,
     CompileResult,
     parse_overfull_boxes,
+    resolve_engine,
     validate_revision_layout,
 )
 from sci_manuscript.diff import (
+    _flatten_tex,
     _refine_inline_math_replacements,
     _separate_inline_math_from_diff_markup,
 )
@@ -25,22 +28,18 @@ from sci_manuscript.metadata import (
     ManuscriptMetadata,
     MetadataError,
     SubmissionSettings,
-    load_author_library,
     load_meta,
     render_publisher_metadata,
-    resolve_authors,
 )
-from sci_manuscript.response import (
-    parse_response_entries,
-    parse_reviews,
-    validate_review_id_list,
-)
+from sci_manuscript.review import parse_response_entries, parse_reviews
+from sci_manuscript.review_ids import validate_review_id_list
 from sci_manuscript.submission import ensure_submission_workspace
 from sci_manuscript.workspace import (
     ProjectConfig,
     WorkflowError,
     finalize_revision_creation,
     initialize_project,
+    load_project,
     reindex_revisions,
     resources_root,
     source_digest,
@@ -97,14 +96,14 @@ authors:
 def _workspace(
     tmp_path: Path,
     publisher: str = "elsevier",
-    language: str = "en",
+    language: str | None = None,
 ) -> ProjectConfig:
+    selected_language = language or ("zh" if publisher == "chinese" else "en")
     root = tmp_path / "existing project" / "manuscript"
     root.parent.mkdir(parents=True)
     (root.parent / "unrelated.txt").write_text("preserve", encoding="utf-8")
     return initialize_project(
-        ProjectConfig(root, _metadata(publisher, language)),
-        _anonymous_author_library(tmp_path),
+        ProjectConfig(root, _metadata(publisher, selected_language)),
     )
 
 
@@ -118,12 +117,55 @@ def _revision(config: ProjectConfig, reviews: Path | None = None) -> ProjectConf
     return child
 
 
+def test_workspace_rejects_symlinks_in_managed_round_sources(tmp_path: Path) -> None:
+    config = _workspace(tmp_path)
+    external = tmp_path / "external.tex"
+    external.write_text("private external source", encoding="utf-8")
+    link = config.round_dir(0) / "sections" / "external.tex"
+    link.symlink_to(external)
+
+    with pytest.raises(WorkflowError, match="Symbolic links are forbidden"):
+        load_project(config.project)
+
+
 def test_public_api_is_stable() -> None:
     from sci_manuscript import __all__
 
     assert "ManuscriptProject" in __all__
     assert "initialize_manuscript" in __all__
     assert "workspace" not in __all__
+
+
+def test_latex_engine_is_not_part_of_the_v2_public_contract(tmp_path: Path) -> None:
+    config = ProjectConfig(tmp_path / "manuscript", _metadata())
+    with pytest.raises(WorkflowError, match="Unsupported engine"):
+        resolve_engine(config, "latex")
+
+    from sci_manuscript import cli
+
+    with pytest.raises(SystemExit):
+        cli._parser().parse_args(["doctor", "--engine", "latex"])
+
+
+def test_flatten_tex_ignores_comments_and_rejects_root_escape(tmp_path: Path) -> None:
+    root = tmp_path / "allowed"
+    root.mkdir()
+    source = root / "manuscript.tex"
+    included = root / "included.tex"
+    outside = tmp_path / "outside.tex"
+    included.write_text("Included text.\n", encoding="utf-8")
+    outside.write_text("Outside text.\n", encoding="utf-8")
+    source.write_text(
+        "% \\input{included}\nVisible.\n\\input{included}\n",
+        encoding="utf-8",
+    )
+
+    flattened = _flatten_tex(source, (root,))
+
+    assert flattened.count("Included text.") == 1
+    source.write_text("\\input{../outside}\n", encoding="utf-8")
+    with pytest.raises(WorkflowError, match="escapes permitted project roots"):
+        _flatten_tex(source, (root,))
 
 
 def test_workspace_contract_and_meta(tmp_path: Path) -> None:
@@ -145,7 +187,6 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert config.tmp_root() == root / "tmp"
     assert config.archive_root() == root / "00_archive"
     assert {path.name for path in (root / "references").iterdir()} == {
-        "authors.yaml",
         "references.bib",
         "revision_style.tex",
     }
@@ -153,7 +194,7 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert (initial / "meta.yaml").is_file()
     assert not (initial / "manuscript.yaml").exists()
     assert "Document class" in (initial / "manuscript.tex").read_text()
-    assert (initial / "sections" / "00_abstract.tex").is_file()
+    assert not (initial / "sections" / "00_abstract.tex").exists()
     frontmatter = initial / "sections" / "00_frontmatter.tex"
     assert frontmatter.is_file()
     frontmatter_text = frontmatter.read_text(encoding="utf-8")
@@ -161,7 +202,7 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
     assert "Anonymous Lifecycle Test" in frontmatter_text
     assert load_meta(initial / "meta.yaml").first_authors == ("author_one",)
     with pytest.raises(WorkflowError, match="overwrite"):
-        initialize_project(config, _anonymous_author_library(tmp_path))
+        initialize_project(config)
 
 
 def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
@@ -288,7 +329,25 @@ def test_chinese_init_preflight_runs_before_workspace_creation(
             article_type="Research Article",
             first_authors=("author_one",),
             corresponding_authors=("author_two",),
-            authors_path=_anonymous_author_library(tmp_path),
+            engine="tectonic",
+        )
+    assert not (project / "manuscript").exists()
+
+
+def test_init_rejects_unsupported_publisher_language_before_workspace_creation(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "unsupported matrix"
+    with pytest.raises(MetadataError, match="requires manuscript.language"):
+        initialize_manuscript(
+            project,
+            title="Unsupported Test",
+            journal="Example Journal",
+            publisher="elsevier",
+            language="zh",
+            article_type="Research Article",
+            first_authors=("zhao_guangyao",),
+            corresponding_authors=("liu_hong",),
             engine="tectonic",
         )
     assert not (project / "manuscript").exists()
@@ -308,6 +367,75 @@ def test_revision_contract_and_parent_integrity(tmp_path: Path) -> None:
     r02 = _revision(r01)
     assert r02.round_dir(2).name == "revision_02"
     assert not (r02.project / "tmp").exists()
+
+
+def test_revision_creation_preserves_commented_review_and_strips_live_wrapper(
+    tmp_path: Path,
+) -> None:
+    config = _workspace(tmp_path)
+    section = config.round_dir(0) / "sections" / "01_introduction.tex"
+    section.write_text(
+        section.read_text(encoding="utf-8")
+        + "\n% \\review{1-1}{Disabled provenance.}\n"
+        + "\\review{1-1}{Visible inherited text.}\n",
+        encoding="utf-8",
+    )
+
+    child = _revision(config)
+    inherited = (child.round_dir(1) / "sections" / "01_introduction.tex").read_text(
+        encoding="utf-8"
+    )
+
+    assert "% \\review{1-1}{Disabled provenance.}" in inherited
+    assert "Visible inherited text." in inherited
+    assert "\\review{1-1}{Visible inherited text.}" not in inherited
+
+
+def test_failed_revision_creation_removes_partial_round_state_and_tmp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _workspace(tmp_path)
+    parent_before = source_digest(config.round_dir(0), scientific_only=True)
+
+    def fail_after_state(child: ProjectConfig) -> Path:
+        path = child.creation_record_path(child.current_round)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("partial: true\n", encoding="utf-8")
+        raise WorkflowError("injected revision finalization failure")
+
+    monkeypatch.setattr(
+        "sci_manuscript.api.finalize_revision_creation",
+        fail_after_state,
+    )
+
+    with pytest.raises(WorkflowError, match="injected revision"):
+        ManuscriptProject(config.project).start_revision(confirmed=True)
+
+    assert not config.round_dir(1).exists()
+    assert not config.state_dir(1).exists()
+    assert not config.tmp_root().exists()
+    assert source_digest(config.round_dir(0), scientific_only=True) == parent_before
+
+
+def test_sync_bib_uses_only_the_explicit_export(tmp_path: Path) -> None:
+    config = _workspace(tmp_path)
+    unrelated = config.project.parent / "unrelated.txt"
+    before = unrelated.read_bytes()
+    export = tmp_path / "user-export.bib"
+    export.write_text("@article{explicit, title={Explicit export}}\n", encoding="utf-8")
+
+    result = ManuscriptProject(config.project).sync_bib(export)
+
+    assert result.artifacts[0].path == config.references / "references.bib"
+    assert result.artifacts[0].path.read_bytes() == export.read_bytes()
+    assert unrelated.read_bytes() == before
+    with pytest.raises(WorkflowError, match="is missing"):
+        ManuscriptProject(config.project).sync_bib(tmp_path / "missing.bib")
+    malformed = tmp_path / "malformed.bib"
+    malformed.write_text("not BibTeX", encoding="utf-8")
+    with pytest.raises(WorkflowError, match="does not contain BibTeX"):
+        ManuscriptProject(config.project).sync_bib(malformed)
 
 
 def test_rollback_success_and_refusal(tmp_path: Path) -> None:
@@ -349,6 +477,54 @@ def test_reindex_success_preserves_scientific_bytes(tmp_path: Path) -> None:
     assert not r03.state_dir(3).exists()
     assert load_meta(r03.round_dir(2) / "meta.yaml").round_number == 2
     assert any((r03.project / "00_archive").iterdir())
+
+
+def test_reindex_preserves_editable_submission_sources(tmp_path: Path) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    r02 = _revision(r01)
+    r03 = _revision(r02)
+    submission = r02.submission_dir(2)
+    graphical = submission / "graphical_abstract"
+    graphical.mkdir(parents=True, exist_ok=True)
+    editable = {
+        "cover_letter.tex": b"user cover letter\n",
+        "highlights.tex": b"user highlights\n",
+        "checklist.md": b"user checklist note\n",
+        "supporting_note.txt": b"user submission note\n",
+        "graphical_abstract/graphical_abstract.tex": b"user graphical source\n",
+    }
+    for relative, content in editable.items():
+        path = submission / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    for relative in (
+        "manuscript.pdf",
+        "marked_manuscript.pdf",
+        "response_letter.pdf",
+        "cover_letter.pdf",
+        "highlights.pdf",
+        "graphical_abstract/graphical_abstract.pdf",
+    ):
+        path = submission / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"generated pdf")
+    shutil.rmtree(r03.round_dir(1))
+
+    with temporary_run(r03.project) as run_dir:
+        reindex_revisions(r03.project, run_dir)
+
+    migrated = r03.submission_dir(1)
+    for relative, content in editable.items():
+        assert (migrated / relative).read_bytes() == content
+    for relative in (
+        "manuscript.pdf",
+        "marked_manuscript.pdf",
+        "response_letter.pdf",
+        "cover_letter.pdf",
+        "highlights.pdf",
+        "graphical_abstract/graphical_abstract.pdf",
+    ):
+        assert not (migrated / relative).exists()
 
 
 def test_reindex_injected_failure_restores_original(tmp_path: Path) -> None:
@@ -580,7 +756,6 @@ def test_cover_guidance_blocks_submission_and_source_is_not_overwritten(
                 corresponding_authors=("author_one",),
             ),
         ),
-        _anonymous_author_library(tmp_path),
     )
     source = ensure_submission_workspace(config, 0) / "cover_letter.tex"
     original = source.read_text(encoding="utf-8")
@@ -705,23 +880,58 @@ def test_diff_markup_separates_inline_math_from_line_decoration() -> None:
     )
     rewritten = _separate_inline_math_from_diff_markup(source)
     assert rewritten == (
-        r"\DIFadd{中文 }\DIFaddMath{$A \longrightarrow B$}\DIFadd{ 文本} "
-        r"\DIFdel{old }\DIFdelMath{\(x+y\)}\DIFdel{ text}"
+        r"\DIFadd{中文 }$\DIFaddMath{A \longrightarrow B}$\DIFadd{ 文本} "
+        r"\DIFdel{old }\(\DIFdelMath{x+y}\)\DIFdel{ text}"
     )
 
 
 def test_inline_math_replacement_is_refined_only_at_safe_atoms() -> None:
     source = (
-        r"\DIFdelMath{$a+b$}\DIFdelend \DIFaddbegin "
-        r"\DIFaddReviewMath{$a+c$}"
+        r"$\DIFdelMath{a+b}$\DIFdelend \DIFaddbegin "
+        r"$\DIFaddReviewMath{a+c}$"
     )
     assert _refine_inline_math_replacements(source) == (
         r"$a+\DIFdel{b}\DIFaddReview{c}$"
     )
-    grouped = r"\DIFdelMath{$x_{old}$}\DIFaddMath{$x_{new}$}"
+    grouped = r"$\DIFdelMath{x_{old}}$$\DIFaddMath{x_{new}}$"
     assert _refine_inline_math_replacements(grouped) == (
         r"$x_\DIFdel{{old}}\DIFadd{{new}}$"
     )
+
+
+@pytest.mark.parametrize(
+    ("macro", "source", "expected"),
+    (
+        (
+            r"\DIFdel",
+            r"\DIFdel{old $\mathcal{O}_{\mathrm{P}}$ text}",
+            r"\DIFdel{old }$\DIFdelMath{\mathcal{O}_{\mathrm{P}}}$"
+            r"\DIFdel{ text}",
+        ),
+        (
+            r"\DIFadd",
+            r"\DIFadd{new $\mathcal{O}_{\mathrm{M}}^{2}$ text}",
+            r"\DIFadd{new }$\DIFaddMath{\mathcal{O}_{\mathrm{M}}^{2}}$"
+            r"\DIFadd{ text}",
+        ),
+        (
+            r"\DIFaddReview",
+            r"\DIFaddReview{new \(\mathcal{O}_{\mathrm{D},j}\) text}",
+            r"\DIFaddReview{new }\(\DIFaddReviewMath{\mathcal{O}_{\mathrm{D},j}}\)"
+            r"\DIFaddReview{ text}",
+        ),
+    ),
+)
+def test_math_diff_macros_never_own_inline_math_delimiters(
+    macro: str,
+    source: str,
+    expected: str,
+) -> None:
+    rewritten = _separate_inline_math_from_diff_markup(source)
+    assert rewritten == expected
+    for math_macro in (r"\DIFdelMath", r"\DIFaddMath", r"\DIFaddReviewMath"):
+        assert f"{math_macro}{{$" not in rewritten
+        assert f"{math_macro}{{\\(" not in rewritten
 
 
 @pytest.mark.integration
@@ -735,7 +945,6 @@ def test_init_api_returns_structured_result(tmp_path: Path) -> None:
         article_type="Research Article",
         first_authors=("author_one",),
         corresponding_authors=("author_two",),
-        authors_path=_anonymous_author_library(tmp_path),
         engine="tectonic",
     )
     assert isinstance(result, LifecycleResult)

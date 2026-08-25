@@ -51,7 +51,7 @@ The class was supplied by the repository maintainer from a Chinese-journal
 manuscript workspace and was included for future Chinese-journal use at the
 maintainer's direction. The supplied class did not contain an embedded license
 notice or public source URL. Its resource README records the local compatibility
-adaptation. For the v3.0.0 release, the repository maintainer has explicitly
+adaptation. For the v2.0.0 release, the repository maintainer has explicitly
 confirmed that this maintainer-provided template may be distributed publicly
 with this project. This statement records that project-specific permission; it
 does not claim that the class is an official template for every Chinese journal.

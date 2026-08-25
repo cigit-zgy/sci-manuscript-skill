@@ -7,14 +7,13 @@ from pathlib import Path
 import pytest
 
 from sci_manuscript import ManuscriptProject, cli
+from sci_manuscript.authors import load_author_library, resolve_authors
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     SubmissionSettings,
     generate_metadata,
-    load_author_library,
     load_meta,
     render_publisher_metadata,
-    resolve_authors,
     save_meta,
 )
 from sci_manuscript.templates import resources_root
@@ -134,12 +133,9 @@ def test_publisher_metadata_is_generated_only_in_runtime_directory(
         "\\title{源文件中的中文标题}\n\\entitle{English Source Title}\n",
         encoding="utf-8",
     )
-    (references / "authors.yaml").write_bytes(
-        (resources_root() / "authors.yaml").read_bytes()
-    )
     runtime = tmp_path / "run"
 
-    generate_metadata(root, round_dir, runtime)
+    generate_metadata(round_dir, runtime)
 
     assert (runtime / "publisher_metadata.tex").is_file()
     author_metadata = (runtime / "author_metadata.tex").read_text(encoding="utf-8")

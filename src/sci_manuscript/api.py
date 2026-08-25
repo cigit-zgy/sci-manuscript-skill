@@ -11,6 +11,7 @@ from pathlib import Path
 from .authors import load_author_library, resolve_author_library_path, resolve_authors
 from .bibliography import sync_bibliography
 from .compile import (
+    SUPPORTED_ENGINES,
     build_clean_manuscript,
     ensure_cjk_environment,
     probe_cjk_environment,
@@ -21,9 +22,10 @@ from .metadata import (
     PUBLISHERS,
     ManuscriptMetadata,
     SubmissionSettings,
+    validate_publisher_language,
 )
-from .response import ensure_response_source, init_response, parse_reviews
-from .review import ReviewAuditResult, audit_reviews
+from .response import ensure_response_source, init_response
+from .review import ReviewAuditResult, audit_reviews, parse_reviews
 from .submission import prepare_submission_artifacts
 from .templates import ensure_manuscript_sources
 from .workspace import (
@@ -108,6 +110,8 @@ def doctor(
     engine: str = "auto",
 ) -> DoctorResult:
     """Inspect required manuscript tooling without changing the environment."""
+    if engine not in SUPPORTED_ENGINES:
+        raise WorkflowError(f"Unsupported engine: {engine}")
     try:
         yaml_version = importlib.metadata.version("PyYAML")
         yaml_ok = True
@@ -115,11 +119,9 @@ def doctor(
         yaml_version = "not installed"
         yaml_ok = False
     tectonic = _tool_detail("tectonic")
-    latexmk = _tool_detail("latexmk")
     pdftotext = _tool_detail("pdftotext")
     pdftoppm = _tool_detail("pdftoppm")
     latexdiff = _tool_detail("latexdiff")
-    bibliography = tectonic[0] or _tool_detail("bibtex")[0] or _tool_detail("biber")[0]
     checks: tuple[DoctorCheck, ...] = (
         DoctorCheck(
             "Python >= 3.11",
@@ -130,8 +132,8 @@ def doctor(
         DoctorCheck("PyYAML", yaml_ok, yaml_version, True),
         DoctorCheck(
             "LaTeX engine",
-            tectonic[0] or latexmk[0],
-            tectonic[1] if tectonic[0] else latexmk[1],
+            tectonic[0],
+            tectonic[1],
             True,
         ),
         DoctorCheck("latexdiff", latexdiff[0], latexdiff[1], True),
@@ -143,8 +145,8 @@ def doctor(
         ),
         DoctorCheck(
             "BibTeX/Biber backend",
-            bibliography,
-            "Tectonic integrated" if tectonic[0] else "external backend",
+            tectonic[0],
+            "Tectonic integrated" if tectonic[0] else "Tectonic is unavailable",
             True,
         ),
         DoctorCheck("Ruff", _tool_detail("ruff")[0], _tool_detail("ruff")[1], False),
@@ -172,15 +174,14 @@ def initialize_manuscript(
     first_authors: tuple[str, ...],
     corresponding_authors: tuple[str, ...],
     other_authors: tuple[str, ...] = (),
-    authors_path: str | Path | None = None,
     bibliography_path: str | Path | None = None,
-    custom_template: str | Path | None = None,
     engine: str = "auto",
 ) -> LifecycleResult:
     """Initialize and compile ``path/manuscript/initial_submission``."""
     if publisher not in PUBLISHERS:
         raise WorkflowError(f"Unsupported publisher: {publisher}")
-    author_source = resolve_author_library_path(authors_path)
+    validate_publisher_language(publisher, language)
+    author_source = resolve_author_library_path()
     library = load_author_library(author_source)
     metadata = ManuscriptMetadata(
         title=title,
@@ -201,9 +202,7 @@ def initialize_manuscript(
     ensure_cjk_environment(config, engine)
     initialize_project(
         config,
-        author_source,
         (Path(bibliography_path).expanduser().resolve() if bibliography_path else None),
-        Path(custom_template).expanduser().resolve() if custom_template else None,
     )
     with temporary_run(manuscript_root) as run_dir:
         manuscript = build_clean_manuscript(config, 0, run_dir, engine)
@@ -321,14 +320,22 @@ class ManuscriptProject:
         target_round = latest.current_round + 1
         target = latest.round_dir(target_round)
         with temporary_run(self.root, keep_temp) as run_dir:
-            child = start_revision(latest, target_round, run_dir, reviews_path)
             try:
+                child = start_revision(latest, target_round, run_dir, reviews_path)
                 comment_path = target / "response" / "reviewer_comments.md"
                 response_source = init_response(child, target_round)
                 creation = finalize_revision_creation(child)
             except Exception:
                 if target.exists():
                     shutil.rmtree(target)
+                state = latest.state_dir(target_round)
+                if state.exists():
+                    shutil.rmtree(state)
+                if run_dir.exists():
+                    shutil.rmtree(run_dir)
+                tmp_root = latest.tmp_root()
+                if tmp_root.is_dir() and not any(tmp_root.iterdir()):
+                    tmp_root.rmdir()
                 raise
         artifacts = [
             Artifact("Reviewer comments", comment_path),
@@ -384,7 +391,7 @@ class ManuscriptProject:
         engine: str | None = None,
         keep_temp: bool = False,
     ) -> LifecycleResult:
-        """Build all final artifacts and run a non-blocking review audit."""
+        """Build final artifacts only after a complete revision review audit."""
         latest = load_project(self.root)
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
@@ -392,6 +399,21 @@ class ManuscriptProject:
         if selected > 0:
             ensure_response_source(config, selected)
             audit = audit_reviews(config, selected, record_index=True)
+            if not audit.is_complete:
+                unresolved = sorted(
+                    {
+                        issue.review_id
+                        for issue in audit.issues
+                        if issue.review_id is not None
+                    }
+                )
+                detail = (
+                    f" Unresolved IDs: {', '.join(unresolved)}." if unresolved else ""
+                )
+                raise WorkflowError(
+                    "Review responses are incomplete; formal submission is blocked."
+                    + detail
+                )
         else:
             audit = None
         with temporary_run(self.root, keep_temp) as run_dir:

@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sci-manuscript-skill"
-version = "1.1.0"
-description = "Reproducible LaTeX scientific manuscript lifecycle management."
+version = "2.0.0"
+description = "Isolated LaTeX scientific manuscript lifecycle management."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "src/sci_manuscript/resources/journal_templates/acs/LICENSE.md"]
 dependencies = ["PyYAML>=6.0,<7", "ruamel.yaml>=0.18,<0.19"]
 
 [project.optional-dependencies]

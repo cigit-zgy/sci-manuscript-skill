@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from sci_manuscript.tex import command_at, extract_braced, is_escaped, skip_tex_space
+from sci_manuscript.tex import (
+    command_at,
+    extract_braced,
+    is_commented,
+    is_escaped,
+    skip_tex_space,
+)
 
 
 def test_is_escaped_counts_consecutive_backslashes() -> None:
@@ -39,3 +45,10 @@ def test_extract_braced_rejects_unbalanced_input() -> None:
 def test_command_at_rejects_longer_control_word() -> None:
     assert command_at(r"\review{1-1}{text}", 0, "review")
     assert not command_at(r"\reviewer{text}", 0, "review")
+
+
+def test_is_commented_respects_escaped_percent() -> None:
+    text = "active \\% text % disabled \\review{1-1}{x}\nnext"
+    assert not is_commented(text, text.index("text"))
+    assert is_commented(text, text.index(r"\review"))
+    assert not is_commented(text, text.index("next"))

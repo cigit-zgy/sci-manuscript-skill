@@ -9,21 +9,23 @@ from pathlib import Path
 import pytest
 
 from sci_manuscript import cli
+from sci_manuscript.authors import (
+    CONFIG_DIRECTORY_ENV,
+    configure_author_library,
+    configured_author_library_path,
+    load_author_library,
+    resolve_author_library_path,
+    resolve_authors,
+    resolve_signing_author,
+)
 from sci_manuscript.cli import main
 from sci_manuscript.errors import ManuscriptError
 from sci_manuscript.metadata import (
-    CONFIG_DIRECTORY_ENV,
     CorrespondenceSettings,
     ManuscriptMetadata,
     MetadataError,
     SubmissionSettings,
-    configure_author_library,
-    configured_author_library_path,
-    load_author_library,
     render_author_metadata,
-    resolve_author_library_path,
-    resolve_authors,
-    resolve_signing_author,
 )
 from sci_manuscript.workspace import ProjectConfig, initialize_project
 
@@ -112,7 +114,7 @@ authors:
         load_author_library(path)
 
 
-def test_global_library_is_configured_resolved_and_copied(
+def test_global_library_is_configured_without_project_copy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -125,21 +127,18 @@ def test_global_library_is_configured_resolved_and_copied(
     manuscript = tmp_path / "project" / "manuscript"
     initialized = initialize_project(
         ProjectConfig(manuscript, _metadata()),
-        resolve_author_library_path(),
     )
-    copied = initialized.references / "authors.yaml"
-    assert copied.read_bytes() == source.read_bytes()
-    assert resolve_authors(_metadata(), load_author_library(copied)).authors
+    assert not (initialized.references / "authors.yaml").exists()
+    assert resolve_authors(
+        _metadata(), load_author_library(resolve_author_library_path())
+    ).authors
 
 
-def test_explicit_library_overrides_global(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(CONFIG_DIRECTORY_ENV, str(tmp_path / "config"))
-    configure_author_library(_library(tmp_path / "global.yaml"))
-    explicit = _library(tmp_path / "explicit.yaml", author_id="explicit_author")
-    assert resolve_author_library_path(explicit) == explicit.resolve()
+def test_init_cli_has_no_explicit_author_library_option() -> None:
+    with pytest.raises(SystemExit):
+        cli._parser().parse_args(
+            ["init", "--project", "/tmp/example", "--authors", "/tmp/authors.yaml"]
+        )
 
 
 def test_bundled_public_library_is_the_final_fallback(

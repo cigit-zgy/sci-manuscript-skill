@@ -11,9 +11,10 @@ from pathlib import Path
 from .compile import compile_tex, run_command, stage_runtime_resources
 from .errors import WorkflowError
 from .locations import build_review_locations
+from .metadata import generate_metadata
 from .provenance import ProvenanceSource, extract_provenance, split_by_review_provenance
 from .templates import resources_root
-from .tex import extract_braced, is_escaped
+from .tex import extract_braced, is_commented, is_escaped
 from .workspace import ProjectConfig, strip_provenance_wrappers
 
 INPUT_PATTERN = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
@@ -32,6 +33,22 @@ CHINESE_TEXT_COMMANDS = (
     "firstauthoren",
     "funding",
     "entitle",
+)
+PUBLISHER_METADATA_CONTEXT_COMMANDS = (
+    "author",
+    "enauthor",
+    "affiliation",
+    "enaffiliation",
+    "firstauthorcn",
+    "firstauthoren",
+    "corrauthorcn",
+    "corrauthoren",
+    "funding",
+    "cortext",
+    "address",
+    "email",
+    "affil",
+    "alsoaffiliation",
 )
 
 _REVISION_RUNTIME_TEMPLATE = (
@@ -76,6 +93,8 @@ def _flatten_tex(
     text = resolved.read_text(encoding="utf-8")
 
     def replace_input(match: re.Match[str]) -> str:
+        if is_commented(text, match.start()):
+            return match.group(0)
         name = match.group(1).strip()
         if name == "preamble" or name.startswith("preamble/"):
             return match.group(0)
@@ -399,7 +418,14 @@ def _split_inline_math(content: str, macro: str) -> str:
         plain = content[plain_start:cursor]
         if plain:
             pieces.append(plain if plain.isspace() else f"{macro}{{{plain}}}")
-        pieces.append(f"{math_macro}{{{content[cursor:end]}}}")
+        if content.startswith("$$", cursor):
+            left = right = "$$"
+        elif content[cursor] == "$":
+            left = right = "$"
+        else:
+            left, right = r"\(", r"\)"
+        body = content[cursor + len(left) : end - len(right)]
+        pieces.append(f"{left}{math_macro}{{{body}}}{right}")
         cursor = end
         plain_start = end
         found = True
@@ -517,26 +543,58 @@ def _refine_inline_math_replacements(text: str) -> str:
             output.append(text[cursor:])
             break
         old, old_end = _diff_field(text, start + len(deleted_macro))
+        old_wrapper = _math_macro_wrapper(text, start, old_end)
+        if old_wrapper is None:
+            output.append(text[cursor:old_end])
+            cursor = old_end
+            continue
+        old_start, old_left, old_right, old_finish = old_wrapper
         candidates = [(text.find(f"{macro}{{", old_end), macro) for macro in additions]
         candidates = [item for item in candidates if item[0] >= 0]
         if not candidates:
             output.append(text[cursor:])
             break
         add_start, add_macro = min(candidates)
-        separator = text[old_end:add_start]
-        if not _separator_is_diff_only(separator):
-            output.append(text[cursor:old_end])
-            cursor = old_end
-            continue
         new, add_end = _diff_field(text, add_start + len(add_macro))
-        refined = _render_inline_math_refinement(old, new, add_macro)
-        if refined is None:
-            output.append(text[cursor:old_end])
-            cursor = old_end
+        add_wrapper = _math_macro_wrapper(text, add_start, add_end)
+        if add_wrapper is None:
+            output.append(text[cursor:old_finish])
+            cursor = old_finish
             continue
-        output.extend((text[cursor:start], refined))
-        cursor = add_end
+        new_start, new_left, new_right, new_finish = add_wrapper
+        separator = text[old_finish:new_start]
+        if not _separator_is_diff_only(separator):
+            output.append(text[cursor:old_finish])
+            cursor = old_finish
+            continue
+        refined = _render_inline_math_refinement(
+            f"{old_left}{old}{old_right}",
+            f"{new_left}{new}{new_right}",
+            add_macro,
+        )
+        if refined is None:
+            output.append(text[cursor:old_finish])
+            cursor = old_finish
+            continue
+        output.extend((text[cursor:old_start], refined))
+        cursor = new_finish
     return "".join(output)
+
+
+def _math_macro_wrapper(
+    text: str,
+    macro_start: int,
+    macro_end: int,
+) -> tuple[int, str, str, int] | None:
+    """Return delimiters surrounding one inline Math macro call."""
+    for left, right in (("$$", "$$"), ("$", "$"), (r"\(", r"\)")):
+        start = macro_start - len(left)
+        if start < 0 or text[start:macro_start] != left:
+            continue
+        if text[macro_end : macro_end + len(right)] != right:
+            continue
+        return start, left, right, macro_end + len(right)
+    return None
 
 
 def build_marked_manuscript(
@@ -562,11 +620,22 @@ def build_marked_manuscript(
     source_dir = run_dir / "marked_source"
     build_dir = run_dir / "marked_build"
     source_dir.mkdir(parents=True)
-    roots = (previous, current, config.project)
+    old_runtime = source_dir / "old_runtime"
+    new_runtime = source_dir / "new_runtime"
+    generate_metadata(previous, old_runtime)
+    generate_metadata(current, new_runtime)
     old_text = strip_provenance_wrappers(
-        _flatten_tex(previous / "manuscript.tex", roots)
+        _flatten_tex(
+            previous / "manuscript.tex",
+            (previous, old_runtime, config.project),
+        )
     )
-    provenance = extract_provenance(_flatten_tex(current / "manuscript.tex", roots))
+    provenance = extract_provenance(
+        _flatten_tex(
+            current / "manuscript.tex",
+            (current, new_runtime, config.project),
+        )
+    )
     old_source = source_dir / "old.tex"
     new_source = source_dir / "new.tex"
     old_source.write_text(old_text, encoding="utf-8")
@@ -586,6 +655,7 @@ def build_marked_manuscript(
         "--packages=none",
         "--math-markup=FINE",
         f"--preamble={style}",
+        "--append-context2cmd=" + ",".join(PUBLISHER_METADATA_CONTEXT_COMMANDS),
         "--disable-citation-markup",
         "--ignore-warnings",
         str(old_source),

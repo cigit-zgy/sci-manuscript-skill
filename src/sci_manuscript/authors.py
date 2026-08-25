@@ -144,13 +144,8 @@ def configured_author_library_path() -> Path:
     return user_config_directory() / "authors.yaml"
 
 
-def resolve_author_library_path(explicit: str | Path | None = None) -> Path:
-    """Resolve explicit, user-level, then bundled public author data."""
-    if explicit is not None:
-        selected = Path(explicit).expanduser().resolve()
-        if not selected.is_file():
-            raise MetadataError(f"Author library is missing: {selected}")
-        return selected
+def resolve_author_library_path() -> Path:
+    """Resolve the configured user library or bundled public author data."""
     configured = configured_author_library_path()
     if configured.is_file():
         return configured
@@ -158,14 +153,6 @@ def resolve_author_library_path(explicit: str | Path | None = None) -> Path:
     if not bundled.is_file():
         raise MetadataError("Bundled author library is missing from the installation.")
     return bundled
-
-
-def resolve_workspace_author_library_path(manuscript_root: Path) -> Path:
-    """Resolve an explicit project library before user-level and bundled data."""
-    project_library = manuscript_root / "references" / "authors.yaml"
-    return (
-        project_library if project_library.is_file() else resolve_author_library_path()
-    )
 
 
 def configure_author_library(source: str | Path) -> Path:
@@ -282,7 +269,7 @@ def resolve_authors(
     ]
     if missing:
         raise MetadataError(
-            "Selected author IDs are missing from references/authors.yaml: "
+            "Selected author IDs are missing from the active author library: "
             + ", ".join(missing)
         )
     corresponding = tuple(

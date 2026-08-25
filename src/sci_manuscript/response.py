@@ -6,37 +6,15 @@ import re
 import shutil
 from pathlib import Path
 
+from . import review
 from .compile import compile_tex, stage_cjk_fonts
 from .errors import WorkflowError
 from .metadata import generate_metadata
-from .review import (
-    ReviewAuditResult,
-    ReviewBlock,
-    ReviewComment,
-    audit_reviews,
-    parse_response_entries,
-    parse_reviews,
-    review_ids_from_sources,
-)
-from .review_ids import is_review_id, validate_review_id_list
+from .review_ids import is_review_id
 from .templates import resources_root
 from .workspace import ProjectConfig
 
 LOCATION_USE = re.compile(r"\\ReviewLocation\{([^}]+)\}")
-
-__all__ = [
-    "ReviewAuditResult",
-    "ReviewBlock",
-    "ReviewComment",
-    "audit_reviews",
-    "build_response",
-    "ensure_response_source",
-    "init_response",
-    "is_review_id",
-    "parse_response_entries",
-    "parse_reviews",
-    "validate_review_id_list",
-]
 
 
 def _escape_latex(value: str) -> str:
@@ -82,7 +60,7 @@ def init_response(config: ProjectConfig, round_number: int) -> Path | None:
     if round_number < 1:
         raise WorkflowError("r00 does not have a reviewer response.")
     response_dir = config.response_dir(round_number)
-    blocks = parse_reviews(response_dir / "reviewer_comments.md")
+    blocks = review.parse_reviews(response_dir / "reviewer_comments.md")
     target = response_dir / "responses.tex"
     if target.exists():
         raise WorkflowError(f"Response source already exists: {target}")
@@ -147,7 +125,7 @@ def ensure_response_source(config: ProjectConfig, round_number: int) -> Path | N
 
 
 def _body_tex(
-    blocks: tuple[ReviewBlock, ...],
+    blocks: tuple[review.ReviewBlock, ...],
     language: str,
     responses: dict[str, str],
     revised_ids: set[str],
@@ -196,7 +174,7 @@ def build_response(
 ) -> Path:
     """Compile a response copy with automatic marked-manuscript locations."""
     response_dir = config.response_dir(round_number)
-    blocks = parse_reviews(response_dir / "reviewer_comments.md")
+    blocks = review.parse_reviews(response_dir / "reviewer_comments.md")
     expected_ids = tuple(
         comment.review_id for block in blocks for comment in block.comments
     )
@@ -204,9 +182,9 @@ def build_response(
         raise WorkflowError(
             f"No reviewer comments are available: {response_dir / 'reviewer_comments.md'}"
         )
-    observed = parse_response_entries(response_dir / "responses.tex")
+    observed = review.parse_response_entries(response_dir / "responses.tex")
     responses = {review_id: observed.get(review_id, "") for review_id in expected_ids}
-    revised_ids = review_ids_from_sources(config, round_number).intersection(
+    revised_ids = review.review_ids_from_sources(config, round_number).intersection(
         expected_ids
     )
     missing_locations = sorted(
@@ -239,7 +217,7 @@ def build_response(
 
     staged_source = stage / "response_letter.tex"
     staged_source.write_text(LOCATION_USE.sub(replace_location, text), encoding="utf-8")
-    generate_metadata(config.project, config.round_dir(round_number), stage)
+    generate_metadata(config.round_dir(round_number), stage)
     compiled = compile_tex(
         staged_source,
         run_dir / "response_build",

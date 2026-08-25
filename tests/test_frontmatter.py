@@ -43,3 +43,16 @@ def test_chinese_frontmatter_template_excludes_generated_metadata() -> None:
         r"\corrauthoren{",
     ):
         assert command not in text
+
+
+def test_english_frontmatter_template_owns_all_scientific_frontmatter() -> None:
+    template = (
+        resources_root()
+        / "manuscript"
+        / "sections"
+        / "default"
+        / "00_frontmatter_en.tex"
+    ).read_text(encoding="utf-8")
+    assert r"\title{" in template
+    assert r"\newcommand{\ManuscriptAbstractText}" in template
+    assert r"\newcommand{\ManuscriptKeywordsText}" in template

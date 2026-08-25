@@ -9,9 +9,9 @@ from pathlib import Path
 
 from .authors import (
     load_author_library,
+    resolve_author_library_path,
     resolve_authors,
     resolve_signing_author,
-    resolve_workspace_author_library_path,
 )
 from .compile import (
     build_clean_manuscript,
@@ -25,19 +25,12 @@ from .metadata import generate_metadata
 from .response import build_response
 from .review import ReviewAuditResult, parse_reviews
 from .templates import render_template, resources_root, template_values
-from .workspace import ProjectConfig
+from .workspace import GENERATED_SUBMISSION_PATHS, ProjectConfig
 
 GUIDANCE_USE = re.compile(r"\\guidance\s*\{")
 TEMPLATE_TOKEN = re.compile(r"%%[A-Z0-9_]+%%")
 REVIEW_COMPLETENESS_LINE = re.compile(
     r"(?m)^- Review completeness: \*\*(?:COMPLETE|INCOMPLETE)\*\*\.\n?"
-)
-GENERATED_SUBMISSION_FILES = (
-    "manuscript.pdf",
-    "marked_manuscript.pdf",
-    "response_letter.pdf",
-    "cover_letter.pdf",
-    "highlights.pdf",
 )
 
 
@@ -103,7 +96,7 @@ def _compile_submission_source(
             and sibling.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf"}
         ):
             shutil.copy2(sibling, stage / sibling.name)
-    generate_metadata(config.project, config.round_dir(config.current_round), stage)
+    generate_metadata(config.round_dir(config.current_round), stage)
     result = compile_tex(
         staged_source, run_dir / f"submission_build_{name}", config, engine
     )
@@ -152,7 +145,7 @@ def _compile_cover_letter(
             ".pdf",
         }:
             shutil.copy2(sibling, stage / sibling.name)
-    generate_metadata(config.project, config.round_dir(config.current_round), stage)
+    generate_metadata(config.round_dir(config.current_round), stage)
     result = compile_tex(staged_source, run_dir / "cover_build", config, engine)
     target = run_dir / "package_stage" / "cover_letter.pdf"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +172,7 @@ def prepare_submission_artifacts(
     submission = ensure_submission_workspace(config, round_number)
     selection = resolve_authors(
         config.metadata,
-        load_author_library(resolve_workspace_author_library_path(config.project)),
+        load_author_library(resolve_author_library_path()),
     )
     resolve_signing_author(
         config.metadata,
@@ -266,8 +259,8 @@ def prepare_submission_artifacts(
         state = "COMPLETE" if audit.is_complete else "INCOMPLETE"
         checklist_text += f"\n\n- Review completeness: **{state}**."
     checklist.write_text(checklist_text + "\n", encoding="utf-8")
-    for name in GENERATED_SUBMISSION_FILES:
-        generated = submission / name
+    for relative in GENERATED_SUBMISSION_PATHS:
+        generated = submission / relative
         if generated.is_file():
             generated.unlink()
     for generated in stage.iterdir():

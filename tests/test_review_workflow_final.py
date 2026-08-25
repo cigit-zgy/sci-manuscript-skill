@@ -12,28 +12,8 @@ from sci_manuscript.cli import _print_lifecycle
 from sci_manuscript.errors import WorkflowError
 from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
 from sci_manuscript.metadata import ManuscriptMetadata, SubmissionSettings
-from sci_manuscript.response import parse_response_entries
-from sci_manuscript.review import audit_reviews, parse_reviews
+from sci_manuscript.review import audit_reviews, parse_response_entries, parse_reviews
 from sci_manuscript.workspace import ProjectConfig, initialize_project
-
-
-def _authors(tmp_path: Path) -> Path:
-    path = tmp_path / "authors.yaml"
-    path.write_text(
-        """affiliations:
-  institute:
-    name_en: Anonymous Institute, Example City
-    name_zh: 匿名机构
-authors:
-  author:
-    name_en: Anonymous Author
-    name_zh: 匿名作者
-    email: author@example.invalid
-    affiliations: [institute]
-""",
-        encoding="utf-8",
-    )
-    return path
 
 
 def _project(tmp_path: Path, language: str = "en") -> ProjectConfig:
@@ -52,7 +32,7 @@ def _project(tmp_path: Path, language: str = "en") -> ProjectConfig:
         other_authors=(),
         submission=SubmissionSettings(),
     )
-    return initialize_project(ProjectConfig(root, metadata), _authors(tmp_path))
+    return initialize_project(ProjectConfig(root, metadata))
 
 
 def _canonical_reviews(path: Path) -> None:

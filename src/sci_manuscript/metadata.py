@@ -13,51 +13,25 @@ import yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-from .authors import (
-    CONFIG_DIRECTORY_ENV,
-    AffiliationRecord,
-    AuthorLibrary,
-    AuthorRecord,
-    AuthorSelection,
-    configure_author_library,
-    configured_author_library_path,
-    load_author_library,
-    resolve_author_library_path,
-    resolve_authors,
-    resolve_signing_author,
-    resolve_workspace_author_library_path,
-    user_config_directory,
-)
+from . import authors as author_data
 from .errors import MetadataError
 from .tex import command_at, extract_braced, is_escaped
 
 __all__ = [
-    "CONFIG_DIRECTORY_ENV",
-    "AffiliationRecord",
-    "AuthorLibrary",
-    "AuthorRecord",
-    "AuthorSelection",
     "CorrespondenceSettings",
     "ManuscriptMetadata",
     "MetadataError",
     "SubmissionSettings",
-    "configure_author_library",
-    "configured_author_library_path",
-    "load_author_library",
     "load_meta",
-    "resolve_author_library_path",
-    "resolve_authors",
-    "resolve_signing_author",
-    "user_config_directory",
 ]
 
-PUBLISHER_TEMPLATES = {
-    "elsevier": "elsarticle",
-    "nature": "sn-jnl",
-    "acs": "achemso",
-    "chinese": "kxtbcas",
+PUBLISHERS = ("elsevier", "nature", "acs", "chinese")
+PUBLISHER_LANGUAGES = {
+    "chinese": "zh",
+    "elsevier": "en",
+    "nature": "en",
+    "acs": "en",
 }
-PUBLISHERS = (*PUBLISHER_TEMPLATES, "custom")
 ROUND_PATTERN = re.compile(r"^r(\d{2,})$")
 
 
@@ -120,11 +94,6 @@ class ManuscriptMetadata:
         preferred = self.title_zh if language == "zh" else self.title_en
         alternate = self.title_en if language == "zh" else self.title_zh
         return preferred or self.title or alternate
-
-    @property
-    def journal_template(self) -> str:
-        """Return the selected built-in class or the custom marker."""
-        return PUBLISHER_TEMPLATES.get(self.publisher, "custom")
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -227,36 +196,6 @@ def _text_group(value: Any, location: str) -> tuple[str, ...]:
     return items
 
 
-def _localized_text(
-    value: Any,
-    location: str,
-    *,
-    language: str,
-    optional: bool,
-) -> tuple[str, str, str]:
-    """Parse a bilingual mapping while accepting the released scalar form."""
-    if isinstance(value, str):
-        scalar = _text(value, location, optional=optional)
-        return (
-            scalar,
-            scalar if language == "zh" else "",
-            scalar if language == "en" else "",
-        )
-    mapping = _mapping(value, location)
-    unexpected = set(mapping) - {"zh", "en"}
-    if unexpected:
-        raise MetadataError(
-            f"{location} contains unsupported keys: {', '.join(sorted(unexpected))}."
-        )
-    zh = _text(mapping.get("zh"), f"{location}.zh", optional=True)
-    en = _text(mapping.get("en"), f"{location}.en", optional=True)
-    primary = zh if language == "zh" else en
-    primary = primary or en or zh
-    if not optional and not primary:
-        raise MetadataError(f"{location} must contain zh or en text.")
-    return primary, zh, en
-
-
 def round_name(round_number: int) -> str:
     """Return a fixed-width semantic revision identifier."""
     if round_number < 0:
@@ -269,6 +208,16 @@ def revision_directory_name(round_number: int) -> str:
     if round_number < 0:
         raise MetadataError("Round numbers must be non-negative.")
     return "initial_submission" if round_number == 0 else f"revision_{round_number:02d}"
+
+
+def validate_publisher_language(publisher: str, language: str) -> None:
+    """Reject publisher and language combinations outside the release matrix."""
+    required_language = PUBLISHER_LANGUAGES[publisher]
+    if language != required_language:
+        raise MetadataError(
+            f"journal.publisher {publisher!r} requires "
+            f"manuscript.language: {required_language}."
+        )
 
 
 def load_meta(path: Path) -> ManuscriptMetadata:
@@ -290,6 +239,11 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         )
     revision = _mapping(data.get("revision"), "revision")
     manuscript = _mapping(data.get("manuscript"), "manuscript")
+    unexpected_manuscript = set(manuscript) - {"language", "article_type"}
+    if unexpected_manuscript:
+        raise MetadataError(
+            "Unsupported manuscript keys: " + ", ".join(sorted(unexpected_manuscript))
+        )
     journal = _mapping(data.get("journal"), "journal")
     authors = _mapping(data.get("authors"), "authors")
     frontmatter = _mapping(data.get("frontmatter", {}), "frontmatter")
@@ -321,34 +275,7 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         raise MetadataError(
             f"journal.publisher must be one of: {', '.join(PUBLISHERS)}."
         )
-    title = ""
-    title_zh = ""
-    title_en = ""
-    abstract_zh = ""
-    abstract_en = ""
-    keywords_zh = ""
-    keywords_en = ""
-    if "title" in manuscript:
-        title, title_zh, title_en = _localized_text(
-            manuscript.get("title"),
-            "manuscript.title",
-            language=language,
-            optional=False,
-        )
-    if "abstract" in manuscript:
-        _, abstract_zh, abstract_en = _localized_text(
-            manuscript.get("abstract"),
-            "manuscript.abstract",
-            language=language,
-            optional=True,
-        )
-    if "keywords" in manuscript:
-        _, keywords_zh, keywords_en = _localized_text(
-            manuscript.get("keywords"),
-            "manuscript.keywords",
-            language=language,
-            optional=True,
-        )
+    validate_publisher_language(publisher, language)
     funding = _text_group(frontmatter.get("funding"), "frontmatter.funding")
     author_biographies = _author_group(
         frontmatter.get("author_biographies", []),
@@ -378,13 +305,12 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         )
     unknown_biographies = set(author_biographies) - {
         *first_authors,
-        *other_authors,
         *corresponding_authors,
     }
     if unknown_biographies:
         raise MetadataError(
-            "frontmatter.author_biographies must reference selected authors: "
-            + ", ".join(sorted(unknown_biographies))
+            "frontmatter.author_biographies must reference first or "
+            "corresponding authors: " + ", ".join(sorted(unknown_biographies))
         )
     raw_submission = data.get("submission")
     if raw_submission is None:
@@ -445,7 +371,7 @@ def load_meta(path: Path) -> ManuscriptMetadata:
                 "correspondence.signing_author must be a corresponding author."
             )
     return ManuscriptMetadata(
-        title=title,
+        title="",
         article_type=_text(manuscript.get("article_type"), "manuscript.article_type"),
         language=language,
         journal_name=_text(journal.get("name"), "journal.name"),
@@ -457,12 +383,6 @@ def load_meta(path: Path) -> ManuscriptMetadata:
         other_authors=other_authors,
         submission=submission,
         correspondence=correspondence,
-        title_zh=title_zh,
-        title_en=title_en,
-        abstract_zh=abstract_zh,
-        abstract_en=abstract_en,
-        keywords_zh=keywords_zh,
-        keywords_en=keywords_en,
         funding=funding,
         author_biographies=author_biographies,
     )
@@ -732,8 +652,8 @@ def _metadata_with_frontmatter_title(
 
 
 def _author_label(
-    author: AuthorRecord,
-    selection: AuthorSelection,
+    author: author_data.AuthorRecord,
+    selection: author_data.AuthorSelection,
     language: str,
 ) -> str:
     markers = [str(selection.affiliation_numbers[key]) for key in author.affiliations]
@@ -743,7 +663,7 @@ def _author_label(
     return f"{_latex_escape(name)}$^{{{','.join(markers)}}}$"
 
 
-def _affiliation_text(affiliation: AffiliationRecord, language: str) -> str:
+def _affiliation_text(affiliation: author_data.AffiliationRecord, language: str) -> str:
     """Render one affiliation without inventing unavailable translations."""
     name = (
         affiliation.name_zh
@@ -755,7 +675,7 @@ def _affiliation_text(affiliation: AffiliationRecord, language: str) -> str:
 
 def render_author_metadata(
     metadata: ManuscriptMetadata,
-    selection: AuthorSelection,
+    selection: author_data.AuthorSelection,
 ) -> str:
     """Render shared correspondence macros."""
     names_en = ", ".join(_latex_escape(item.name_en) for item in selection.authors)
@@ -777,7 +697,7 @@ def render_author_metadata(
         + _latex_escape(_affiliation_text(item, "en"))
         for item in selection.affiliations
     ]
-    signer = resolve_signing_author(metadata, selection)
+    signer = author_data.resolve_signing_author(metadata, selection)
     signer_affiliations = (
         tuple(
             affiliation
@@ -834,7 +754,7 @@ def render_author_metadata(
     )
 
 
-def _nature_name(author: AuthorRecord) -> str:
+def _nature_name(author: author_data.AuthorRecord) -> str:
     parts = author.name_en.split()
     if len(parts) == 1:
         return f"\\sur{{{_latex_escape(parts[0])}}}"
@@ -846,7 +766,7 @@ def _nature_name(author: AuthorRecord) -> str:
 
 def render_publisher_metadata(
     metadata: ManuscriptMetadata,
-    selection: AuthorSelection,
+    selection: author_data.AuthorSelection,
 ) -> str:
     """Render declarations required by the selected publisher class."""
     corresponding = set(selection.corresponding_authors)
@@ -912,7 +832,7 @@ def render_publisher_metadata(
             for item in selection.affiliations
         )
 
-        def biography(author: AuthorRecord, language: str) -> str:
+        def biography(author: author_data.AuthorRecord, language: str) -> str:
             bio = author.bio_zh if language == "zh" else author.bio_en
             if bio:
                 return _latex_escape(bio)
@@ -954,19 +874,16 @@ def render_publisher_metadata(
 
 
 def generate_metadata(
-    manuscript_root: Path,
     round_dir: Path,
     target_dir: Path,
-) -> AuthorSelection:
+) -> author_data.AuthorSelection:
     """Generate ephemeral LaTeX metadata inside an isolated build directory."""
     metadata = _metadata_with_frontmatter_title(
         load_meta(round_dir / "meta.yaml"),
         round_dir,
     )
-    library = load_author_library(
-        resolve_workspace_author_library_path(manuscript_root)
-    )
-    selection = resolve_authors(metadata, library)
+    library = author_data.load_author_library(author_data.resolve_author_library_path())
+    selection = author_data.resolve_authors(metadata, library)
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "author_metadata.tex").write_text(
         render_author_metadata(metadata, selection), encoding="utf-8"

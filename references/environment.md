@@ -11,7 +11,7 @@ confirms the exact target environment and installation method.
 | --- | --- |
 | Python | Python 3.11 or newer |
 | YAML | PyYAML 6.x |
-| LaTeX | Tectonic, or `latexmk` with pdfLaTeX/XeLaTeX |
+| LaTeX | Tectonic |
 | Revisions | `latexdiff` |
 | PDF QA | Poppler `pdftotext` and `pdftoppm` |
 | Bibliography | Tectonic-integrated BibTeX, external BibTeX, or Biber |
@@ -27,7 +27,7 @@ Identify the intended Python before running workflow imports:
 ```bash
 python3 --version
 command -v python3
-command -v tectonic latexmk pdflatex xelatex
+command -v tectonic
 command -v latexdiff pdftotext pdftoppm bibtex biber
 ```
 
@@ -88,22 +88,20 @@ For the compact supported macOS toolchain:
 brew install tectonic latexdiff poppler
 ```
 
-TeX Live is an alternative, not a simultaneous requirement. Package names and
-availability differ by operating system and distribution; verify the local
-package manager rather than copying an unverified command. After any approved
-installation, activate the chosen Python environment and rerun `doctor`.
+Package names and availability differ by operating system and distribution;
+verify the local package manager rather than copying an unverified command.
+After any approved installation, activate the chosen Python environment and
+rerun `doctor`.
 
 ## Compiler policy
 
-`auto` uses Tectonic when available and otherwise uses the supported
-`latexmk` toolchain. Pass `--engine tectonic` or `--engine latex` only for an
-explicit reproducibility or diagnostic requirement. Traditional Chinese builds
-require XeLaTeX.
+`auto` resolves to Tectonic. `--engine tectonic` pins the same supported engine
+explicitly. There is no traditional-LaTeX fallback in the public contract.
 
 The scientific preamble uses packages for mathematics, chemistry, units,
 tables, figures, algorithms, publisher references, engine detection, and
 conditional CJK support. Tectonic obtains compatible packages through its
-bundle; traditional LaTeX environments must provide them locally.
+bundle.
 
 The bundled Chinese class uses system font fallbacks when project-local font
 files are absent. Tectonic may report absolute system-font access as a

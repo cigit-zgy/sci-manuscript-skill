@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import struct
 import subprocess
+import tomllib
 from importlib.resources import files
 from pathlib import Path
 
@@ -97,6 +98,26 @@ def test_no_obsolete_public_architecture_strings() -> None:
     assert "SCI_MANUSCRIPT_SKILL_ROOT" not in text
     assert "scripts/run.py" not in text
     assert "manuscript.yaml" not in text
+    for obsolete in (
+        "project `authors.yaml`",
+        "--authors",
+        "custom publisher",
+        "--custom-template",
+        "--engine latex",
+        "math-markup=WHOLE",
+        "v3.0.0",
+    ):
+        assert obsolete not in text
+
+
+def test_release_metadata_is_v2_and_includes_third_party_notices() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert project["project"]["version"] == "2.0.0"
+    assert set(project["project"]["license-files"]) == {
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "src/sci_manuscript/resources/journal_templates/acs/LICENSE.md",
+    }
 
 
 def test_manuscript_package_has_no_scripts_runtime_dependency() -> None:
@@ -106,6 +127,38 @@ def test_manuscript_package_has_no_scripts_runtime_dependency() -> None:
     )
     assert "sys.path.insert" not in text
     assert ' / "scripts"' not in text
+
+
+def test_author_library_api_is_owned_only_by_authors_module() -> None:
+    import inspect
+
+    import sci_manuscript.metadata as metadata
+    from sci_manuscript.workspace import initialize_project
+
+    for name in (
+        "AuthorRecord",
+        "AuthorLibrary",
+        "configure_author_library",
+        "load_author_library",
+        "resolve_author_library_path",
+        "resolve_authors",
+    ):
+        assert not hasattr(metadata, name)
+    assert "authors_source" not in inspect.signature(initialize_project).parameters
+
+
+def test_review_parser_api_is_owned_only_by_review_modules() -> None:
+    import sci_manuscript.response as response
+
+    for name in (
+        "ReviewAuditResult",
+        "ReviewBlock",
+        "audit_reviews",
+        "parse_response_entries",
+        "parse_reviews",
+        "validate_review_id_list",
+    ):
+        assert not hasattr(response, name)
 
 
 def test_correspondence_templates_are_self_contained() -> None:
@@ -169,15 +222,22 @@ def test_review_workflow_has_one_public_interface() -> None:
     assert not hasattr(ManuscriptProject, "build_" + "all")
 
     option_strings: set[str] = set()
+    engine_choices: set[str] = set()
     pending = [_parser()]
     while pending:
         parser = pending.pop()
         for action in parser._actions:
             option_strings.update(action.option_strings)
+            if "--engine" in action.option_strings:
+                assert action.choices is not None
+                engine_choices.update(str(choice) for choice in action.choices)
             choices = getattr(action, "choices", None)
             if isinstance(choices, dict):
                 pending.extend(choices.values())
     assert "--allow-" + "placeholders" not in option_strings
+    assert "--authors" not in option_strings
+    assert "--custom-template" not in option_strings
+    assert engine_choices == {"auto", "tectonic"}
 
 
 def test_current_docs_have_one_revision_rendering_contract() -> None:

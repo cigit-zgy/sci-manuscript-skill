@@ -38,29 +38,6 @@ def _require_toolchain() -> None:
         pytest.skip("release toolchain is missing: " + ", ".join(missing))
 
 
-def _author_library(path: Path) -> Path:
-    path.write_text(
-        """affiliations:
-  institute:
-    name_en: Anonymous Research Institute
-    address: Example City
-authors:
-  author_one:
-    name_en: Anonymous One
-    name_zh: 匿名甲
-    email: one@example.invalid
-    affiliations: [institute]
-  author_two:
-    name_en: Anonymous Two
-    name_zh: 匿名乙
-    email: two@example.invalid
-    affiliations: [institute]
-""",
-        encoding="utf-8",
-    )
-    return path
-
-
 def _review_file(path: Path, round_number: int) -> Path:
     if round_number == 1:
         text = """# Editor
@@ -354,7 +331,6 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
         article_type="观点",
         first_authors=("author_one",),
         corresponding_authors=("author_two",),
-        authors_path=_author_library(tmp_path / "fresh_authors.yaml"),
         engine="tectonic",
     )
     manuscript = project_dir / "manuscript"
@@ -395,7 +371,6 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
             "elsevier",
             {
                 "00_frontmatter.tex",
-                "00_abstract.tex",
                 "01_introduction.tex",
                 "02_methods.tex",
                 "03_results.tex",
@@ -407,7 +382,6 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
             "nature",
             {
                 "00_frontmatter.tex",
-                "00_abstract.tex",
                 "01_introduction.tex",
                 "02_results.tex",
                 "03_discussion.tex",
@@ -418,7 +392,6 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
             "acs",
             {
                 "00_frontmatter.tex",
-                "00_abstract.tex",
                 "01_introduction.tex",
                 "02_experimental.tex",
                 "03_results_and_discussion.tex",
@@ -427,7 +400,7 @@ def test_fresh_chinese_initial_workflow_compiles(tmp_path: Path) -> None:
         ),
     ),
 )
-def test_non_chinese_initial_workflows_own_title_in_frontmatter(
+def test_non_chinese_initial_workflows_own_scientific_frontmatter(
     tmp_path: Path,
     publisher: str,
     expected_sections: set[str],
@@ -443,7 +416,6 @@ def test_non_chinese_initial_workflows_own_title_in_frontmatter(
         article_type="Research Article",
         first_authors=("author_one",),
         corresponding_authors=("author_one",),
-        authors_path=_author_library(tmp_path / f"{publisher}_authors.yaml"),
         engine="tectonic",
     )
     manuscript = project_dir / "manuscript"
@@ -451,10 +423,23 @@ def test_non_chinese_initial_workflows_own_title_in_frontmatter(
     assert {path.name for path in (initial / "sections").iterdir()} == expected_sections
     source = (initial / "manuscript.tex").read_text(encoding="utf-8")
     assert "FRONTMATTER_INPUT" not in source
+    assert "ABSTRACT_INPUT" not in source
     assert r"\input{sections/00_frontmatter}" in source
+    frontmatter = initial / "sections" / "00_frontmatter.tex"
+    text = frontmatter.read_text(encoding="utf-8")
+    text = text.replace("% Manuscript abstract", "Canonical abstract ownership.")
+    text = text.replace(
+        "% Comma-separated manuscript keywords", "canonical, frontmatter"
+    )
+    frontmatter.write_text(text, encoding="utf-8")
     result = ManuscriptProject(manuscript).build(engine="tectonic")
     pdf_text = _pdf_text(result.artifacts[0].path)
     assert f"{publisher.title()} Initial Workflow" in pdf_text
+    assert "Canonical abstract ownership" in pdf_text
+    if publisher == "acs":
+        assert r"\keywords{\ManuscriptKeywordsText}" in source
+    else:
+        assert "canonical" in pdf_text and "frontmatter" in pdf_text
 
 
 def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
@@ -470,7 +455,6 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
         first_authors=("author_one",),
         corresponding_authors=("author_one",),
         other_authors=("author_two",),
-        authors_path=_author_library(tmp_path / "authors.yaml"),
         engine="tectonic",
     )
     manuscript = project_dir / "manuscript"
@@ -507,7 +491,7 @@ def test_release_lifecycle_and_marked_pdf_quality(tmp_path: Path) -> None:
     assert "E-1" in response_text
     assert "Location unavailable" not in response_text
     assert "Anonymous Release Validation" in cover_text
-    assert "Anonymous One" in cover_text
+    assert "First Author" in cover_text
     assert "guidance" not in cover_text.lower()
     assert "Approved anonymous cover-letter statement" in cover_source.read_text()
     _assert_provenance_colors(marked, tmp_path / "rendered_marked")
@@ -566,7 +550,6 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
         article_type="研究论文",
         first_authors=("author_one",),
         corresponding_authors=("author_one",),
-        authors_path=_author_library(tmp_path / "authors_zh.yaml"),
         engine="tectonic",
     )
     manuscript = project_dir / "manuscript"
@@ -594,7 +577,7 @@ def test_chinese_cover_and_response_compile_with_runtime_metadata(
         _pdf_text(revision / "output" / "response_letter.pdf").split()
     )
     assert "匿名中文通讯模板验证" in cover_text
-    assert "匿名甲" in cover_text
+    assert "第一作者" in cover_text
     assert "意见1-1" in response_text
     assert "第" in response_text and "行" in response_text
     assert "使用说明" not in response_text
@@ -638,7 +621,6 @@ def test_chinese_revision_submission_generates_registry_and_locations(
         article_type="观点",
         first_authors=("author_one",),
         corresponding_authors=("author_one",),
-        authors_path=_author_library(tmp_path / "registry_authors.yaml"),
         engine="tectonic",
     )
     reviews = tmp_path / "registry_reviews.md"
@@ -750,12 +732,12 @@ def test_math_revision_semantics_are_fine_grained_and_rendered(tmp_path: Path) -
         article_type="观点",
         first_authors=("author_one",),
         corresponding_authors=("author_one",),
-        authors_path=_author_library(tmp_path / "math_authors.yaml"),
         engine="tectonic",
     )
     manuscript = project_dir / "manuscript"
     initial = manuscript / "initial_submission" / "sections" / "01_introduction.tex"
-    old = r"""Reviewer inline $a+b$ and unchanged math $u=v$.
+    old = r"""Deleted inline $\mathcal{O}_{\mathrm{P}}$ with a subscript.
+Reviewer inline $a+b$ and parenthesized \(\mathcal{O}_{\mathrm{M},old}\), plus unchanged math $u=v$.
 \begin{equation}
 x+y=z\label{eq:partial}
 \end{equation}
@@ -775,12 +757,12 @@ Stable anchor.
     project.start_revision(reviews=reviews, confirmed=True)
     revision = manuscript / "revision_01"
     current = revision / "sections" / "01_introduction.tex"
-    new = r"""\review{1-1}{Reviewer inline $a+c$ and unchanged math $u=v$.
+    new = r"""\review{1-1}{Reviewer inline $a+c$ and parenthesized \(\mathcal{O}_{\mathrm{M},new}\), plus unchanged math $u=v$.
 \begin{equation}
 x+y+w=z\label{eq:partial}
 \end{equation}}
 Stable anchor.
-Author inline $m+n$.
+Author inline $\mathcal{O}_{\mathrm{M}}^{2}$ and $m+n$.
 \begin{equation}
 r=s\label{eq:author}
 \end{equation}
@@ -800,12 +782,19 @@ r=s\label{eq:author}
     marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
         encoding="utf-8"
     )
-    assert r"\DIFdel{b}" in marked_source
-    assert r"\DIFaddReview{c}" in marked_source
+    assert r"$\DIFdelMath{a+b}$" in marked_source
+    assert r"$\DIFaddReviewMath{a+c}$" in marked_source
     assert r"\DIFaddReview{+w}" in marked_source
     assert r"\DIFdel{p=q}" in marked_source
-    assert r"\DIFaddMath{$m+n$}" in marked_source
+    assert r"$\DIFaddMath{m+n}$" in marked_source
     assert r"\DIFadd{r=s}" in marked_source
+    assert r"$\DIFdelMath{\mathcal{O}_{\mathrm{P}}}$" in marked_source
+    assert r"$\DIFaddMath{\mathcal{O}_{\mathrm{M}}^{2}}$" in marked_source
+    assert r"\(\DIFdelMath{" in marked_source
+    assert r"\(\DIFaddReviewMath{" in marked_source
+    for math_macro in (r"\DIFdelMath", r"\DIFaddMath", r"\DIFaddReviewMath"):
+        assert f"{math_macro}{{$" not in marked_source
+        assert f"{math_macro}{{\\(" not in marked_source
     unchanged = marked_source[
         marked_source.index("u=v") - 30 : marked_source.index("u=v") + 30
     ]
@@ -813,3 +802,59 @@ r=s\label{eq:author}
     assert marked_source.count(r"\label{eq:partial}") == 1
     assert marked_source.count(r"\label{eq:author}") == 1
     shutil.rmtree(manuscript / "tmp")
+
+
+def test_chinese_funding_metadata_participates_in_revision_diff(
+    tmp_path: Path,
+) -> None:
+    _require_toolchain()
+    project_dir = tmp_path / "Funding Revision Project"
+    initialize_manuscript(
+        project_dir,
+        title="基金修订差异测试",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_one",),
+        engine="tectonic",
+    )
+    manuscript = project_dir / "manuscript"
+    initial = manuscript / "initial_submission"
+    _replace_once(
+        initial / "meta.yaml",
+        "  funding: []",
+        "  funding:\n    - 国家自然科学基金项目（52500063）",
+    )
+    project = ManuscriptProject(manuscript)
+    project.start_revision(confirmed=True)
+    revision = manuscript / "revision_01"
+    _replace_once(
+        revision / "meta.yaml",
+        "    - 国家自然科学基金项目（52500063）",
+        "    - 国家自然科学基金项目（52500063, 52131003, 52327813）",
+    )
+
+    project.build(engine="tectonic", keep_temp=True)
+
+    output = revision / "output"
+    assert "52131003" in _pdf_text(output / "manuscript_clean.pdf")
+    assert "52327813" in _pdf_text(output / "manuscript_marked.pdf")
+    run = next((manuscript / "tmp").glob("run_*"))
+    marked_source = (run / "marked_source" / "manuscript_marked.tex").read_text(
+        encoding="utf-8"
+    )
+    assert "52131003" in marked_source
+    assert "52327813" in marked_source
+    assert re.search(r"\\DIFadd(?:FL)?\{[^{}]*52131003", marked_source)
+    assert re.search(r"\\DIFadd(?:FL)?\{[^{}]*52327813", marked_source)
+    assert not re.search(r"\\DIFaddReview(?:FL)?\{[^{}]*52[13]", marked_source)
+    assert "marked_source" not in _pdf_text(output / "manuscript_marked.pdf")
+    assert "publisher_metadata" not in _pdf_text(output / "manuscript_marked.pdf")
+    old_runtime = run / "marked_source" / "old_runtime" / "publisher_metadata.tex"
+    new_runtime = run / "marked_source" / "new_runtime" / "publisher_metadata.tex"
+    assert "52500063" in old_runtime.read_text(encoding="utf-8")
+    assert "52131003" not in old_runtime.read_text(encoding="utf-8")
+    assert "52131003" in new_runtime.read_text(encoding="utf-8")
+    assert "52327813" in new_runtime.read_text(encoding="utf-8")

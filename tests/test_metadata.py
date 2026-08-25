@@ -8,14 +8,13 @@ from pathlib import Path
 
 import pytest
 
+from sci_manuscript.authors import load_author_library, resolve_authors
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     MetadataError,
     SubmissionSettings,
-    load_author_library,
     load_meta,
     render_publisher_metadata,
-    resolve_authors,
     save_meta,
 )
 from sci_manuscript.templates import resources_root
@@ -103,6 +102,73 @@ def test_canonical_meta_contains_workflow_fields_without_manuscript_text(
     assert "  order:" not in text
 
 
+@pytest.mark.parametrize("field", ("title", "abstract", "keywords"))
+def test_manuscript_scientific_frontmatter_fields_are_rejected(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    path = tmp_path / "obsolete-frontmatter.yaml"
+    _write_meta(
+        path,
+        "  first: [zhao_guangyao]\n  corresponding: [liu_hong]\n  other: []",
+    )
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace(
+            "  article_type: 观点\n", f"  article_type: 观点\n  {field}: 旧字段\n"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MetadataError, match="Unsupported manuscript keys"):
+        load_meta(path)
+
+
+@pytest.mark.parametrize(
+    ("publisher", "language"),
+    (
+        ("chinese", "en"),
+        ("elsevier", "zh"),
+        ("nature", "zh"),
+        ("acs", "zh"),
+    ),
+)
+def test_publisher_language_matrix_is_explicit(
+    tmp_path: Path,
+    publisher: str,
+    language: str,
+) -> None:
+    path = tmp_path / "unsupported-combination.yaml"
+    _write_meta(
+        path,
+        "  first: [zhao_guangyao]\n  corresponding: [liu_hong]\n  other: []",
+    )
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("  language: zh", f"  language: {language}")
+    text = text.replace("  publisher: chinese", f"  publisher: {publisher}")
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(MetadataError, match=r"requires manuscript.language"):
+        load_meta(path)
+
+
+def test_custom_publisher_is_not_a_canonical_option(tmp_path: Path) -> None:
+    path = tmp_path / "custom-publisher.yaml"
+    _write_meta(
+        path,
+        "  first: [zhao_guangyao]\n  corresponding: [liu_hong]\n  other: []",
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "  publisher: chinese", "  publisher: custom"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MetadataError, match=r"journal.publisher must be one of"):
+        load_meta(path)
+
+
 @pytest.mark.parametrize(
     "authors",
     (
@@ -169,3 +235,22 @@ def test_funding_and_selected_multiple_author_biographies_render() -> None:
     assert r"\entitle{" not in rendered
     assert r"\cnabstract{" not in rendered
     assert r"\enabstract{" not in rendered
+
+
+def test_biography_selection_rejects_other_only_author(tmp_path: Path) -> None:
+    path = tmp_path / "other-biography.yaml"
+    _write_meta(
+        path,
+        "  first: [zhao_guangyao]\n  corresponding: [liu_hong]\n  other: [song_cheng]",
+    )
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace(
+            "    - zhao_guangyao\n    - liu_hong",
+            "    - song_cheng",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MetadataError, match="first or corresponding authors"):
+        load_meta(path)

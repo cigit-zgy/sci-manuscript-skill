@@ -59,12 +59,7 @@ def render_template(source: Path, target: Path, values: dict[str, str]) -> None:
 
 
 def publisher_resource(config: ProjectConfig) -> Path:
-    """Resolve a built-in package resource or one explicit custom template."""
-    if config.metadata.publisher == "custom":
-        custom = config.references / "journal_template"
-        if not custom.is_dir():
-            raise WorkflowError(f"Custom journal template is missing: {custom}")
-        return custom
+    """Resolve one built-in package publisher resource."""
     resource = resources_root() / "journal_templates" / config.metadata.publisher
     if not resource.is_dir():
         raise WorkflowError(f"Publisher package resource is missing: {resource}")
@@ -122,15 +117,8 @@ def _publisher_layout(
 def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
     """Create user-owned manuscript composition and section sources."""
     frontmatter, plan, _package, style = _publisher_layout(config)
-    if Path(plan[0]["file"]).stem == "00_abstract":
-        abstract = plan[0]
-        abstract_input = f"\\input{{sections/{Path(abstract['file']).stem}}}"
-        body_plan = plan[1:]
-    else:
-        abstract_input = ""
-        body_plan = plan
     section_inputs = "\n".join(
-        f"\\input{{sections/{Path(item['file']).stem}}}" for item in body_plan
+        f"\\input{{sections/{Path(item['file']).stem}}}" for item in plan
     )
     frontmatter_input = (
         f"\\input{{sections/{Path(frontmatter['file']).stem}}}"
@@ -141,7 +129,6 @@ def initialize_manuscript_sources(config: ProjectConfig, version: Path) -> None:
         publisher_resource(config) / "workflow.tex",
         version / "manuscript.tex",
         {
-            "ABSTRACT_INPUT": abstract_input,
             "FRONTMATTER_INPUT": frontmatter_input,
             "SECTION_INPUTS": section_inputs,
             "BIBLIOGRAPHY_STYLE": style,
@@ -188,22 +175,11 @@ def ensure_manuscript_sources(config: ProjectConfig, round_number: int) -> None:
 
 def install_reference_resources(
     config: ProjectConfig,
-    authors_source: Path,
     bibliography_source: Path,
-    custom_template: Path | None,
 ) -> None:
-    """Install shared author, bibliography, style, and custom template resources."""
-    shutil.copy2(authors_source, config.references / "authors.yaml")
+    """Install the shared bibliography and user-editable revision style."""
     shutil.copy2(bibliography_source, config.references / "references.bib")
     shutil.copy2(
         resources_root() / "revision_style.template.tex",
         config.references / "revision_style.tex",
     )
-    if config.metadata.publisher == "custom":
-        if custom_template is None or not custom_template.is_dir():
-            raise WorkflowError(
-                "publisher=custom requires --custom-template directory."
-            )
-        shutil.copytree(custom_template, config.references / "journal_template")
-    elif custom_template is not None:
-        raise WorkflowError("--custom-template requires publisher=custom.")

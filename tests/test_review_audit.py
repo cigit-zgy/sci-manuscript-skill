@@ -10,34 +10,15 @@ import pytest
 from sci_manuscript import ManuscriptProject
 from sci_manuscript.api import LifecycleResult
 from sci_manuscript.cli import _print_lifecycle
-from sci_manuscript.diff import MarkedResult
+from sci_manuscript.errors import WorkflowError
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     SubmissionSettings,
     load_meta,
     save_meta,
 )
-from sci_manuscript.response import audit_reviews, parse_reviews
+from sci_manuscript.review import audit_reviews, parse_reviews
 from sci_manuscript.workspace import ProjectConfig, initialize_project
-
-
-def _authors(tmp_path: Path) -> Path:
-    path = tmp_path / "authors.yaml"
-    path.write_text(
-        """affiliations:
-  institute:
-    name_en: Anonymous Institute
-    address: Example City
-authors:
-  author:
-    name_en: Anonymous Author
-    name_zh: 匿名作者
-    email: author@example.invalid
-    affiliations: [institute]
-""",
-        encoding="utf-8",
-    )
-    return path
 
 
 def _project(tmp_path: Path, language: str = "en") -> ProjectConfig:
@@ -48,7 +29,7 @@ def _project(tmp_path: Path, language: str = "en") -> ProjectConfig:
         article_type="Research Article",
         language=language,
         journal_name="Example Journal",
-        publisher="elsevier",
+        publisher="chinese" if language == "zh" else "elsevier",
         round_number=0,
         parent_round=None,
         first_authors=("author",),
@@ -56,7 +37,7 @@ def _project(tmp_path: Path, language: str = "en") -> ProjectConfig:
         other_authors=(),
         submission=SubmissionSettings(),
     )
-    return initialize_project(ProjectConfig(root, metadata), _authors(tmp_path))
+    return initialize_project(ProjectConfig(root, metadata))
 
 
 def test_revision_creates_user_facing_chinese_review_template(tmp_path: Path) -> None:
@@ -295,9 +276,8 @@ def test_malformed_response_source_produces_nonblocking_response_issue(
     assert not audit.is_complete
 
 
-def test_submission_skips_untrusted_response_pdf_but_publishes_manuscripts(
+def test_submission_blocks_incomplete_review_before_generating_artifacts(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _project(tmp_path)
     ManuscriptProject(config.project).start_revision(confirmed=True)
@@ -318,68 +298,15 @@ def test_submission_skips_untrusted_response_pdf_but_publishes_manuscripts(
         encoding="utf-8",
     )
 
-    import sci_manuscript.submission as submission_module
+    with pytest.raises(WorkflowError, match="Review responses are incomplete"):
+        ManuscriptProject(config.project).prepare_submission()
 
-    def fake_clean(
-        config: ProjectConfig,
-        round_number: int,
-        run_dir: Path,
-        engine: str | None,
-    ) -> Path:
-        del engine
-        output = config.output_dir(round_number) / "manuscript_clean.pdf"
-        output.parent.mkdir(exist_ok=True)
-        output.write_bytes(b"clean")
-        build = run_dir / "clean_build"
-        build.mkdir()
-        (build / "manuscript.compiler.log").write_text("", encoding="utf-8")
-        return output
-
-    def fake_marked(
-        config: ProjectConfig,
-        round_number: int,
-        run_dir: Path,
-        engine: str | None,
-    ) -> MarkedResult:
-        del engine
-        output = config.output_dir(round_number) / "manuscript_marked.pdf"
-        output.write_bytes(b"marked")
-        build = run_dir / "marked_build"
-        build.mkdir()
-        (build / "manuscript_marked.compiler.log").write_text("", encoding="utf-8")
-        return MarkedResult(output, {})
-
-    def fake_layout(clean: str, marked: str, report: Path) -> Path:
-        del clean, marked
-        report.write_text("Result: PASS\n", encoding="utf-8")
-        return report
-
-    monkeypatch.setattr(submission_module, "build_clean_manuscript", fake_clean)
-    monkeypatch.setattr(submission_module, "build_marked_manuscript", fake_marked)
-    monkeypatch.setattr(submission_module, "validate_revision_layout", fake_layout)
-    monkeypatch.setattr(
-        submission_module,
-        "build_response",
-        lambda *args, **kwargs: pytest.fail("malformed responses must not compile"),
-    )
-
-    result = ManuscriptProject(config.project).prepare_submission()
-
-    assert result.review_audit is not None
-    assert any(
-        issue.code == "RESPONSES_INVALID" for issue in result.review_audit.issues
-    )
     submission = version / "submission"
     assert not (submission / "package").exists()
-    assert (submission / "manuscript.pdf").is_file()
-    assert (submission / "marked_manuscript.pdf").is_file()
+    assert not (submission / "manuscript.pdf").exists()
+    assert not (submission / "marked_manuscript.pdf").exists()
     assert not (submission / "response_letter.pdf").exists()
-    assert "INCOMPLETE" in (submission / "checklist.md").read_text(encoding="utf-8")
-    assert {path.name for path in config.output_dir(1).iterdir()} == {
-        "manuscript_clean.pdf",
-        "manuscript_marked.pdf",
-    }
-    assert all(path.suffix == ".pdf" for path in config.output_dir(1).iterdir())
+    assert not any(config.output_dir(1).iterdir())
 
 
 def test_review_id_drift_is_detected_after_first_recorded_mapping(
@@ -404,6 +331,57 @@ def test_review_id_drift_is_detected_after_first_recorded_mapping(
     assert any(issue.code == "REVIEW_ID_DRIFT" for issue in audit.issues)
     assert (config.project / "state" / "revision_01" / "review_index.yaml").is_file()
     assert not (version / "output" / "review_index.yaml").exists()
+
+
+def test_duplicate_comment_fingerprints_do_not_create_ambiguous_drift(
+    tmp_path: Path,
+) -> None:
+    config = _project(tmp_path)
+    ManuscriptProject(config.project).start_revision(confirmed=True)
+    version = config.project / "revision_01"
+    comments = version / "response" / "reviewer_comments.md"
+    comments.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Identical comment.\n2. Identical comment.\n",
+        encoding="utf-8",
+    )
+    audit_reviews(ProjectConfig(config.project, config.metadata), 1, record_index=True)
+    comments.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Newly inserted comment.\n"
+        "2. Identical comment.\n"
+        "3. Identical comment.\n",
+        encoding="utf-8",
+    )
+
+    audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
+
+    assert not any(issue.code == "REVIEW_ID_DRIFT" for issue in audit.issues)
+
+
+def test_commented_review_commands_do_not_create_provenance(tmp_path: Path) -> None:
+    config = _project(tmp_path)
+    ManuscriptProject(config.project).start_revision(confirmed=True)
+    version = config.project / "revision_01"
+    comments = version / "response" / "reviewer_comments.md"
+    comments.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. First comment.\n",
+        encoding="utf-8",
+    )
+    responses = version / "response" / "responses.tex"
+    responses.write_text("\\Response{1-1}{Completed.}\n", encoding="utf-8")
+    section = version / "sections" / "01_introduction.tex"
+    section.write_text(
+        section.read_text(encoding="utf-8") + "\n% \\review{1-1}{Disabled revision.}\n",
+        encoding="utf-8",
+    )
+
+    audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
+
+    assert {entry.review_id: entry.state for entry in audit.entries} == {
+        "1-1": "response_only"
+    }
 
 
 def test_cli_incomplete_responses_do_not_print_source_paths(

@@ -13,6 +13,17 @@ def is_escaped(text: str, index: int) -> bool:
     return count % 2 == 1
 
 
+def is_commented(text: str, index: int) -> bool:
+    """Return whether ``index`` follows an active comment marker on its line."""
+    line_start = text.rfind("\n", 0, index) + 1
+    cursor = line_start
+    while cursor < index:
+        if text[cursor] == "%" and not is_escaped(text, cursor):
+            return True
+        cursor += 1
+    return False
+
+
 def skip_tex_space(text: str, start: int) -> int:
     """Skip TeX whitespace and unescaped comments from ``start``."""
     cursor = start

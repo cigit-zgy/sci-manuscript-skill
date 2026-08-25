@@ -33,7 +33,7 @@ not write reviewer-response prose on the user's behalf.
 | Start a paper | Run `init --project PATH` to create commented metadata without inventing values; the user edits `meta.yaml` before the first build. The parameter-rich form remains supported for automation. |
 | Build | Run `build`; r00 retains clean output, while revision rounds retain both clean and adjacent marked PDFs; revision rounds also print the review audit without blocking rendering |
 | Start revision | Read the response/revision parts of [workflow.md](references/workflow.md) and the normative [revision semantics](references/revision_semantics.md); run `revision` only after explicit confirmation |
-| Prepare submission | Run `submission`; it builds available artifacts, records review completeness in the checklist, and prints unresolved review items with file paths |
+| Prepare submission | Run `submission`; a revision must have a complete review audit before formal submission artifacts are assembled |
 | Roll back or reindex | Explain the archive/digest transaction, obtain confirmation, then run the exact command |
 | Synchronize bibliography | Use only a user-specified BibTeX export with `sync-bib` |
 
@@ -47,13 +47,13 @@ publisher resource only to diagnose that exact publisher build.
 - Revision ancestry is adjacent and fixed-width:
   `initial_submission (r00) -> revision_01 (r01) -> revision_02 (r02)`.
 - `manuscript/references/` contains `references.bib` and `revision_style.tex`.
-  An explicit project `authors.yaml` is resolved there first; otherwise
-  builds resolve the configured or bundled Skill-level author library. Revision
-  directories never contain `references/`.
-- Built-in publisher resources are package data, not copied user files. Only a
-  custom publisher creates `references/journal_template/`.
-- `sections/00_frontmatter.tex` owns manuscript title; publisher-appropriate
-  section sources own abstract and keyword text. `meta.yaml` owns funding,
+  Builds resolve the configured user author library, then the bundled
+  Skill-level library. Projects and revision directories never contain an
+  author library or version-local `references/`.
+- The only publishers are the installed Chinese, Elsevier, Nature, and ACS
+  resources. They are package data and are never copied into user projects.
+- `sections/00_frontmatter.tex` owns manuscript title, abstract, and keyword
+  text. `meta.yaml` owns funding,
   language, article type,
   journal, publisher, author order, and corresponding roles. The author library
   owns names, email, affiliations, and bilingual biography strings. Runtime
@@ -84,10 +84,11 @@ publisher resource only to diagnose that exact publisher build.
 - Every revision `build` and `submission` audits
   `reviewer_comments.md <-> responses.tex <-> \review{...}`. Missing responses,
   orphan responses, orphan provenance references, empty comments, invalid input,
-  and review-ID drift are non-blocking completeness issues. Rendering continues.
+  and review-ID drift are completeness issues. A normal `build` continues so
+  authors can inspect manuscript PDFs; formal `submission` stops before
+  creating artifacts unless the audit is complete.
   Ordinary missing/empty/orphan entries are listed by ID without internal paths;
-  malformed source reports its absolute path. `submission/checklist.md` records
-  review completeness as `COMPLETE` or `INCOMPLETE`.
+  malformed source reports its absolute path.
 - `output/` contains final user PDFs, `state/` contains persistent machine state,
   and lazy `tmp/` contains reproducible run diagnostics. Successful operations
   remove `tmp/` unless diagnostics are explicitly retained.
@@ -95,8 +96,8 @@ publisher resource only to diagnose that exact publisher build.
   comments, and `submission/cover_letter.tex` is created once. Complete
   correspondence documents are assembled from installed templates only in
   `tmp/`.
-- Author-library priority is explicit `--authors`, configured user library,
-  then the bundled role-free public library. Initialization always requires
+- Author-library priority is configured user library, then the bundled
+  role-free public library. Initialization always requires
   explicit manuscript roles and never auto-selects bundled authors.
 - Correspondence uses the selected corresponding authors. A sole corresponding
   author signs automatically; multiple corresponding authors require an
@@ -140,10 +141,9 @@ When the audit is incomplete, report each unresolved ID. Include an absolute
 path only when the CLI identifies malformed source. Do not hide incomplete
 responses simply because PDFs compiled.
 
-For every revision, `submission` builds clean and direct-parent marked PDFs from
-the same source and shared bibliography. A response PDF is assembled when
-review comments are available; incomplete responses keep the audit `INCOMPLETE`
-while manuscript rendering continues. The workflow parses clean and marked compiler
+For every revision, `build` produces clean and direct-parent marked PDFs from
+the same source and shared bibliography. `submission` requires a complete audit
+before assembling the response and submission artifacts. The workflow parses clean and marked compiler
 logs, compares overfull boxes, and fails if marked introduces an overflow absent
 from clean; the per-run result remains in
 `tmp/<run>/revision_layout_qa.txt` only when diagnostics are retained or the run

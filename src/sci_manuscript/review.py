@@ -10,7 +10,8 @@ from pathlib import Path
 import yaml
 
 from .errors import WorkflowError
-from .review_ids import is_review_id, validate_review_id_list
+from .provenance import extract_provenance
+from .review_ids import is_review_id
 from .tex import extract_braced, skip_tex_space
 from .workspace import ProjectConfig
 
@@ -22,7 +23,6 @@ USER_SECTION_HEADING = re.compile(
     re.I,
 )
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
-REVIEW_MACRO = re.compile(r"\\review\s*\{([^}]+)\}")
 RESPONSE_COMMAND = r"\Response"
 REVIEW_INDEX_NAME = "review_index.yaml"
 
@@ -283,9 +283,9 @@ def _review_ids_with_paths(version: Path) -> dict[str, set[Path]]:
     for path in paths:
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8")
-        for raw_ids in REVIEW_MACRO.findall(text):
-            for review_id in validate_review_id_list(raw_ids):
+        provenance = extract_provenance(path.read_text(encoding="utf-8"))
+        for span in provenance.review_spans:
+            for review_id in span.review_ids:
                 result.setdefault(review_id, set()).add(path.resolve())
     return result
 
@@ -451,11 +451,20 @@ def audit_reviews(
         review_id: _comment_fingerprint(comment)
         for review_id, comment in comments.items()
     }
-    previous_by_fingerprint = {value: key for key, value in previous.items()}
+    previous_by_fingerprint: dict[str, set[str]] = {}
+    current_by_fingerprint: dict[str, set[str]] = {}
+    for review_id, fingerprint in previous.items():
+        previous_by_fingerprint.setdefault(fingerprint, set()).add(review_id)
+    for review_id, fingerprint in current.items():
+        current_by_fingerprint.setdefault(fingerprint, set()).add(review_id)
     drift = False
     for review_id, fingerprint in current.items():
-        previous_id = previous_by_fingerprint.get(fingerprint)
-        if previous_id is not None and previous_id != review_id:
+        previous_ids = previous_by_fingerprint.get(fingerprint, set())
+        current_ids = current_by_fingerprint[fingerprint]
+        if len(previous_ids) != 1 or len(current_ids) != 1:
+            continue
+        previous_id = next(iter(previous_ids))
+        if previous_id != review_id:
             drift = True
             issues.append(
                 ReviewAuditIssue(

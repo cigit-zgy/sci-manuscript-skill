@@ -18,6 +18,8 @@ from .metadata import generate_metadata
 from .templates import publisher_resource, resources_root
 from .workspace import ProjectConfig
 
+SUPPORTED_ENGINES = ("auto", "tectonic")
+
 
 @dataclass(frozen=True)
 class CompileResult:
@@ -174,15 +176,11 @@ def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
     """Compile and extract a minimal Chinese document with the selected engine."""
     selected = engine
     if selected == "auto":
-        selected = "tectonic" if shutil.which("tectonic") else "latex"
+        selected = "tectonic"
     if selected == "tectonic":
         executable = shutil.which("tectonic")
         if executable is None:
             return CjkProbeResult(False, "Tectonic is not available.")
-    elif selected == "latex":
-        executable = shutil.which("xelatex")
-        if executable is None:
-            return CjkProbeResult(False, "XeLaTeX is not available.")
     else:
         return CjkProbeResult(False, f"Unsupported engine: {selected}")
     pdftotext = shutil.which("pdftotext")
@@ -214,14 +212,6 @@ def probe_cjk_environment(engine: str = "auto") -> CjkProbeResult:
                 "-X",
                 "compile",
                 f"--outdir={output}",
-                str(source),
-            ]
-        else:
-            command = [
-                executable,
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                f"-output-directory={output}",
                 str(source),
             ]
         compiled = subprocess.run(
@@ -274,23 +264,10 @@ def resolve_engine(config: ProjectConfig, override: str | None = None) -> str:
     """Resolve a configured compiler without changing the environment."""
     requested = override or config.engine
     if requested == "auto":
-        if shutil.which("tectonic"):
-            return "tectonic"
-        if shutil.which("latexmk"):
-            requested = "latex"
-        else:
-            raise WorkflowError("Neither Tectonic nor latexmk is available.")
+        requested = "tectonic"
     if requested == "tectonic":
         if shutil.which("tectonic") is None:
             raise WorkflowError("Tectonic is not available.")
-        return requested
-    if requested == "latex":
-        if shutil.which("latexmk") is None:
-            raise WorkflowError("Traditional LaTeX mode requires latexmk.")
-        if config.language == "zh" and shutil.which("xelatex") is None:
-            raise WorkflowError("Chinese traditional mode requires XeLaTeX.")
-        if shutil.which("xelatex") is None and shutil.which("pdflatex") is None:
-            raise WorkflowError("Traditional mode requires XeLaTeX or pdfLaTeX.")
         return requested
     raise WorkflowError(f"Unsupported engine: {requested}")
 
@@ -325,27 +302,16 @@ def compile_tex(
     if not source.is_file():
         raise WorkflowError(f"TeX source is missing: {source}")
     build_dir.mkdir(parents=True, exist_ok=True)
-    engine = resolve_engine(config, engine_override)
-    if engine == "tectonic":
-        command = [
-            shutil.which("tectonic") or "tectonic",
-            "-X",
-            "compile",
-            f"--outdir={build_dir}",
-        ]
-        if keep_intermediates:
-            command.append("--keep-intermediates")
-        command.append(str(source))
-    else:
-        driver = "-xelatex" if config.language == "zh" else "-pdf"
-        command = [
-            shutil.which("latexmk") or "latexmk",
-            driver,
-            "-interaction=nonstopmode",
-            "-halt-on-error",
-            f"-outdir={build_dir}",
-            str(source),
-        ]
+    resolve_engine(config, engine_override)
+    command = [
+        shutil.which("tectonic") or "tectonic",
+        "-X",
+        "compile",
+        f"--outdir={build_dir}",
+    ]
+    if keep_intermediates:
+        command.append("--keep-intermediates")
+    command.append(str(source))
     result = run_command(command, cwd=source.parent)
     diagnostics = "\n".join(part for part in (result.stdout, result.stderr) if part)
     (build_dir / f"{source.stem}.compiler.log").write_text(
@@ -403,7 +369,7 @@ def stage_runtime_resources(
     (target / "preamble.tex").write_text(
         f"\\input{{preamble/{config.language}}}\n", encoding="utf-8"
     )
-    generate_metadata(config.project, version, target)
+    generate_metadata(version, target)
     return target / "manuscript.tex"
 
 
