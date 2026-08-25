@@ -204,6 +204,10 @@ correspondence: {}
         return output
 
     monkeypatch.setattr("sci_manuscript.api.build_clean_manuscript", fake_build)
+    monkeypatch.setattr(
+        "sci_manuscript.api.write_build_manifest",
+        lambda *_args, **_kwargs: tmp_path / "mock-build-manifest.yaml",
+    )
     ManuscriptProject(manuscript).build()
 
     frontmatter = manuscript / "initial_submission" / "sections" / "00_frontmatter.tex"
