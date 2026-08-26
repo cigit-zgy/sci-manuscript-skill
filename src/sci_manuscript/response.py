@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from . import review
@@ -11,9 +16,40 @@ from .errors import WorkflowError
 from .metadata import generate_metadata
 from .review_ids import is_review_id
 from .templates import resources_root
-from .workspace import ProjectConfig
+from .timing import BuildTelemetry
+from .workspace import ProjectConfig, artifact_input_digest
 
 LOCATION_USE = re.compile(r"\\ReviewLocation\{([^}]+)\}")
+RESPONSE_LATIN_FONT = "Times New Roman"
+
+
+def ensure_response_latin_font() -> None:
+    """Fail closed unless fontconfig resolves the exact response Latin font."""
+    matcher = shutil.which("fc-match")
+    if matcher is None:
+        raise WorkflowError(
+            "RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN: cannot verify the required "
+            "system font because fc-match is unavailable. Install Times New Roman "
+            "as a system font and ensure fontconfig can see it."
+        )
+    result = subprocess.run(
+        [matcher, "--format=%{family}\\n", RESPONSE_LATIN_FONT],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    families = {
+        family.strip()
+        for line in result.stdout.splitlines()
+        for family in line.split(",")
+        if family.strip()
+    }
+    if result.returncode != 0 or RESPONSE_LATIN_FONT not in families:
+        raise WorkflowError(
+            "RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN: install Times New Roman "
+            "as a system font and ensure fontconfig can see it."
+        )
 
 
 def _escape_latex(value: str) -> str:
@@ -47,13 +83,13 @@ def _response_template(language: str) -> str:
         template = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise WorkflowError(f"Cannot read response template: {path}") from exc
-    if (
-        template.count("%%RESPONSE_LETTER%%") != 1
-        or template.count("%%RESPONSE_BODY%%") != 1
-    ):
+    if template.count("%%RESPONSE_BODY%%") != 1:
         raise WorkflowError(
-            "Response template must contain one response-letter token and one "
-            f"response-body token: {path}"
+            f"Response template must contain one response-body token: {path}"
+        )
+    if "%%RESPONSE_LETTER%%" in template:
+        raise WorkflowError(
+            f"Response template must not contain a free response-letter token: {path}"
         )
     return template
 
@@ -68,40 +104,23 @@ def init_response(config: ProjectConfig, round_number: int) -> Path | None:
     if target.exists():
         raise WorkflowError(f"Response source already exists: {target}")
     if config.language == "zh":
-        instructions = r"""% 回复审稿意见文件。
+        instructions = r"""% ============================================================
+% 逐条回复
+% ============================================================
 %
-% 使用说明：
-% 1. 在 \ResponseLetter{} 中编辑整封致编辑信。
-% 2. 在每个 \Response{} 中填写对应意见的回复内容。
-% 3. 正文用 \review{}；参考文献 provenance 用 \ReviewReference{}。
-% 4. 修改位置由系统自动计算，无需手动填写行号。
-% 5. 这些以 % 开头的阅读辅助不会显示在最终 PDF 中。
+% response_letter.pdf 第一页由 package-owned fixed template 唯一生成。
+% 本文件只保存逐条回复和可选的 \ReviewReference 声明。
 %
-\ResponseLetter{
-尊敬的编辑：
-
-感谢您给予我们修改稿件《\ManuscriptTitle》的机会，并考虑将其发表于\JournalName。衷心感谢编辑和审稿人对本稿件的认真评阅以及富有建设性的建议。
-
-以下按照编辑和审稿人的意见列出相应回复；涉及正文修改的意见，其修改位置也在相应回复里标注。
-}
-"""  # noqa: RUF001
+"""
     else:
-        instructions = r"""% Reviewer-response source.
+        instructions = r"""% ============================================================
+% Point-by-point responses
+% ============================================================
 %
-% Instructions:
-% 1. Edit the complete editor letter in \ResponseLetter{}.
-% 2. Enter each point-by-point reply in its \Response{} entry.
-% 3. Use \review{} for prose and \ReviewReference{} for bibliography provenance.
-% 4. Revision locations are calculated automatically; do not enter line numbers.
-% 5. Reading aids beginning with % are not rendered in the final PDF.
+% The first page of response_letter.pdf is generated only from the
+% package-owned fixed template. This file stores point-by-point responses
+% and optional \ReviewReference declarations only.
 %
-\ResponseLetter{
-Dear Editor,
-
-Thank you for the opportunity to revise our manuscript entitled ``\ManuscriptTitle'' and for considering it for publication in \JournalName. We sincerely appreciate the careful evaluation and constructive comments provided by the Editor and Reviewers.
-
-Our point-by-point responses are provided below. For comments involving revisions to the manuscript, the corresponding locations are also indicated in the respective responses.
-}
 """
     sections: list[str] = []
     saw_editor = False
@@ -136,13 +155,15 @@ Our point-by-point responses are provided below. For comments involving revision
 % 编辑
 % ============================================================
 %
-% 如果后续需要回复编辑意见，请先在 reviewer_comments.md 中填写。
+% 如果后续需要回复编辑的具体意见，请先在 reviewer_comments.md 中填写。
 %
 % 示例：
+%
 % [E-1]
 % 编辑的具体意见……
+%
 % \Response{E-1}{
-% 感谢编辑的意见。……
+%     编辑回复……
 % }
 """  # noqa: RUF001
         else:
@@ -201,7 +222,7 @@ def _body_tex(
             lines.extend([f"\\begin{{generalcomment}}[{general_title}]"])
             lines.extend(_comment_tex(block.summary))
             lines.extend(["\\end{generalcomment}", ""])
-        for comment in block.comments:
+        for index, comment in enumerate(block.comments):
             lines.extend(
                 [
                     f"\\begin{{reviewcomment}}{{{_escape_latex(comment.review_id)}}}",
@@ -220,6 +241,8 @@ def _body_tex(
                         "",
                     ]
                 )
+            if index < len(block.comments) - 1:
+                lines.extend(["\\ResponseEntryEnd", ""])
     return "\n".join(lines)
 
 
@@ -229,31 +252,11 @@ def build_response(
     locations: dict[str, str],
     run_dir: Path,
     engine_override: str | None = None,
+    telemetry: BuildTelemetry | None = None,
 ) -> Path:
     """Compile a response copy with automatic marked-manuscript locations."""
-    response_dir = config.response_dir(round_number)
-    blocks = review.parse_reviews(response_dir / "reviewer_comments.md")
-    expected_ids = tuple(
-        comment.review_id for block in blocks for comment in block.comments
-    )
-    if not expected_ids:
-        raise WorkflowError(
-            f"No reviewer comments are available: {response_dir / 'reviewer_comments.md'}"
-        )
-    observed = review.parse_response_source(response_dir / "responses.tex")
-    responses = {
-        review_id: observed.responses.get(review_id, "") for review_id in expected_ids
-    }
-    revised_ids = set(locations).intersection(expected_ids)
-    stage = run_dir / "response_source"
-    stage.mkdir(parents=True)
-    if config.language == "zh":
-        stage_cjk_fonts(stage)
-    text = _response_template(config.language)
-    text = text.replace("%%RESPONSE_LETTER%%", observed.letter)
-    text = text.replace(
-        "%%RESPONSE_BODY%%", _body_tex(blocks, config.language, responses, revised_ids)
-    )
+
+    ensure_response_latin_font()
 
     def replace_location(match: re.Match[str]) -> str:
         review_id = match.group(1)
@@ -266,14 +269,101 @@ def build_response(
                 f"Marked manuscript location is missing for: {review_id}"
             ) from exc
 
-    staged_source = stage / "response_letter.tex"
-    staged_source.write_text(LOCATION_USE.sub(replace_location, text), encoding="utf-8")
-    generate_metadata(config.round_dir(round_number), stage)
-    compiled = compile_tex(
-        staged_source,
-        run_dir / "response_build",
-        config,
-        engine_override,
+    render_stage = (
+        telemetry.measure("response_render") if telemetry else contextlib.nullcontext()
     )
+    with render_stage:
+        response_dir = config.response_dir(round_number)
+        blocks = review.parse_reviews(response_dir / "reviewer_comments.md")
+        expected_ids = tuple(
+            comment.review_id for block in blocks for comment in block.comments
+        )
+        if not expected_ids:
+            raise WorkflowError(
+                "No reviewer comments are available: "
+                f"{response_dir / 'reviewer_comments.md'}"
+            )
+        observed = review.parse_response_source(response_dir / "responses.tex")
+        responses = {
+            review_id: observed.responses.get(review_id, "")
+            for review_id in expected_ids
+        }
+        revised_ids = set(locations).intersection(expected_ids)
+        stage = run_dir / "response_source"
+        stage.mkdir(parents=True)
+        if config.language == "zh":
+            stage_cjk_fonts(stage)
+        text = _response_template(config.language)
+        text = text.replace(
+            "%%RESPONSE_BODY%%",
+            _body_tex(blocks, config.language, responses, revised_ids),
+        )
+        staged_source = stage / "response_letter.tex"
+        staged_source.write_text(
+            LOCATION_USE.sub(replace_location, text), encoding="utf-8"
+        )
+        generate_metadata(config.round_dir(round_number), stage)
+    compile_stage = (
+        telemetry.measure("response_compile") if telemetry else contextlib.nullcontext()
+    )
+    with compile_stage:
+        if telemetry is None:
+            compiled = compile_tex(
+                staged_source,
+                run_dir / "response_build",
+                config,
+                engine_override,
+            )
+        else:
+            compiled = compile_tex(
+                staged_source,
+                run_dir / "response_build",
+                config,
+                engine_override,
+                telemetry=telemetry,
+            )
     output = config.output_dir(round_number) / "response_letter.pdf"
-    return publish_file_atomically(compiled.pdf, output)
+    publish_stage = (
+        telemetry.measure("artifact_publish") if telemetry else contextlib.nullcontext()
+    )
+    with publish_stage:
+        published = publish_file_atomically(compiled.pdf, output)
+    staged_text = staged_source.read_text(encoding="utf-8")
+    response_consistency = bool(
+        all(body in staged_text for body in responses.values() if body)
+        and not LOCATION_USE.search(staged_text)
+        and [
+            match.group(1)
+            for match in re.finditer(
+                r"\\begin\{reviewcomment\}\{([^}]+)\}", staged_text
+            )
+        ]
+        == list(expected_ids)
+    )
+    audit = {
+        "response_source_pdf_consistency": response_consistency,
+        "responses_source_sha256": hashlib.sha256(
+            (response_dir / "responses.tex").read_bytes()
+        ).hexdigest(),
+        "reviewer_comments_sha256": hashlib.sha256(
+            (response_dir / "reviewer_comments.md").read_bytes()
+        ).hexdigest(),
+        "response_template_sha256": hashlib.sha256(
+            _response_template(config.language).encode("utf-8")
+        ).hexdigest(),
+        "response_staged_source_sha256": hashlib.sha256(
+            staged_source.read_bytes()
+        ).hexdigest(),
+        "response_build_input_digest": artifact_input_digest(
+            config, round_number, published
+        ),
+        "response_letter_pdf_sha256": hashlib.sha256(
+            published.read_bytes()
+        ).hexdigest(),
+    }
+    (run_dir / "response_audit.json").write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    if not response_consistency:
+        raise WorkflowError("RESPONSE_SOURCE_PDF_CONSISTENCY_FAILED")
+    return published

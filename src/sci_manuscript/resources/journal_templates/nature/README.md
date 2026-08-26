@@ -9,10 +9,10 @@
 - Version: December 2024 package; class header 0.1 (2019-11-18)
 - License: the official class header declares the LaTeX Project Public License 1.3c or later.
 
-`sn-jnl.cls`, `sn-nature.bst`, and `template.tex` are unmodified Springer
-Nature resources; `template.tex` is renamed from `sn-article.tex`. This package
-must not be described as a dedicated official class for all Nature Portfolio
-journals. The current package does not contain `nature.cls`, so this bundle
-does not create or advertise such an alias.
+`sn-jnl.cls` and `sn-nature.bst` are unmodified Springer Nature resources. The
+package-owned `workflow.tex` is the active manuscript composition resource.
+This package must not be described as a dedicated official class for all Nature
+Portfolio journals. The current package does not contain `nature.cls`, so this
+bundle does not create or advertise such an alias.
 
 Check the target journal's current author instructions before submission.

@@ -5,10 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from itertools import pairwise
+from pathlib import Path
 
 from .errors import WorkflowError
 from .review_ids import validate_review_id_list
-from .tex import command_at, extract_braced, is_escaped
+from .tex import command_at, extract_braced, is_escaped, skip_tex_space
 
 
 def _provenance_seam_value(left: str, right: str) -> tuple[str, int]:
@@ -61,11 +62,11 @@ def _provenance_field(text: str, start: int) -> tuple[str, int]:
         raise WorkflowError("Unbalanced braces in provenance command.") from exc
 
 
-def _parse_review_ids(raw: str) -> tuple[str, ...]:
-    return validate_review_id_list(raw)
-
-
-def extract_provenance(text: str) -> ProvenanceSource:
+def extract_provenance(
+    text: str,
+    *,
+    source_path: Path | None = None,
+) -> ProvenanceSource:
     """Remove provenance wrappers and retain reviewer spans as a sidecar map.
 
     ``\\review{ids}{body}`` contributes ``body`` verbatim to the clean source and
@@ -78,10 +79,32 @@ def extract_provenance(text: str) -> ProvenanceSource:
     ) -> tuple[str, ...]:
         return tuple(dict.fromkeys((*inherited, *declared)))
 
+    def invalid_command(
+        offset: int,
+        review_id: str,
+        reason: str,
+    ) -> WorkflowError:
+        line_number = text.count("\n", 0, offset) + 1
+        line_start = text.rfind("\n", 0, offset) + 1
+        line_end = text.find("\n", offset)
+        if line_end == -1:
+            line_end = len(text)
+        context = text[line_start:line_end].strip()
+        file_label = str(source_path.resolve()) if source_path else "<in-memory TeX>"
+        return WorkflowError(
+            "REVIEW_PROVENANCE_INVALID\n"
+            f"File: {file_label}\n"
+            f"Line: {line_number}\n"
+            f"ID: {review_id}\n"
+            f"Reason: {reason}\n"
+            f"Context: {context}"
+        )
+
     def parse(
         fragment: str,
         *,
         inherited: tuple[str, ...] = (),
+        base_offset: int = 0,
     ) -> ProvenanceSource:
         pieces: list[str] = []
         spans: list[ReviewSpan] = []
@@ -112,14 +135,47 @@ def extract_provenance(text: str) -> ProvenanceSource:
             if not is_escaped(fragment, cursor) and command_at(
                 fragment, cursor, "review"
             ):
-                ids_raw, after_ids = _provenance_field(
-                    fragment, cursor + len(r"\review")
+                command_offset = base_offset + cursor
+                try:
+                    ids_raw, after_ids = _provenance_field(
+                        fragment, cursor + len(r"\review")
+                    )
+                except WorkflowError as exc:
+                    raise invalid_command(
+                        command_offset,
+                        "<unavailable>",
+                        str(exc),
+                    ) from exc
+                try:
+                    declared_ids = validate_review_id_list(ids_raw)
+                except WorkflowError as exc:
+                    raise invalid_command(
+                        command_offset,
+                        ids_raw.strip() or "<empty>",
+                        str(exc),
+                    ) from exc
+                body_opening = skip_tex_space(fragment, after_ids)
+                try:
+                    body, end = _provenance_field(fragment, after_ids)
+                except WorkflowError as exc:
+                    raise invalid_command(
+                        command_offset,
+                        ids_raw.strip(),
+                        str(exc),
+                    ) from exc
+                ids = union_ids(inherited, declared_ids)
+                parsed = parse(
+                    body,
+                    inherited=ids,
+                    base_offset=base_offset + body_opening + 1,
                 )
-                body, end = _provenance_field(fragment, after_ids)
-                ids = union_ids(inherited, _parse_review_ids(ids_raw))
-                parsed = parse(body, inherited=ids)
                 start = length
                 _, _, removed = append(parsed.text)
+                if not parsed.text:
+                    # An empty wrapper is an explicit deletion-only provenance
+                    # marker. It owns no visible bytes but keeps the review ID
+                    # auditable so the response can report no current location.
+                    spans.append(ReviewSpan(ids, start, start))
                 spans.extend(
                     ReviewSpan(
                         span.review_ids,
@@ -147,8 +203,6 @@ def extract_provenance(text: str) -> ProvenanceSource:
 
         merged: list[ReviewSpan] = []
         for span in sorted(spans, key=lambda item: (item.start, item.end)):
-            if span.start == span.end:
-                continue
             if (
                 merged
                 and merged[-1].end == span.start

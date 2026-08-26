@@ -1,7 +1,11 @@
 """Final canonical review, response, and location workflow contracts."""
 
+# ruff: noqa: RUF001 -- exact frozen Chinese response-letter punctuation.
+
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,8 +14,8 @@ from sci_manuscript import ManuscriptProject
 from sci_manuscript.api import LifecycleResult
 from sci_manuscript.cli import _print_lifecycle
 from sci_manuscript.errors import WorkflowError
-from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
 from sci_manuscript.metadata import ManuscriptMetadata, SubmissionSettings
+from sci_manuscript.response import ensure_response_source
 from sci_manuscript.review import (
     audit_reviews,
     parse_response_entries,
@@ -29,7 +33,7 @@ def _project(tmp_path: Path, language: str = "en") -> ProjectConfig:
         article_type="Research Article",
         language=language,
         journal_name="Example Journal",
-        publisher="elsevier",
+        publisher="chinese" if language == "zh" else "elsevier",
         round_number=0,
         parent_round=None,
         first_authors=("author",),
@@ -65,6 +69,52 @@ Optional editor summary.
 """,
         encoding="utf-8",
     )
+
+
+@pytest.mark.parametrize("language", ("zh", "en"))
+def test_revision_initializes_response_entries_without_free_letter(
+    tmp_path: Path, language: str
+) -> None:
+    config = _project(tmp_path, language)
+
+    ManuscriptProject(config.project).start_revision(confirmed=True)
+
+    source = config.response_dir(1) / "responses.tex"
+    parsed = parse_response_source(source)
+    assert parsed.responses == {}
+    text = source.read_text(encoding="utf-8")
+    assert r"\ResponseLetter" not in text
+    if language == "zh":
+        assert "% 逐条回复" in text
+    else:
+        assert "% Point-by-point responses" in text
+
+
+def test_ensure_response_source_never_mutates_user_responses(
+    tmp_path: Path,
+) -> None:
+    config = _project(tmp_path)
+    ManuscriptProject(config.project).start_revision(confirmed=True)
+    source = config.response_dir(1) / "responses.tex"
+    custom = "\\Response{1-1}{Stable {nested} user response.}\n"
+    source.write_text(custom, encoding="utf-8")
+
+    assert ensure_response_source(config, 1) == source
+    assert source.read_text(encoding="utf-8") == custom
+
+
+def test_legacy_response_letter_is_rejected_with_migration_diagnostic(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "responses.tex"
+    source.write_text(
+        "\\ResponseLetter{CUSTOM RESPONSE LETTER SENTINEL}\n"
+        "\\Response{1-1}{Stable response.}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkflowError, match="LEGACY_RESPONSE_LETTER_UNSUPPORTED"):
+        parse_response_source(source)
 
 
 def test_canonical_parser_uses_summary_without_id_and_ignores_blank_items(
@@ -119,13 +169,13 @@ def test_revision_initializes_only_actual_response_entries(tmp_path: Path) -> No
     }
     text = response_source.read_text(encoding="utf-8")
     assert "% Optional editor summary." in text
-    assert r"\ResponseLetter{" in text
-    assert "Revision locations are calculated automatically" in text
+    assert r"\ResponseLetter{" not in text
+    assert "Revision locations are calculated automatically" not in text
     assert all(token not in text for token in ("Location:", "Lines "))
     assert any(artifact.path == response_source for artifact in result.artifacts)
 
 
-def test_blank_revision_still_initializes_letter_and_editor_example(
+def test_blank_revision_still_initializes_response_scaffold_and_editor_example(
     tmp_path: Path,
 ) -> None:
     config = _project(tmp_path)
@@ -135,7 +185,7 @@ def test_blank_revision_still_initializes_letter_and_editor_example(
     source = config.response_dir(1) / "responses.tex"
     assert source.is_file()
     text = source.read_text(encoding="utf-8")
-    assert r"\ResponseLetter{" in text
+    assert r"\ResponseLetter{" not in text
     assert "% Editor" in text
 
 
@@ -151,7 +201,6 @@ def test_audit_reports_missing_empty_and_orphan_without_blocking(
     )
     responses = config.response_dir(1) / "responses.tex"
     responses.write_text(
-        "\\ResponseLetter{Dear Editor.}\n"
         "\\Response{E-1}{Completed.}\n"
         "\\Response{E-2}{}\n"
         "\\Response{1-2}{Completed.}\n"
@@ -181,7 +230,7 @@ def test_cli_completeness_output_is_concise_and_hides_source_paths(
     )
     responses = config.response_dir(1) / "responses.tex"
     responses.write_text(
-        "\\ResponseLetter{Dear Editor.}\n\\Response{E-1}{}\n",
+        "\\Response{E-1}{}\n",
         encoding="utf-8",
     )
     audit = audit_reviews(config, 1)
@@ -209,7 +258,7 @@ def test_cli_malformed_response_prints_its_absolute_path(
     )
     responses = config.response_dir(1) / "responses.tex"
     responses.write_text(
-        "\\ResponseLetter{Dear Editor.}\n\\Response{invalid}{Body.}\n",
+        "\\Response{invalid}{Body.}\n",
         encoding="utf-8",
     )
     audit = audit_reviews(config, 1)
@@ -219,39 +268,6 @@ def test_cli_malformed_response_prints_its_absolute_path(
     output = capsys.readouterr().out
     assert "RESPONSES_INVALID" in output
     assert f"Path: {responses.resolve()}" in output
-
-
-@pytest.mark.parametrize(
-    ("language", "expected"),
-    (
-        ("zh", "第 125--132 行和第 188--191 行"),
-        ("en", "Lines 125--132 and 188--191"),
-    ),
-)
-def test_locations_merge_duplicate_adjacent_and_overlapping_ranges(
-    tmp_path: Path,
-    language: str,
-    expected: str,
-) -> None:
-    (tmp_path / "manuscript_marked.reviewloc").write_text(
-        f"{REVIEW_REGISTRY_HEADER}\n1-1|1\n1-1|2\n1-1|3\n1-1|4\n1-1|5\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "manuscript_marked.aux").write_text(
-        "\\newlabel{review:1:start}{{125}{1}}\n"
-        "\\newlabel{review:1:end}{{128}{1}}\n"
-        "\\newlabel{review:2:start}{{127}{1}}\n"
-        "\\newlabel{review:2:end}{{130}{1}}\n"
-        "\\newlabel{review:3:start}{{131}{1}}\n"
-        "\\newlabel{review:3:end}{{132}{1}}\n"
-        "\\newlabel{review:4:start}{{188}{1}}\n"
-        "\\newlabel{review:4:end}{{191}{1}}\n"
-        "\\newlabel{review:5:start}{{188}{1}}\n"
-        "\\newlabel{review:5:end}{{191}{1}}\n",
-        encoding="utf-8",
-    )
-
-    assert calculate_locations(tmp_path, language=language)["1-1"] == expected
 
 
 def test_response_templates_own_localized_automatic_location_labels() -> None:
@@ -265,23 +281,105 @@ def test_response_templates_own_localized_automatic_location_labels() -> None:
     )
     zh = (resources / "response_zh.tex").read_text(encoding="utf-8")
     en = (resources / "response_en.tex").read_text(encoding="utf-8")
-    assert "修改位置：#1。" in zh  # noqa: RUF001
-    assert "Location of revisions: #1." in en
-    assert "Location:" not in en
+    assert "修改位置：#1。" in zh
+    assert "Location: #1." in en
+    assert "Location of revisions:" not in en
     assert "给编辑的回复" not in zh
     assert "Response to the Editor" not in en
-    assert "%%RESPONSE_LETTER%%" in zh
-    assert "%%RESPONSE_LETTER%%" in en
+    assert "%%RESPONSE_LETTER%%" not in zh
+    assert "%%RESPONSE_LETTER%%" not in en
+    assert zh.count("%%RESPONSE_BODY%%") == 1
+    assert en.count("%%RESPONSE_BODY%%") == 1
     assert zh.count(r"\clearpage") == 1
     assert en.count(r"\clearpage") == 1
-    assert r"\newcommand{\ResponseSection}[1]{\section*{#1}}" in zh
-    assert r"\newcommand{\ResponseSection}[1]{\section*{#1}}" in en
+    assert r"\newcommand{\ResponseSection}[1]" in zh
+    assert r"\newcommand{\ResponseSection}[1]" in en
+    assert r"\CorrespondenceAuthorsZh" in zh
+    assert r"\CorrespondenceAuthorsEn" in en
     assert "谨代表全体作者" not in zh
     assert "on behalf of all authors" not in en
-    assert "0.6\\baselineskip" in zh
-    assert "0.6\\baselineskip" in en
-    assert "稿件题目" in zh
-    assert "Manuscript ID" in en
+    assert "1.20\\baselineskip" in zh
+    assert "1.20\\baselineskip" in en
+    assert "稿件题目" not in zh
+    assert "Manuscript ID" not in en
+
+
+def test_response_font_preflight_fails_closed_before_compilation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sci_manuscript.response import ensure_response_latin_font
+
+    monkeypatch.setattr("sci_manuscript.response.shutil.which", lambda _name: None)
+
+    with pytest.raises(
+        WorkflowError,
+        match="RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN",
+    ):
+        ensure_response_latin_font()
+
+
+@pytest.mark.parametrize("resolved", ("Liberation Serif", "Times", "TeX Gyre Termes"))
+def test_response_font_preflight_rejects_substitute_families(
+    monkeypatch: pytest.MonkeyPatch,
+    resolved: str,
+) -> None:
+    from sci_manuscript.response import ensure_response_latin_font
+
+    monkeypatch.setattr(
+        "sci_manuscript.response.shutil.which", lambda _name: "/usr/bin/fc-match"
+    )
+    monkeypatch.setattr(
+        "sci_manuscript.response.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, resolved, ""),
+    )
+
+    with pytest.raises(
+        WorkflowError,
+        match="RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN",
+    ):
+        ensure_response_latin_font()
+
+
+def test_response_font_contract_compiles_mixed_text_with_times_new_roman(
+    tmp_path: Path,
+) -> None:
+    tectonic = shutil.which("tectonic")
+    pdffonts = shutil.which("pdffonts")
+    if tectonic is None or pdffonts is None:
+        pytest.skip("Tectonic and pdffonts are required for response font QA")
+    source = tmp_path / "response-font-contract.tex"
+    source.write_text(
+        r"""\documentclass{article}
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\setmainfont{Times New Roman}
+\begin{document}
+中文 English 2026 DOI response
+\end{document}
+""",
+        encoding="utf-8",
+    )
+    compiled = subprocess.run(
+        [tectonic, "-X", "compile", str(source)],
+        cwd=tmp_path,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert compiled.returncode == 0, compiled.stdout
+    fonts = subprocess.run(
+        [pdffonts, str(source.with_suffix(".pdf"))],
+        cwd=tmp_path,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert fonts.returncode == 0, fonts.stdout
+    normalized = fonts.stdout.replace(" ", "").lower()
+    assert "timesnewroman" in normalized
+    assert "fandolsong" in normalized
 
 
 def test_response_parser_preserves_multiline_latex_body_semantics(
@@ -289,8 +387,7 @@ def test_response_parser_preserves_multiline_latex_body_semantics(
 ) -> None:
     source = tmp_path / "responses.tex"
     source.write_text(
-        r"""\ResponseLetter{Dear Editor.}
-\Response{1-1}{
+        r"""\Response{1-1}{
 第一段包含 English、引用~\cite{example}、行内公式 $x_1+y$ 与转义符号 \% 和 \&。
 
 第二段包含 \textbf{nested {braces}}。
@@ -309,13 +406,32 @@ def test_response_parser_preserves_multiline_latex_body_semantics(
     assert r"\textbf{nested {braces}}" in responses["1-1"]
 
 
-def test_response_parser_supports_letter_and_multiple_reference_keys(
+def test_response_parser_ignores_commented_legacy_letter(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "responses.tex"
+    source.write_text(
+        r"""% commented reading aid: \ResponseLetter{not active}
+\Response{1-1}{
+Please preserve \textit{our {nested} response} \{carefully\}.
+}
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_response_source(source)
+
+    assert parsed.responses == {
+        "1-1": r"Please preserve \textit{our {nested} response} \{carefully\}."
+    }
+
+
+def test_response_parser_supports_multiple_reference_keys(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "responses.tex"
     source.write_text(
         "% reading aid\n"
-        "\\ResponseLetter{Dear Editor, \\ManuscriptTitle.}\n"
         "\\Response{2-5}{Completed.}\n"
         "\\ReviewReference{2-5}{refA, refB,refA}\n",
         encoding="utf-8",
@@ -323,9 +439,9 @@ def test_response_parser_supports_letter_and_multiple_reference_keys(
 
     parsed = parse_response_source(source)
 
-    assert parsed.letter == r"Dear Editor, \ManuscriptTitle."
     assert parsed.responses == {"2-5": "Completed."}
     assert parsed.references[0].citation_keys == ("refA", "refB")
+    assert parsed.references[0].source_line == 3
 
 
 @pytest.mark.parametrize(
@@ -333,9 +449,7 @@ def test_response_parser_supports_letter_and_multiple_reference_keys(
 )
 def test_removed_response_commands_are_rejected(tmp_path: Path, command: str) -> None:
     source = tmp_path / "responses.tex"
-    source.write_text(
-        f"\\ResponseLetter{{Dear Editor.}}\n{command}\n", encoding="utf-8"
-    )
+    source.write_text(f"{command}\n", encoding="utf-8")
 
     with pytest.raises(WorkflowError, match="Unexpected"):
         parse_response_source(source)

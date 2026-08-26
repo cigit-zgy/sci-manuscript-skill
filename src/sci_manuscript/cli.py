@@ -9,6 +9,7 @@ from typing import Sequence
 
 from . import __version__
 from .api import (
+    BUILD_TARGETS,
     DoctorResult,
     LifecycleResult,
     ManuscriptProject,
@@ -66,22 +67,44 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--engine", choices=SUPPORTED_ENGINES, default="auto")
     for command, help_text in (
         ("status", "Show project status."),
-        ("build", "Compile clean output and a marked PDF for revisions."),
+        ("build", "Build one manuscript artifact target for an existing round."),
         ("submission", "Build submission artifacts."),
     ):
         child = commands.add_parser(command, help=help_text)
         child.add_argument("--project", type=Path, required=True)
         if command != "status":
-            child.add_argument("--round")
+            child.add_argument(
+                "--round",
+                help=(
+                    "Build a specific existing manuscript round. "
+                    "Defaults to the active round."
+                ),
+            )
             child.add_argument("--engine", choices=SUPPORTED_ENGINES)
         if command == "build":
+            child.add_argument(
+                "--target",
+                choices=BUILD_TARGETS,
+                help=(
+                    "Artifact target. Defaults to marked for revision rounds and "
+                    "the clean manuscript for initial_submission."
+                ),
+            )
+            child.add_argument(
+                "--timing",
+                action="store_true",
+                help="Print concise stage timings and external invocation counts.",
+            )
             child.add_argument("--keep-temp", action="store_true")
     revision = commands.add_parser("revision", help="Create the next revision.")
     revision.add_argument("--project", type=Path, required=True)
     revision.add_argument("--reviews", type=Path)
     revision.add_argument("--yes", action="store_true")
-    for command in ("rollback", "reindex"):
-        child = commands.add_parser(command)
+    for command, help_text in (
+        ("rollback", "Archive the active revision and restore its parent."),
+        ("reindex", "Renumber existing revision directories contiguously."),
+    ):
+        child = commands.add_parser(command, help=help_text)
         child.add_argument("--project", type=Path, required=True)
         child.add_argument("--yes", action="store_true")
     sync = commands.add_parser("sync-bib", help="Replace shared references.bib.")
@@ -238,6 +261,23 @@ def _print_status(result: StatusResult) -> None:
             print(f"  {_relative(result.project, artifact)}")
 
 
+def _print_timing(result: LifecycleResult) -> None:
+    if result.timing is None:
+        return
+    print("Build timing")
+    print("------------")
+    for name, duration in result.timing.stages:
+        print(f"{name.replace('_', ' '):<28} {duration:7.2f} s")
+    print(f"{'total':<28} {result.timing.total:7.2f} s")
+    print(f"LaTeX invocations: {result.timing.latex_invocations}")
+    print(
+        "Bibliography invocations: "
+        f"{result.timing.bibliography_invocations} "
+        f"(cache hits: {result.timing.bibliography_cache_hits})"
+    )
+    print(f"latexdiff invocations: {result.timing.latexdiff_invocations}")
+
+
 def _print_doctor(result: DoctorResult) -> None:
     print("Environment report")
     for check in result.checks:
@@ -332,7 +372,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "build":
             lifecycle_result = project.build(
-                args.round, engine=args.engine, keep_temp=args.keep_temp
+                args.round,
+                target=args.target,
+                engine=args.engine,
+                keep_temp=args.keep_temp,
             )
         elif args.command == "revision":
             lifecycle_result = project.start_revision(
@@ -361,6 +404,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:  # pragma: no cover
             raise ManuscriptError(f"Unknown command: {args.command}")
         _print_lifecycle(lifecycle_result, project.root)
+        if args.command == "build" and args.timing:
+            _print_timing(lifecycle_result)
         return 0
     except (ManuscriptError, OSError, UnicodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

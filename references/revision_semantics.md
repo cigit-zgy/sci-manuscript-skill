@@ -1,179 +1,146 @@
-# Revision semantics
+# Highlighted revised manuscript semantics
 
-This document is the normative contract for marked manuscripts. The workflow is
-defined as four independent layers. A project must not introduce local
-exceptions to these rules.
+This document is the normative contract for the final marked manuscript. A
+project must not introduce local diff semantics.
 
-## 1. Provenance layer
+## 1. Hard identity contract
 
-Let `P` be the flattened direct-parent TeX source and `C_raw` the flattened
-current TeX source.
+The marked manuscript is the **current clean manuscript plus revision
+highlighting**. After revision color/provenance markup is stripped, marked and
+clean must contain identical current scientific content and structure:
+paragraphs, headings, equations, floats, labels, citations, bibliography,
+numbering, and cross-references. Parent-only content never appears in marked
+source or PDF.
 
-`\review{IDs}{body}` is an authorship/provenance annotation only. It is removed
-before structural comparison, producing a provenance-free current source `C`
-and a sidecar set of non-overlapping reviewer intervals
-
-```text
-R = {(start_i, end_i, reviewer_ids_i)}.
-```
-
-The wrapper never creates a visual change by itself. Therefore text that is
-unchanged between `P` and `C` remains unmarked even when it lies inside a
-reviewer interval. Nested scopes inherit parent IDs and union child IDs in
-first-seen order. The sidecar is canonicalized to non-overlapping effective
-segments, merging adjacent segments with identical ID tuples.
-
-The wrapper is also paragraph-transparent. Removing revision styling from the
-marked source must recover the current manuscript's paragraph, whitespace,
-section, list, and display-math topology. Internal `latexdiff` segment or
-deleted-command comment boundaries never own TeX whitespace and must not create
-a blank line, `\par`, indentation, or other document-structure change.
-Before comparison, ordered semantic markers encode every current source-owned
-physical paragraph boundary. All unowned serialization blank lines are made
-TeX-inert; only the ordered current markers are restored. Each retained run
-writes `paragraph_topology.json` with current/marked counts and zero-tolerance
-missing/invented diagnostics. Formatter whitespace inside a materialized
-bibliography is excluded because it is not manuscript prose topology.
-
-`\ReviewReference{ID}{key[,keys...]}` is declared in `responses.tex`. It links
-real rendered bibliography changes to reviewer provenance and response
-locations; it never controls bibliography color or modifies `.bib` data.
-
-## 2. Structural-diff layer
-
-Only provenance-free `P` and `C` are sent to adjacent `latexdiff`. Reviewer IDs
-are deliberately absent from this stage.
-
-The structural comparison uses these fixed rules:
-
-- direct-parent comparison only;
-- UTF-8 input;
-- citation markup disabled;
-- Chinese front-matter commands explicitly registered as text commands;
-- mathematics compared with `--math-markup=WHOLE`.
-
-Mathematics is atomic revision state. Any change inside an inline or display
-formula marks the complete old formula as deleted and the complete current
-formula as added; formula-internal fragments are never compared or refined.
-Inline mathematics remains separated from prose decoration.
-
-## 3. Refinement policy
-
-A block replacement may be refined to character-level changes only when all of
-the following are true:
+The direct-parent comparison is:
 
 ```text
-pure_prose(old, new)
-AND max(len(old), len(new)) <= 2000
-AND similarity(old, new) >= 0.70
+parent + current without review wrappers
+              |
+          latexdiff
+              v
+     current-addition evidence only
+              v
+ provenance intersection + 60% fallback
+              v
+ markup inserted into exact current source
+              v
+          marked PDF
 ```
 
-Similarity is `difflib.SequenceMatcher(..., autojunk=False).ratio()`.
-`pure_prose` rejects TeX-structural tokens (`\ { } $ % & # _ ^ ~`).
+`latexdiff` is an addition detector, not a renderer or layout authority.
+Deletion markup is disabled and is never parsed or rendered. The raw
+`latexdiff` document is diagnostic evidence and is never published or compiled
+as the final marked document.
 
-The decision is intentionally conservative:
+## 2. Provenance and visible states
 
-- eligible similar prose is refined so unchanged characters remain ordinary;
-- dissimilar prose remains one deletion plus one addition;
-- long replacements remain atomic to bound runtime and avoid accidental
-  character-level matches across unrelated passages;
-- TeX-bearing replacements remain structural blocks.
+Removing `\review{IDs}{body}` yields the unchanged `body` bytes plus sidecar
+source intervals. Nested scopes inherit and union IDs in first-seen order. The
+wrapper defines ownership, not change extent: only a detected current addition
+inside effective review provenance is reviewer-owned. Unchanged reviewed text
+remains black; additions outside review provenance are author-owned.
 
-The 0.70 threshold and 2000-character ceiling are part of the public revision
-contract. Changing either requires tests, documentation, and a release note.
+| Current state | Appearance |
+| --- | --- |
+| unchanged | black |
+| reviewer-owned addition or replacement | RubineRed |
+| author-owned addition or replacement | ForestGreen |
 
-## 4. Semantic rendering layer
+There is no deletion appearance. Citation markers and reference-related DOI/URL
+links use pure RGB blue (`#0000FF`) in clean and marked output. Bibliography prose
+and unchanged manuscript text remain black; publisher-specific internal-link
+behavior is not overridden.
 
-After structural differences are known, every actual addition interval is
-mapped back to `C` and split at reviewer-provenance boundaries in `R`.
-Rendering is mutually exclusive:
+## 3. Adaptive highlighting
 
-| Semantic state | Text rendering | Mathematics rendering |
-| --- | --- | --- |
-| Author addition | blue text | blue mathematics |
-| Reviewer/editor-linked addition | red text | red mathematics |
-| Deletion | light-gray strikeout | light-gray strikeout |
-| Unchanged content | ordinary manuscript text | ordinary mathematics |
+The default is native fine-grained latexdiff addition spans. For an easily
+recognized current paragraph, heading, or caption, addition coverage is the
+visible added length divided by total visible current length. Coverage below
+0.60 stays fine-grained. Coverage at or above 0.60 may highlight the entire
+current block only when every addition has exactly the same effective
+provenance. Mixed author/reviewer additions or different reviewer ownership
+disable whole-block collapse.
 
-A changed span can never be both author-blue and reviewer-red. Reviewer
-provenance applies only to added current text; deletions remain light gray regardless
-of reviewer scope.
+Whitespace-only evidence is never wrapped because a macro around a blank line
+would change paragraph topology. Text spans are split at immutable current
+seams: blank-line separators, explicit `\par`, comments, heading command
+boundaries, displays, floats, and lists. Equal provenance never merges separate
+current blocks. No semantic parser, sentence alignment,
+generic LaTeX AST, grapheme engine, or similarity graph is part of this design.
 
-Chinese deletion strikeout uses a punctuation-continuous CJK decorator.
-Reviewer and author additions use color only. Mathematics is never passed
-through CJK/ulem text-decoration scanners. This preserves TeX grouping and
-prevents marked output from creating layout boxes that do not exist in the clean
-manuscript.
+## 4. Structure, moves, and equations
 
-Changed labelled display equations bypass formula-internal diffing: the complete
-old equation is rendered as one unnumbered light-gray deletion and the complete
-current equation as one author-blue or reviewer-red numbered addition.
-This preserves the current equation number and prevents structurally different
-formula fragments from being interleaved or forced into one display box.
+Only the current manuscript executes headings, lists, floats, displays, labels,
+tags, counters, and paragraph boundaries. Highlight markup cannot insert blank
+lines, `\par`, vertical spacing, or parent structural commands. Heading color is
+placed inside the visible title field rather than around the structural command.
 
-### Generated bibliography
+Move handling is intentionally exact: a normalized current block that exists
+unchanged in the parent may be treated as a pure move and left black. A moved
+and rewritten block follows normal best-effort addition detection. There is no
+fuzzy move analysis.
 
-The visible bibliography is part of the manuscript state. Each side of an
-adjacent comparison is compiled independently from that round's manuscript
-citations, effective BibTeX database, and publisher bibliography style. The
-resulting `.bbl` is the formatting source of truth; raw `.bib` text is never
-inserted into the marked manuscript or compared as visible prose.
+Inline math uses a safe addition span when available and may otherwise color the
+whole current inline expression. A substantively changed display equation may
+be colored as one current block. Its environment boundary, label, tag, number,
+and cross-reference remain those of clean; no old equation is displayed and no
+Math AST is required.
 
-Generated `\bibitem` boundaries use citation keys as hidden stable identity.
-Entry bodies, not citation numbers or ordering, determine machine states:
-`unchanged`, `modified`, `added`, or `deleted`. The marked bibliography renders
-the current revision only, with current numbering, normal journal styling, and
-normal link colors. Old entries and red/blue/gray bibliography revision styling
-are forbidden.
+## 5. Citations and bibliography
 
-For a modified or added key, `\ReviewReference` records the current rendered
-entry's final marked line range. A deleted key is valid but has no current
-location. An unchanged key yields a neutral warning and no location. A key
-absent from both rendered states is a fatal provenance error that reports the
-review ID, key, and absolute `responses.tex` path. Citation keys never reach the
-rendered PDF.
+Citation identity is the BibTeX key, never the rendered number. Every current
+citation-family command uses the normal pure-blue link style, whether its key
+set is unchanged, added, removed, or replaced and whether it lies inside a fine
+or whole red/green block. Citation command ranges are protected blue islands
+subtracted from revision highlight spans. Parent-only citation commands never
+execute, so marked cannot introduce `[?]` through deleted citations.
 
-## 5. Reviewer locations
+The current bibliography is the sole visible authority for entries, order,
+numbering, and content. Removed entries are absent; bibliography prose for every
+retained, new, and same-key corrected entry remains black, while DOI/URL links
+remain pure RGB blue. Citation provenance is preferred;
+`\ReviewReference{ID}{key[,keys...]}` remains the explicit reviewer ownership
+mechanism for reference audit and response locations, never bibliography color.
+For a newly added key, citation ownership is canonical. `\ReviewReference` may
+agree with it or union multiple reviewer IDs only when the reviewer comment
+actually caused the reference addition or metadata correction. A response that
+merely mentions or discusses a reference does not assign ownership. AUTHOR
+versus REVIEWER is a hard `REFERENCE_PROVENANCE_CONFLICT` rather than two
+silently different colors.
 
-Reviewer line locations are generated in a layout-equivalent compilation of
-the final marked source. Invisible internal spans label actual reviewer-linked
-additions and eligible current bibliography entries without changing rendering.
-Body and bibliography ranges are sorted, deduplicated, and merged with the same
-overlap and adjacency rules.
+## 6. Reviewer locations and pure deletions
 
-## 6. Fidelity and release invariants
+Locations are resolved using package-generated, TeX-native `lineno` start/end
+labels emitted by the final marked source. Python parses only the package-owned
+`sci:loc:` AUX namespace and never identifies line-number glyphs from PDF
+geometry. Reviewer-red prose/math contributes through visible revision spans;
+reviewer-owned citation or bibliography changes contribute through transparent,
+layout-neutral reference-location spans. Author-owned references, unchanged
+content, parent-only deletions, and number drift never contribute.
 
-Revision validation has two independent fidelity layers.
+A review with only a current citation/reference change receives its real current
+line range and is not treated as a pure deletion. `\ReviewReference` therefore
+owns provenance and location tracking only; it has no visible-color role.
 
-**Source fidelity** checks the generated marked TeX, both materialized historical
-bibliographies, current-only marked entries, and unit-level refinement
-operations. Old and new replacement content must remain represented by deletion,
-addition, reviewer-addition, and unchanged spans without character loss.
-Character-level refinement may interleave unchanged text with several diff
-macros, so a complete old or new sentence is not required to remain one
-contiguous source substring.
+If a review has deletion provenance but no reviewer-red current addition, the
+response must not invent a nearby line. Chinese output says
+`修改位置：相关内容已删除，当前稿无对应高亮文本。`; English output says
+`Location: The relevant text has been removed; no corresponding highlighted text remains in the revised manuscript.`
+Use an empty `\review{ID}{}` marker in current source to retain explicit
+deletion-only provenance without adding scientific content.
 
-**Render fidelity** checks the compiled PDF. The current manuscript text must
-compile, reviewer/author/deletion colors must be present in rendered pixels, and
-marked rendering must introduce no layout overflow absent from the clean build.
-Current text that remains in one paragraph in the clean PDF must remain in one
-paragraph in the marked PDF; genuine current paragraph boundaries must remain
-distinct. Provenance may change styling and response locations, never scientific
-document structure.
-PDF text extraction is useful for ordinary current text but is not a fidelity
-oracle for deleted or character-refined text: strikeout, CJK
-font handling, and interleaved diff macros can change extraction order without
-changing the visible manuscript.
+## 7. Acceptance
 
-A revision implementation is acceptable only when all of the following pass:
-
-1. unit tests for provenance extraction, refinement policy, bibliography
-   identity/current numbering, and lossless old/new replacement representation;
-2. formatting, linting, typing, package build, and wheel smoke tests;
-3. real LaTeX integration tests with blue, red, and light-gray rendered pixels;
-4. clean-versus-marked layout QA with zero marked-specific overflow;
-5. a real manuscript E2E when a consuming manuscript repository is available.
-
-Generated PDFs may differ in pagination from the parent because deleted content
-is displayed, but the marked rendering itself must not introduce an overflow
-absent from the clean current manuscript.
+Source projection must prove that stripping highlight semantics reproduces the
+exact current source projection. A deterministic topology fingerprint must also
+prove identical paragraph separators and heading, display, float, table, and
+list boundary sequences. PDF projection must prove identical current scientific
+text. AUX state must prove identical section, equation, figure,
+table, citation, bibliography, and label numbering. The audit records fine and
+whole blocks, provenance spans, exact moves, equations, citations,
+bibliography entries, pure-deletion reviews, paragraph counts, topology and
+identity booleans, reference conflicts, and unresolved additions. All identity
+booleans must be true, reference conflicts must be zero, and unresolved
+additions must be zero before handoff. The audit remains under `tmp/run_*` and
+is never published to revision `output/`.

@@ -120,6 +120,7 @@ def resolved_citation_keys(aux_path: Path) -> tuple[str, ...]:
     ]
     values.extend(match.group(1) for match in BIBLATEX_CITATION_PATTERN.finditer(text))
     auxiliary_keys: set[str] = set()
+    auxiliary_databases: set[Path] = set()
     for match in AUX_BIBDATA_PATTERN.finditer(text):
         for database in (value.strip() for value in match.group(1).split(",")):
             if not database or Path(database).name == "references":
@@ -127,11 +128,23 @@ def resolved_citation_keys(aux_path: Path) -> tuple[str, ...]:
             auxiliary = aux_path.parent / f"{database}.bib"
             if not auxiliary.is_file():
                 continue
+            auxiliary_databases.add(auxiliary)
             auxiliary_keys.update(
                 block.key
                 for block in _bibtex_blocks(auxiliary.read_text(encoding="utf-8"))
                 if block.key is not None
             )
+    # Some publisher classes create a control database but omit ``\bibdata``
+    # from later-pass AUX files. Build directories contain only staged/generated
+    # databases, so sibling BibTeX files remain authoritative exclusion evidence.
+    for auxiliary in aux_path.parent.glob("*.bib"):
+        if auxiliary.name == "references.bib" or auxiliary in auxiliary_databases:
+            continue
+        auxiliary_keys.update(
+            block.key
+            for block in _bibtex_blocks(auxiliary.read_text(encoding="utf-8"))
+            if block.key is not None
+        )
     return tuple(
         dict.fromkeys(
             value.strip()

@@ -199,9 +199,7 @@ def test_review_audit_computes_statuses_and_reports_all_paths(tmp_path: Path) ->
     )
     responses = version / "response" / "responses.tex"
     responses.write_text(
-        """\\ResponseLetter{Dear Editor.}
-
-\\Response{1-1}{Completed response.}
+        """\\Response{1-1}{Completed response.}
 
 \\Response{1-2}{}
 
@@ -301,13 +299,13 @@ def test_submission_blocks_incomplete_review_before_generating_artifacts(
         encoding="utf-8",
     )
     responses = version / "response" / "responses.tex"
-    responses.write_text(
-        "\\Response{invalid}{Malformed response.}\n",
-        encoding="utf-8",
-    )
+    response_bytes = ("\\Response{1-1}{}\n").encode()
+    responses.write_bytes(response_bytes)
 
     with pytest.raises(WorkflowError, match="Review responses are incomplete"):
         ManuscriptProject(config.project).prepare_submission()
+
+    assert responses.read_bytes() == response_bytes
 
     submission = version / "submission"
     assert not (submission / "package").exists()
@@ -379,7 +377,7 @@ def test_commented_review_commands_do_not_create_provenance(tmp_path: Path) -> N
     )
     responses = version / "response" / "responses.tex"
     responses.write_text(
-        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{Completed.}\n",
+        "\\Response{1-1}{Completed.}\n",
         encoding="utf-8",
     )
     section = version / "sections" / "01_introduction.tex"
@@ -409,7 +407,7 @@ def test_cli_incomplete_responses_do_not_print_source_paths(
     )
     responses = version / "response" / "responses.tex"
     responses.write_text(
-        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{}\n",
+        "\\Response{1-1}{}\n",
         encoding="utf-8",
     )
     audit = audit_reviews(ProjectConfig(config.project, config.metadata), 1)
@@ -437,7 +435,7 @@ def test_missing_empty_and_orphan_responses_have_distinct_issue_codes(
     )
     responses = version / "response" / "responses.tex"
     responses.write_text(
-        "\\ResponseLetter{Dear Editor.}\n\\Response{1-2}{}\n\\Response{2-1}{Orphan.}\n",
+        "\\Response{1-2}{}\n\\Response{2-1}{Orphan.}\n",
         encoding="utf-8",
     )
 

@@ -2,8 +2,8 @@
 
 % Self-contained, publisher-neutral English response letter.
 \usepackage[margin=1in]{geometry}
-\usepackage[T1]{fontenc}
-\usepackage{lmodern}
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
 \usepackage{microtype}
 \usepackage{xcolor}
 \usepackage[most]{tcolorbox}
@@ -18,50 +18,55 @@
 
 \color{ink}
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{0.72\baselineskip}
+\setlength{\parskip}{0pt}
 \setlength{\emergencystretch}{2em}
 \pagestyle{plain}
 
-\newcommand{\ResponseSection}[1]{\section*{#1}}
-\newenvironment{generalcomment}[1][General comment]
+\newif\ifFirstResponseSection
+\FirstResponseSectiontrue
+\newcommand{\ResponseSection}[1]{%
+  \ifFirstResponseSection
+    \global\FirstResponseSectionfalse
+  \else
+    \par\vspace{1.20\baselineskip}%
+  \fi
+  \noindent{\Large\bfseries #1}\par
+  \vspace{0.65\baselineskip}}
+\newenvironment{generalcomment}[1][General Comment]
   {\begin{tcolorbox}[
     enhanced,breakable,frame hidden,colback=quotegray,
     borderline west={2pt}{0pt}{graytext!55},
     sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
-    before skip=10pt,after skip=12pt]
-   {\color{navy}\bfseries #1}\par\smallskip\normalfont}
+    before skip=0pt,after skip=0.90\baselineskip]
+   {\color{navy}\bfseries #1}\par\vspace{0.20\baselineskip}\normalfont}
   {\end{tcolorbox}}
 \newenvironment{reviewcomment}[1]
   {\begin{tcolorbox}[
     enhanced,breakable,frame hidden,colback=quotegray,
     borderline west={3pt}{0pt}{navy},
     sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
-    before skip=10pt,after skip=12pt]
-   {\color{navy}\bfseries Comment #1}\par\smallskip\normalfont}
+    before skip=0pt,after skip=0.32\baselineskip]
+   {\color{navy}\bfseries Comment #1}\par\vspace{0.20\baselineskip}\normalfont}
   {\end{tcolorbox}}
 \newenvironment{response}
-  {\par\noindent{\color{green}\bfseries Response}\par\smallskip}
-  {\par\smallskip}
+  {\par\noindent{\color{green}\bfseries Response}\par
+   \vspace{0.12\baselineskip}\setlength{\parskip}{0.36\baselineskip}}
+  {\par\setlength{\parskip}{0pt}}
 \newcommand{\reviewlocation}[1]{%
-  \par\noindent{\color{graytext}\bfseries Location of revisions: #1.}\par
-  \addvspace{0.6\baselineskip}}
+  \par\vspace{0.25\baselineskip}%
+  \noindent{\color{graytext}\bfseries Location: #1.}\par}
+\newcommand{\ResponseEntryEnd}{\par\vspace{1.35\baselineskip}}
 \newcommand{\ReviewLocation}[1]{#1}
-\newcommand{\ReviewerComment}[1]{#1\par\medskip}
+\newcommand{\ReviewerComment}[1]{#1\par}
 \begin{document}
 
-\begin{center}
-  {\Large\bfseries Response Letter}\par
-\end{center}
-\textbf{Manuscript: }\ManuscriptTitle\par
-\textbf{Journal: }\JournalName\par
-\ifx\ManuscriptID\empty\else\textbf{Manuscript ID: }\ManuscriptID\par\fi
-\vspace{0.2in}
-
-%%RESPONSE_LETTER%%
-
-\vspace{0.25in}
-\CorrespondenceAuthorName\par
-\href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
+Dear Editor,\par
+\vspace{0.50\baselineskip}
+We sincerely thank the Editor and reviewers for their careful evaluation and constructive comments on our manuscript entitled ``\ManuscriptTitle,'' which is being considered for publication in \textit{\JournalName}. These comments have helped us further improve the manuscript.\par
+\vspace{0.62\baselineskip}
+We have provided point-by-point responses to all comments and questions and revised the manuscript accordingly. To facilitate review, text added or revised in response to the reviewers' comments is highlighted in red, whereas additional revisions made by the authors during the revision process are highlighted in green. For comments that resulted in changes to the manuscript, the corresponding locations are also specified in the respective responses.\par
+\vspace{1.05\baselineskip}
+\CorrespondenceAuthorsEn
 
 \clearpage
 

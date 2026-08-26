@@ -29,6 +29,7 @@ from sci_manuscript.workspace import (
     ProjectConfig,
     _generated_submission_paths,
     _submission_source_entries,
+    build_artifact_is_current,
     finalize_revision_creation,
     load_project,
     reindex_revisions,
@@ -129,7 +130,7 @@ def test_reindex_preserves_submission_sources_and_user_graphical_pdf(
         comments = config.response_dir(number) / "reviewer_comments.md"
         responses = config.response_dir(number) / "responses.tex"
         comments.write_bytes(label + b" reviewer comments\n")
-        responses.write_bytes(label + b" responses\n")
+        responses.write_bytes(b"\\Response{1-1}{Stable response " + label + b"}\n")
         source_hashes[number] = {
             path.relative_to(submission): _sha256(path) for path in sources
         }
@@ -530,7 +531,7 @@ def test_failed_build_preserves_previous_response_preview(
 
     monkeypatch.setattr("sci_manuscript.api.build_clean_manuscript", fail_clean)
     with pytest.raises(WorkflowError, match="injected clean build failure"):
-        ManuscriptProject(revision.project).build()
+        ManuscriptProject(revision.project).build(target="clean")
     assert response.read_bytes() == b"previous response"
 
 
@@ -694,7 +695,7 @@ def test_successful_build_manifest_contains_hashes_without_private_paths(
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
     path = write_build_manifest(config, 0, "build", (output,), "tectonic", run)
     text = path.read_text(encoding="utf-8")
-    assert "sci-manuscript-build-manifest/v1" in text
+    assert "sci-manuscript-build-manifest/v3" in text
     assert hashlib.sha256(b"pdf").hexdigest() in text
     assert str(tmp_path) not in text
 
@@ -706,6 +707,82 @@ def test_successful_build_manifest_contains_hashes_without_private_paths(
     submission_text = submission_manifest.read_text(encoding="utf-8")
     assert "initial_submission/submission/manuscript.pdf" in submission_text
     assert hashlib.sha256(b"submission pdf").hexdigest() in submission_text
+
+
+def test_response_source_change_invalidates_only_response_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _revision(_workspace(tmp_path))
+    output = config.output_dir(1)
+    clean = output / "manuscript_clean.pdf"
+    marked = output / "manuscript_marked.pdf"
+    response = output / "response_letter.pdf"
+    for path in (clean, marked, response):
+        path.write_bytes(path.name.encode())
+    run = tmp_path / "manifest-run"
+    run.mkdir()
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    write_build_manifest(config, 1, "build", (clean, marked, response), "tectonic", run)
+
+    response_source = config.response_dir(1) / "responses.tex"
+    response_source.write_text(
+        response_source.read_text(encoding="utf-8") + "% response-only edit\n",
+        encoding="utf-8",
+    )
+
+    assert build_artifact_is_current(config, 1, clean)
+    assert build_artifact_is_current(config, 1, marked)
+    assert not build_artifact_is_current(config, 1, response)
+
+
+def test_response_template_change_invalidates_only_response_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _revision(_workspace(tmp_path))
+    output = config.output_dir(1)
+    clean = output / "manuscript_clean.pdf"
+    marked = output / "manuscript_marked.pdf"
+    response = output / "response_letter.pdf"
+    for path in (clean, marked, response):
+        path.write_bytes(path.name.encode())
+    package_root = tmp_path / "package"
+    template = package_root / "correspondence_templates/response/response_en.tex"
+    template.parent.mkdir(parents=True)
+    template.write_text("fixed response template v1\n", encoding="utf-8")
+    monkeypatch.setattr("sci_manuscript.workspace.resources_root", lambda: package_root)
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    run = tmp_path / "manifest-run"
+    run.mkdir()
+    write_build_manifest(config, 1, "build", (clean, marked, response), "tectonic", run)
+
+    assert build_artifact_is_current(config, 1, response)
+    template.write_text("fixed response template v2\n", encoding="utf-8")
+
+    assert build_artifact_is_current(config, 1, clean)
+    assert build_artifact_is_current(config, 1, marked)
+    assert not build_artifact_is_current(config, 1, response)
+
+
+def test_build_manifest_records_explicit_response_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _revision(_workspace(tmp_path))
+    response = config.output_dir(1) / "response_letter.pdf"
+    response.write_bytes(b"response")
+    run = tmp_path / "manifest-run"
+    run.mkdir()
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    manifest = write_build_manifest(
+        config, 1, "build", (response,), "tectonic", run
+    ).read_text(encoding="utf-8")
+
+    assert "responses_source_sha256" in manifest
+    assert "reviewer_comments_sha256" in manifest
+    assert "response_template_sha256" in manifest
+    assert "round_metadata_sha256" in manifest
+    assert "marked_location_inputs_sha256" in manifest
+    assert "artifact_input_digests" in manifest
 
 
 def test_failed_manifest_update_preserves_previous_success(

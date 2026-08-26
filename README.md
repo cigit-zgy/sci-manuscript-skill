@@ -1,53 +1,30 @@
 # sci-manuscript-skill
 
-Current stable contract: **2.0.0**.
+`sci-manuscript-skill` manages an isolated LaTeX manuscript lifecycle: project
+initialization, journal-aware compilation, adjacent revision rounds,
+highlighted revised manuscripts, reviewer responses, and submission artifacts.
+Authors retain authority over all scientific content.
 
-An isolated manuscript lifecycle framework for scientific writing projects. It manages manuscript initialization, journal-aware compilation, peer-review revision, reviewer response linkage, and submission preparation while keeping scientific content under author control.
+## Why
 
-## Overview
+LaTeX revision rounds combine scientific sources, publisher resources,
+bibliography state, reviewer provenance, response locations, and several final
+PDFs. Manual copies make ancestry and submission state difficult to verify.
+This package keeps those responsibilities separate and makes every published
+artifact traceable to one explicit manuscript round.
 
-Scientific manuscripts often accumulate fragile file structures during revision: duplicated LaTeX files, disconnected reviewer responses, unclear revision states, and mixed temporary artifacts. `sci-manuscript-skill` provides a structured workflow that separates user scientific content from manuscript infrastructure.
+## What it provides
 
-The framework supports:
+The package separates editable manuscript sources from installed publisher
+resources, temporary compiler files, persistent state, and final PDFs. It does
+not invent manuscript prose, responses, metadata, references, or author roles.
 
-- manuscript initialization;
-- journal-aware compilation;
-- revision rounds with reviewer linkage;
-- clean and marked manuscript generation;
-- response letter generation;
-- submission artifact preparation.
+Built-in publisher/language pairs are Chinese/`zh`, Elsevier/`en`, Nature/`en`,
+and ACS/`en`. Custom templates can be supplied during initialization.
 
-The package owns LaTeX infrastructure. Authors own manuscript prose, metadata,
-figures, tables, review comments, response bodies, and enabled submission
-sources. The workflow never invents or rewrites scientific content.
+## Installation
 
-## Features
-
-### Manuscript lifecycle
-
-- Initial submission (`initial_submission`)
-- Sequential revision rounds (`revision_01`, `revision_02`, ...)
-- Submission preparation
-
-### Revision management
-
-- Reviewer comment registry
-- Response linkage audit
-- Reviewer-linked additions
-- Clean manuscript generation
-- Marked manuscript generation
-
-### Isolated compilation
-
-- Built-in journal resources
-- Isolated build environment
-- PDF validation and layout checks
-
-The build is deterministic with respect to the selected source, installed Skill
-resources, author library, bibliography, toolchain, and fonts. It does not
-promise byte-identical PDFs across different toolchain or font installations.
-
-## Quick start
+Python 3.11 or newer is required.
 
 ```bash
 git clone https://github.com/cigit-zgy/sci-manuscript-skill.git
@@ -56,215 +33,279 @@ python -m pip install .
 sci-manuscript doctor
 ```
 
-Initialize a metadata-first manuscript project:
+`doctor` reports missing LaTeX, `latexdiff`, PDF, and font dependencies for the
+selected publisher and build target.
+
+## Quick start
 
 ```bash
-sci-manuscript init --project /path/to/project
+sci-manuscript init --project /path/to/paper
+# Edit manuscript/initial_submission/meta.yaml and manuscript sources.
+sci-manuscript build --project /path/to/paper
+sci-manuscript revision --project /path/to/paper --yes
+# Edit revision_01 sources and responses; add \review only for reviewer ownership.
+sci-manuscript build --project /path/to/paper --target marked
+sci-manuscript build --project /path/to/paper --target all
 ```
 
-The command creates a fully commented `initial_submission/meta.yaml` and prints
-`Please edit meta.yaml before build.` It does not compile, select authors, or
-invent manuscript metadata. Explicit command-line fields remain available for
-automated initialization.
+## Core workflow
 
-Build:
-
-```bash
-sci-manuscript build --project /path/to/project
+```text
+initialize -> build initial submission -> create revision
+           -> mark current additions -> build responses -> prepare submission
 ```
 
-## Project structure
+The CLI resolves a project, selects an existing round, selects the requested
+artifact target, stages package resources in a temporary run directory, builds
+the minimum dependency set, validates the result, and atomically publishes only
+the requested current artifacts.
 
-User-facing manuscript projects follow this structure:
+## Project lifecycle
 
 ```text
 manuscript/
-├── references/
-│   ├── references.bib
-│   ├── revision_style.tex
-│   └── journal_template/       # custom publisher only
-├── initial_submission/
-│   └── meta.yaml
-├── revision_01/
-├── state/                      # machine-owned persistent state and manifests
-└── tmp/
+├── references/                 # current editable BibTeX and revision style
+├── initial_submission/         # r00
+├── revision_01/                # r01, parent r00
+├── revision_02/                # r02, parent r01
+├── state/                      # manifests and immutable historical state
+└── tmp/                        # run workspaces and deterministic caches
 ```
 
-Users edit:
+Revision ancestry is adjacent. `revision` is the normal creator and copies the
+current manuscript state into the next fixed-width round without carrying
+revision provenance wrappers into the new parent baseline.
 
-- `meta.yaml`
-- `sections/00_frontmatter.tex` for title, abstract, and keywords
-- manuscript sections
-- figures and tables
-- reviewer comments and responses
-- `submission/cover_letter_body.tex`, highlights, checklist, and graphical
-  abstract source when those deliverables are enabled
-
-The Skill manages internally:
-
-- journal templates;
-- manuscript preamble resources;
-- compiler resources;
-- temporary build files.
-
-The active author library is the configured user library, falling back to the
-bundled `resources/authors.yaml`. It is never copied into a project. Packaged
-resources are resolved during compilation and do not need to be copied into
-user projects.
-
-Built-in publisher/language pairs are Chinese/`zh`, Elsevier/`en`, Nature/`en`,
-and ACS/`en`. A custom template supplied at initialization declares its own
-supported languages and is copied once to `references/journal_template/`.
-
-## Workflow
-
-```text
-Draft
-  ↓
-Initial submission
-  ↓
-Peer review
-  ↓
-Revision
-  ↓
-Response preparation
-  ↓
-Resubmission
-```
-
-## Revision visualization
-
-The marked manuscript uses three visual meanings:
-
-| Type | Appearance |
-| --- | --- |
-| Author additions | Blue text |
-| Reviewer-linked additions | Red text |
-| Deleted content | Light-gray strikeout |
-
-Reviewer-linked additions are created through explicit `\\review{}` markers so that reviewer comments, responses, and manuscript changes remain traceable.
-Ordinary additions are rendered as blue text without underline; this wording
-describes the existing revision contract and is unchanged by metadata work.
-Reviewer-linked additions use red text without underline, while deletions retain
-the light-gray strikeout.
-
-## Configuration
-
-`meta.yaml` stores workflow metadata:
-
-- funding, language, and article type;
-- journal and publisher;
-- publication-order author IDs and corresponding-author IDs.
-
-`sections/00_frontmatter.tex` stores the user-owned manuscript title, abstract,
-and keywords. These visible fields participate in the same direct-parent
-revision comparison as body sections; generated visible funding metadata is
-included in that comparison as well. Historical bibliography state is frozen
-as the build-resolved cited subset under `state/<round>/` for key-based machine comparison, while marked output
-always renders the current bibliography only. `\ReviewReference{ID}{key[,keys...]}`
-adds eligible current-entry lines to the same response-location set as
-manuscript `\review` additions.
-
-The active author library stores only person-level names, email, affiliations,
-and bilingual biography strings. Names, affiliations, email, and biographies
-are not duplicated in `meta.yaml`.
-
-For a Chinese publisher, the build resolves the user frontmatter, `meta.yaml`,
-and the active author library into the runtime-only
-`tmp/<run>/publisher_metadata.tex`. It generates Chinese and English titles and
-abstracts, funding, and
-`firstauthorcn`/`firstauthoren`/`corrauthorcn`/`corrauthoren`; it is never written
-into `initial_submission/`.
-
-`revision_style.tex` stores user-editable revision visualization settings.
-
-## Architecture
-
-```text
-User manuscript project
-          |
-          v
-sci-manuscript-skill
-          |
- ┌────────┼────────┐
-Templates Compiler Revision engine
-          |
-          v
-      PDF outputs
-```
-
-The project directory contains scientific content. The Skill package contains reusable infrastructure.
-
-For revision rounds, `build` deterministically refreshes clean, marked, and
-response PDFs. The response PDF reads the user-owned `\ResponseLetter{...}` and
-`\Response{ID}{...}` bodies only from current `response/responses.tex`, then
-inserts the unified final-marked locations derived from `\review` and
-`\ReviewReference`; malformed response syntax suppresses only untrusted
-response output.
-
-Associate Editor (`AE-N`), Editor (`E-N`), and Reviewer (`N-N`) detailed
-comments use the same response and provenance workflow. `build` remains
-available while the audit is incomplete so authors can inspect the current
-clean/marked PDFs and a parseable response preview. `submission` requires a
-complete audit and complete enabled submission sources.
-
-Submission correspondence is split between package-owned document templates
-and user-owned bodies. Users edit `submission/cover_letter_body.tex`; they do
-not maintain a complete cover-letter document. Unresolved `\guidance{...}`
-blocks, template tokens, and pending highlights/graphical-abstract markers block
-formal submission.
-
-Final user PDFs live in `output/`; persistent audit and reproducibility data,
-including `state/<round>/build_manifest.yaml`, live in `state/`; reproducible
-compiler and diagnostic files live only in `tmp/`. Successful operations remove
-their temporary run directory. The manifest records hashes and effective
-resource/toolchain identities without recording private absolute project paths.
-
-## Development
+## Initial submission
 
 ```bash
-pytest
+sci-manuscript init --project /path/to/project
+sci-manuscript build --project /path/to/project
+```
+
+Metadata-first initialization creates a commented `meta.yaml` and does not
+compile or infer author/scientific data. For `initial_submission`, the default
+build target is the clean manuscript, published as `output/manuscript.pdf`.
+
+## Revision rounds
+
+```bash
+sci-manuscript revision --project /path/to/project --yes
+sci-manuscript build --project /path/to/project
+```
+
+The second command selects the active round and defaults to `marked` for a
+revision. It does not compile clean or response PDFs unless their targets are
+requested.
+
+## `\review` provenance
+
+Use `\review{1-1}{current revised text}` only for a change caused by that
+reviewer comment. Nested wrappers inherit and union reviewer IDs. The wrapper
+defines provenance, not change extent: unchanged current text inside it remains
+black.
+
+`\ReviewReference{ID}{key}` is optional reference provenance metadata. It is
+valid only when the reviewer caused a reference addition or metadata change;
+mentioning an existing reference in a response does not transfer ownership.
+AUTHOR versus REVIEWER ownership conflicts fail explicitly.
+
+## Highlighted manuscript semantics
+
+The marked manuscript is the current clean manuscript plus revision
+highlighting. The current source is the only layout and structure authority.
+`latexdiff` detects current additions; its union output is never compiled as the
+marked manuscript. Parent-only deletions never appear.
+
+| Current content | Appearance |
+| --- | --- |
+| reviewer-driven addition/replacement | RubineRed |
+| author-driven addition/replacement | ForestGreen |
+| unchanged text | black |
+| citation markers and DOI/URL links | pure RGB blue (`#0000FF`) |
+
+Fine addition spans are preferred. At 60% or greater visible addition coverage,
+one current paragraph, heading, or caption may be highlighted as a whole only
+when all additions have identical provenance. Structural seams are immutable,
+so highlight spans cannot merge paragraphs or cross headings, displays, floats,
+tables, or lists. Changed display equations may be highlighted atomically.
+
+## Reference link styling
+
+Citation identity is the BibTeX key, not its rendered number. Current citation
+markers and reference-related DOI/URL links retain the manuscript's normal link
+styling, which is pure RGB blue (`#0000FF`) in the default package contract. Bibliography prose
+remains black. Provenance is retained for audit and reviewer-location purposes;
+removed references are absent because only the current bibliography renders.
+
+## Deleted content policy
+
+Deleted prose, equations, headings, citations, bibliography entries, labels,
+and other parent-only structures are not shown. A deletion-only reviewer reply
+uses a locale-aware note stating that no corresponding highlighted text remains
+instead of inventing a line number.
+
+## Response workflow
+
+Each revision owns `response/reviewer_comments.md` and
+`response/responses.tex`. Authors fill one `\Response{ID}{...}` per detailed
+comment and may add causal `\ReviewReference` declarations. The first-page
+opening and signing block come only from the package-owned localized template;
+`\ResponseLetter{...}` is no longer accepted. Build, submission, and reindex
+never rewrite response bodies. The package audits comments, responses, and
+manuscript/reference provenance. Formal submission requires a complete audit;
+ordinary marked builds do not.
+
+Response letters use Times New Roman for Latin-script text while retaining the
+existing CJK font contract. The font is resolved from the host system and is
+never bundled. If the exact font is unavailable through fontconfig, the build
+fails with `RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN` instead of silently
+substituting a Times-like family.
+
+Multiple corresponding authors are supported. The response letter lists them
+in manuscript author order, filtering the selected author list without sorting
+by name, affiliation, or metadata declaration order. Each localized block
+contains the author name, correspondence address, and email. The address uses
+that author's optional `correspondence_address` value when present; otherwise
+it uses only the first affiliation. A corresponding author without an email or
+resolvable address fails the build with an author-specific metadata error.
+
+Block labels are `通讯地址：` and `邮箱：` in Chinese, and
+`Correspondence address:` and `E-mail:` in English. Name-to-address and
+address-to-email gaps are each `0.15\baselineskip`; adjacent author blocks are
+separated by `0.55\baselineskip`, with no trailing block gap.
+
+Reviewer locations come from a layout-equivalent compilation of the final
+marked source. They never alter the visible marked PDF.
+
+## Build commands
+
+Initial submission:
+
+```bash
+sci-manuscript build --project .
+```
+
+Active revision, default marked-only fast path:
+
+```bash
+sci-manuscript build --project .
+```
+
+Historical revision:
+
+```bash
+sci-manuscript build --project . --round revision_01
+```
+
+Explicit target and full verification:
+
+```bash
+sci-manuscript build --project . --round revision_01 --target clean
+sci-manuscript build --project . --round revision_01 --target all
+```
+
+Use `--timing` to print stage durations and LaTeX, bibliography, cache-hit, and
+latexdiff invocation counts. Use `--keep-temp` only when diagnostics are needed.
+
+## Round selection
+
+`--round` selects an existing round without changing the active round. Omission
+selects the active round. Missing rounds list all available rounds; an existing
+but incomplete round reports why the requested target is not buildable and
+lists available targets. There is no silent fallback.
+
+## Build targets
+
+| Target | Work performed |
+| --- | --- |
+| `clean` | current source and bibliography -> clean PDF |
+| `marked` | parent/current comparison -> marked PDF; no clean compile or locations |
+| `response` | reuse a current marked PDF when valid, otherwise rebuild it; derive locations and response |
+| `all` | clean + marked + response + complete cross-artifact validation |
+
+`marked` and `response` are unavailable for `initial_submission`; `all` there
+is equivalent to its complete clean build.
+
+## Output artifacts
+
+Initial output contains only `manuscript.pdf`. A fully built revision output
+contains only:
+
+```text
+manuscript_clean.pdf
+manuscript_marked.pdf
+response_letter.pdf
+```
+
+Selective builds may contain a valid subset. Stale PDFs are removed after input
+changes, while still-current manifest-verified PDFs are retained. Audits,
+manifests, TeX, AUX, logs, timing JSON, caches, and diagnostic PDFs never enter
+`output/`. Persistent manifests live under `state/`; run diagnostics and the
+bibliography cache live under `tmp/`.
+
+## Validation
+
+Full revision validation requires scientific-text, numbering, paragraph, block
+topology, reference provenance, location-layout, and output-purity identity.
+Marked-only builds run source-level current-content and topology checks but skip
+cross-PDF validation because no clean PDF is compiled.
+
+Build manifests use content digests to identify CURRENT, STALE, and MISSING
+artifacts. The bibliography cache is content-keyed and includes relevant TeX,
+BibTeX, engine, and tool identity.
+
+## Zotero / Better BibTeX
+
+For leaner BibTeX exports, Zotero + Better BibTeX users may add `abstract` to
+**Fields to omit from export**. This is optional: the skill accepts `.bib`
+files that retain `abstract` and never removes fields from or writes changes
+back to the source `.bib`.
+
+## Requirements and dependencies
+
+- Python 3.11+
+- PyYAML and ruamel.yaml
+- Tectonic (primary tested engine) or the supported `latexmk` toolchain
+- latexdiff for revisions
+- Poppler tools for PDF text, geometry, and layout checks
+
+Run `sci-manuscript doctor` to inspect the local toolchain.
+
+## Limitations
+
+Highlight extent is best-effort: heavily rewritten single blocks may be colored
+as a whole. Move suppression is exact normalized block identity only. There is
+no fuzzy move detection, semantic parser, generic LaTeX AST, sentence aligner,
+or mathematical AST. Tectonic has the strongest integration evidence; the
+traditional LaTeX driver depends on a correctly installed local toolchain.
+
+## Development and testing
+
+```bash
+python -m pip install -e ".[dev]"
+PYTHONPATH=src pytest
 ruff format --check .
 ruff check .
 mypy src tests
 python -m build
 ```
 
-The supported built-in matrix is Chinese/`zh`, Elsevier/`en`, Nature/`en`, and
-ACS/`en`. Python 3.11 or newer is required. Tectonic is the primary,
-release-gated engine; the traditional `latexmk` driver is supported with an
-appropriate XeLaTeX/pdfLaTeX and BibTeX/Biber toolchain but does not have equal
-release evidence. macOS ARM and Linux x86_64 are covered by CI, with real CJK
-integration on macOS.
-
-## From 1.0 to 2.0
-
-Version 2.0 is intentionally strict. Author roles are list-valued
-`authors.first`, `authors.corresponding`, and `authors.other`; visible title,
-abstract, and keywords live in `sections/00_frontmatter.tex`; editable replies
-use generated `\Response{ID}{body}` entries; cover prose lives in
-`cover_letter_body.tex`; revision build and submission have different
-completeness policies; creation, review-index, generated-artifact, and build
-manifest records live under `state/`. A v1 workspace is detected and rejected
-with an archive-first migration message rather than silently rewritten. See
-[the workflow migration note](references/workflow.md#v1-workspace-detection).
+Package behavior is documented in [SKILL.md](SKILL.md),
+[references/workflow.md](references/workflow.md), and
+[references/revision_semantics.md](references/revision_semantics.md).
+Maintainers performing architecture or release audits should also read
+[references/technical_core.md](references/technical_core.md); normal manuscript
+work does not require it.
 
 ## Rendered examples
 
-![Marked manuscript showing semantic revision colors](docs/images/marked_manuscript.png)
+![Highlighted revised manuscript](docs/images/marked_manuscript.png)
 
-![Response letter with automatically derived locations](docs/images/response_letter.png)
-
-## Documentation
-
-Detailed workflow and implementation information are maintained separately:
-
-- `SKILL.md` — agent execution instructions
-- `references/` — detailed workflows and design documentation
+![Reviewer response letter](docs/images/response_letter.png)
 
 ## License
 
-The Python package and the project-maintained Chinese `kxtbcas.cls` resource are
-MIT licensed. The bundled `kxtbcas-numeric.bst` is a derived third-party
-bibliography style; its provenance and license are recorded in
-`THIRD_PARTY_NOTICES.md`.
+The Python package and project-maintained Chinese class are MIT licensed.
+Third-party bibliography-style provenance is recorded in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

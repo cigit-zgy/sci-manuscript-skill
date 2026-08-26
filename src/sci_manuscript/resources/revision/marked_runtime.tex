@@ -1,96 +1,32 @@
-% Internal marked-manuscript runtime. Reviewer provenance has already been
-% classified in Python; TeX only renders deterministic semantic macros.
-\RequirePackage{lineno}
-\RequirePackage[normalem]{ulem}
+% Current-only highlighted-revision primitives. The renderer never emits
+% parent-only deletion content.
 %%CJK_REVISION_PACKAGE%%
 \RequirePackage{xcolor}
+\RequirePackage{lineno}
 \AtBeginDocument{\linenumbers}
 
-\newbox\RevisionMathMeasureBox
-\newcommand{\RevisionMathStyle}{\ifinner\textstyle\else\displaystyle\fi}
-\newcommand{\RevisionGobble}[1]{}
-\newcommand{\RevisionMeasureMath}[1]{%
-  \setbox\RevisionMathMeasureBox=\hbox{\mathsurround=0pt$\RevisionMathStyle
-    \let\label\RevisionGobble #1$}%
+\makeatletter
+\newcommand{\SCISetCitationColor}[1]{%
+  \@ifpackageloaded{hyperref}{\hypersetup{citecolor=#1}}{}%
 }
-\newcommand{\RevisionMathStrikeout}[2]{%
-  \begingroup
-    \RevisionMeasureMath{#2}%
-    \dimen0=.5\ht\RevisionMathMeasureBox
-    \advance\dimen0 by -.5\dp\RevisionMathMeasureBox
-    \rlap{\raise\dimen0\hbox{\color{#1}%
-      \rule{\wd\RevisionMathMeasureBox}{\RevisionDeletionThickness}}}%
-    {\color{#1}#2}%
-  \endgroup
-}
-\providecommand{\DIFaddMath}[1]{%
-  {\RevisionAddedFont\color{RevisionAddedColor}#1}%
-}
-\providecommand{\DIFaddReviewMath}[1]{%
-  {\RevisionReviewFont\color{RevisionReviewColor}#1}%
-}
-\providecommand{\DIFdelMath}[1]{%
-  {\RevisionDeletedFont\RevisionMathStrikeout{RevisionDeletedColor}{#1}}%
-}
+\makeatother
+
 \providecommand{\DIFadd}[1]{%
-  \ifmmode
-    \DIFaddMath{#1}%
-  \else
-    \RevisionAddedBackground{{\RevisionAddedFont\color{RevisionAddedColor}#1}}%
-  \fi}
+  \RevisionAddedBackground{{\RevisionAddedFont\color{ForestGreen}#1}}}
 \providecommand{\DIFaddReview}[1]{%
-  \ifmmode
-    \DIFaddReviewMath{#1}%
-  \else
-    \RevisionReviewBackground{{\RevisionReviewFont\color{RevisionReviewColor}#1}}%
-  \fi}
-\providecommand{\DIFdel}[1]{%
-  \ifmmode
-    \DIFdelMath{#1}%
-  \else
-    \RevisionDeletedBackground{{\RevisionDeletedFont\color{RevisionDeletedColor}%
-      \RevisionDeletedStrikeout{#1}}}%
-  \fi}
-\providecommand{\DIFaddbegin}{}
-\providecommand{\DIFaddend}{}
-\providecommand{\DIFdelbegin}{}
-\providecommand{\DIFdelend}{}
-\providecommand{\DIFmodbegin}{}
-\providecommand{\DIFmodend}{}
-\providecommand{\DIFaddFL}[1]{\DIFadd{#1}}
-\providecommand{\DIFaddReviewFL}[1]{\DIFaddReview{#1}}
-\providecommand{\DIFdelFL}[1]{\DIFdel{#1}}
-\providecommand{\DIFaddbeginFL}{}
-\providecommand{\DIFaddendFL}{}
-\providecommand{\DIFdelbeginFL}{}
-\providecommand{\DIFdelendFL}{}
+  \RevisionReviewBackground{{\RevisionReviewFont\color{\RevisionReviewerColor}#1}}}
 \providecommand{\review}[2]{#2}
 \providecommand{\SCIReviewSpan}[2]{#2}
-% A source blank line ends a running paragraph, but is inert while TeX is
-% already in vertical mode (for example immediately before the first
-% \bibitem).  Preserve that distinction when materializing topology markers.
-\providecommand{\SCIParagraphBoundary}{\ifhmode\par\fi}
-\providecommand{\SCIDeletedEquation}[1]{%
-  \par\noindent\[\DIFdelMath{#1}\]\par
-}
-\providecommand{\SCIAddedEquation}[2]{%
-  \begin{equation}\DIFaddMath{#1}\label{#2}\end{equation}%
-}
-\providecommand{\SCIReviewerAddedEquation}[2]{%
-  \begin{equation}\DIFaddReviewMath{#1}\label{#2}\end{equation}%
-}
-\providecommand{\SCIDeletedDisplay}[2]{%
-  \begingroup\RevisionDeletedFont\color{RevisionDeletedColor}%
-  \begin{#1}#2\end{#1}%
-  \endgroup
-}
-\providecommand{\SCIAddedDisplay}[3]{%
-  \begingroup\RevisionAddedFont\color{RevisionAddedColor}%
-  \begin{#1}#2\label{#3}\end{#1}%
-  \endgroup
-}
-\providecommand{\SCIReviewerAddedDisplay}[3]{%
-  \begingroup\RevisionReviewFont\color{RevisionReviewColor}%
-  \begin{#1}#2\label{#3}\end{#1}%
-  \endgroup
-}
+\providecommand{\SCIReviewReferenceSpan}[2]{#2}
+\providecommand{\SCIReferenceLink}[1]{%
+  \begingroup\SCISetCitationColor{SciLinkBlue}\color{SciLinkBlue}#1\endgroup}
+% A revision wrapper ending on a CJK character hides that character from
+% xeCJK's following-token inspection. Restore the package's native CJK/Latin
+% glue before an immediately adjacent citation without adding source text.
+\providecommand{\SCIRevisionCitationSeam}{%
+  \ifdefined\CJKecglue\CJKecglue\fi}
+\providecommand{\SCIAuthorDisplayBegin}[1]{%
+  \begingroup\color{ForestGreen}}
+\providecommand{\SCIReviewDisplayBegin}[1]{%
+  \begingroup\color{\RevisionReviewerColor}}
+\providecommand{\SCIDisplayEnd}[1]{\endgroup}

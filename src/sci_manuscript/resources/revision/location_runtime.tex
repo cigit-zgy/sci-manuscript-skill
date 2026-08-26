@@ -1,31 +1,92 @@
-% Internal reviewer-location runtime. It never changes text color.
+% Internal reviewer-location runtime. It records only package-owned lineno
+% labels and does not alter the published revision colors or visible content.
 \RequirePackage{lineno}
-\AtBeginDocument{\linenumbers}
-\newcounter{reviewblock}
+\newcounter{reviewlocationevent}
 \newwrite\ReviewLocationFile
 \AtBeginDocument{%
   \immediate\openout\ReviewLocationFile=\jobname.reviewloc
-  \immediate\write\ReviewLocationFile{sci-manuscript-reviewloc-v2}%
+  \immediate\write\ReviewLocationFile{sci-manuscript-reviewloc-tex-v1}%
 }
 \AtEndDocument{\immediate\closeout\ReviewLocationFile}
-\newcommand{\ReviewLineLabel}[1]{%
+
+\DeclareRobustCommand{\SciReviewLineStart}[1]{\linelabel{#1}}
+\DeclareRobustCommand{\SciReviewLineEnd}[1]{\linelabel{#1}}
+\newcommand{\SciReviewNextEvent}{%
+  \stepcounter{reviewlocationevent}%
+  \edef\ReviewEventID{e%
+    \ifnum\value{reviewlocationevent}<10 000\else
+      \ifnum\value{reviewlocationevent}<100 00\else
+        \ifnum\value{reviewlocationevent}<1000 0\fi
+      \fi
+    \fi
+    \number\value{reviewlocationevent}}%
+  \edef\ReviewStartLabel{sci:loc:%%ROUND_NAMESPACE%%:\ReviewEventID:start}%
+  \edef\ReviewEndLabel{sci:loc:%%ROUND_NAMESPACE%%:\ReviewEventID:end}%
+  \edef\ReviewSourceLine{\the\inputlineno}%
+}
+\newcommand{\SciWriteReviewLocationEvent}[3]{%
+  \immediate\write\ReviewLocationFile{%
+    #1|\ReviewEventID|#2|#3|\ReviewSourceLine|%
+    \ReviewStartLabel|\ReviewEndLabel}%
+}
+\newcommand{\SciEmitReviewLineStart}{%
+  \expandafter\SciReviewLineStart\expandafter{\ReviewStartLabel}}
+\newcommand{\SciEmitReviewLineEnd}{%
+  \expandafter\SciReviewLineEnd\expandafter{\ReviewEndLabel}}
+
+\let\SciPublishedReviewSpan\SCIReviewSpan
+\let\SciPublishedReviewReferenceSpan\SCIReviewReferenceSpan
+\let\SciPublishedReviewDisplayBegin\SCIReviewDisplayBegin
+\let\SciPublishedDisplayEnd\SCIDisplayEnd
+
+\DeclareRobustCommand{\RecordReviewSpan}[2]{%
   \begingroup
-  \edef\ReviewExpandedLabel{#1}%
-  \expandafter\endgroup
-  \expandafter\linelabel\expandafter{\ReviewExpandedLabel}%
+    \SciReviewNextEvent
+    \SciWriteReviewLocationEvent{#1}{VISIBLE_REVIEW_REVISION}{SCIReviewSpan}%
+    \SciEmitReviewLineStart
+    \SciPublishedReviewSpan{#1}{#2}%
+    \SciEmitReviewLineEnd
+  \endgroup
 }
-\providecommand{\review}[2]{#2}
-\providecommand{\SCIReviewSpan}[2]{#2}
-\newcommand{\RecordReviewSpan}[2]{%
-  \stepcounter{reviewblock}%
-  \edef\ReviewBlockID{\arabic{reviewblock}}%
-  \leavevmode
-  \ReviewLineLabel{review:\ReviewBlockID:start}%
-  #2%
-  \ReviewLineLabel{review:\ReviewBlockID:end}%
-  \immediate\write\ReviewLocationFile{#1|\ReviewBlockID}%
+\DeclareRobustCommand{\RecordReviewReferenceSpan}[2]{%
+  \begingroup
+    \SciReviewNextEvent
+    \SciWriteReviewLocationEvent{#1}{REVIEW_REFERENCE_LOCATION}{SCIReviewReferenceSpan}%
+    \SciEmitReviewLineStart
+    \SciPublishedReviewReferenceSpan{#1}{#2}%
+    \SciEmitReviewLineEnd
+  \endgroup
 }
-\AtBeginDocument{%
-  \renewcommand{\review}[2]{\RecordReviewSpan{#1}{#2}}%
-  \renewcommand{\SCIReviewSpan}[2]{\RecordReviewSpan{#1}{#2}}%
+\DeclareRobustCommand{\RecordReviewDisplayBegin}[1]{%
+  \SciReviewNextEvent
+  \SciWriteReviewLocationEvent{#1}{VISIBLE_REVIEW_REVISION}{SCIReviewDisplayBegin}%
+  \SciEmitReviewLineStart
+  \SciPublishedReviewDisplayBegin{#1}%
 }
+\DeclareRobustCommand{\RecordReviewDisplayEnd}[1]{%
+  \SciEmitReviewLineEnd
+  \SciPublishedDisplayEnd{#1}%
+}
+
+\renewcommand{\review}[2]{#2}
+\let\SCIReviewSpan\relax
+\DeclareRobustCommand{\SCIReviewSpan}[2]{\RecordReviewSpan{#1}{#2}}
+\let\SCIReviewReferenceSpan\relax
+\DeclareRobustCommand{\SCIReviewReferenceSpan}[2]{%
+  \RecordReviewReferenceSpan{#1}{#2}}
+\let\SCIReviewDisplayBegin\relax
+\DeclareRobustCommand{\SCIReviewDisplayBegin}[1]{\RecordReviewDisplayBegin{#1}}
+\let\SCIDisplayEnd\relax
+\DeclareRobustCommand{\SCIDisplayEnd}[1]{\RecordReviewDisplayEnd{#1}}
+
+\makeatletter
+\@ifpackageloaded{hyperref}{%
+  \pdfstringdefDisableCommands{%
+    \def\SCIReviewSpan#1#2{#2}%
+    \def\SCIReviewReferenceSpan#1#2{#2}%
+    \def\SciReviewLineStart#1{}%
+    \def\SciReviewLineEnd#1{}%
+    \def\DIFaddReview#1{#1}%
+  }%
+}{}%
+\makeatother

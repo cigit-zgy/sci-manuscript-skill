@@ -10,11 +10,12 @@ confirms the exact target environment and installation method.
 | Category | Accepted dependency |
 | --- | --- |
 | Python | Python 3.11 or newer |
-| YAML | PyYAML 6.x |
+| YAML | PyYAML 6.x and ruamel.yaml 0.18.x |
 | LaTeX | Tectonic (primary) or the traditional `latexmk` driver |
 | Revisions | `latexdiff` |
 | PDF QA | Poppler `pdftotext` and `pdftoppm` |
 | Bibliography | Tectonic-integrated BibTeX, external BibTeX, or Biber |
+| Response typography | system Times New Roman visible to fontconfig |
 
 Chinese publisher projects additionally require XeLaTeX-compatible
 compilation and usable Chinese fonts. Ruff, Mypy, Zotero, and Better BibTeX are
@@ -29,6 +30,8 @@ python3 --version
 command -v python3
 command -v tectonic latexmk xelatex pdflatex
 command -v latexdiff pdftotext pdftoppm bibtex biber
+command -v fc-match
+fc-match "Times New Roman"
 ```
 
 Then run the installed command:

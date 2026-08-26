@@ -10,9 +10,9 @@
 - License: LaTeX Project Public License 1.3c; see `LICENSE.md`.
 
 ACS author guidance identifies `achemso` as an available LaTeX package. The
-bundled `achemso.cls`, `achemso.dtx`, license, and demonstration template are
-unmodified files from the canonical CTAN distribution. `template.tex` is
-renamed from `achemso-demo.tex` for a stable resource name.
+bundled `achemso.cls`, `achemso.dtx`, and license are unmodified files from the
+canonical CTAN distribution. The package-owned `workflow.tex` is the active
+manuscript composition resource.
 
 The CTAN package notes that the class is retained mainly for stability. Check
 the target ACS journal's current Author Guidelines before submission.

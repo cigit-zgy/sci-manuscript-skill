@@ -1,29 +1,49 @@
-"""Deterministic revision diffing, provenance classification, and marked output."""
+"""Build a current-only highlighted revision from latexdiff additions."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shutil
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
 
 from .compile import (
     compile_tex,
+    materialize_bibliography,
     publish_file_atomically,
     run_command,
     stage_runtime_resources,
 )
 from .errors import WorkflowError
-from .locations import build_review_locations
+from .locations import build_review_locations, instrument_location_source
 from .provenance import (
     ProvenanceSource,
-    ReviewSpan,
     extract_provenance,
     split_by_review_provenance,
 )
-from .review import parse_response_source
+from .review import parse_response_source, review_ids_from_sources
+from .revision_render import (
+    CitationProvenance,
+    HighlightSpan,
+    adaptive_blocks,
+    added_citation_provenance,
+    apply_highlights,
+    citation_spans,
+    coalesce_tiny_unchanged_islands,
+    display_evidence_is_covered,
+    preserve_text_command_shells,
+    preserve_topology_seams,
+    protected_citation_spans,
+    replace_special_spans,
+    resolve_equation_spans,
+    suppress_exact_moves,
+    validate_topology_identity,
+)
+from .revision_render import normalized_block_hash as normalized_block_hash
+from .revision_render import strip_highlight_markup as _strip_highlight_markup
 from .templates import resources_root
 from .tex import (
     command_at,
@@ -33,25 +53,17 @@ from .tex import (
     scan_tex_commands,
     skip_tex_space,
 )
-from .workspace import ProjectConfig, strip_provenance_wrappers
+from .timing import BuildTelemetry
+from .workspace import (
+    ProjectConfig,
+    migrate_revision_style_file,
+    strip_provenance_wrappers,
+)
 
-DIF_COMMENT_PATTERN = re.compile(r"(?m)^%DIF[^\n]*(?:\n|$)")
-DIF_CONTROL_PATTERN = re.compile(r"\\DIF(?:add|del|mod)(?:begin|end)(?:FL)?\s*")
-PARAGRAPH_BREAK_PATTERN = re.compile(r"\n(?:[ \t]*\n)+")
-IMPLICIT_BLANK_LINE_PATTERN = re.compile(r"(?m)^[ \t]*(?=\r?$)")
-PARENT_PARAGRAPH_BOUNDARY = "SCIParentParagraphBoundary"
-CURRENT_PARAGRAPH_BOUNDARY = "SCICurrentParagraphBoundary"
-PARENT_PARAGRAPH_BOUNDARY_PATTERN = re.compile(
-    rf"\\{PARENT_PARAGRAPH_BOUNDARY}\{{(\d+)\}}"
-)
-CURRENT_PARAGRAPH_BOUNDARY_PATTERN = re.compile(
-    rf"\\{CURRENT_PARAGRAPH_BOUNDARY}\{{(\d+)\}}"
-)
-MATERIALIZED_PARAGRAPH_BOUNDARY = r"\SCIParagraphBoundary{}"
 STYLE_BEGIN = "% SCI_DIFF_STYLE_BEGIN"
 STYLE_END = "% SCI_DIFF_STYLE_END"
-CHARACTER_REFINEMENT_THRESHOLD = 0.70
-MAX_CHARACTER_REFINEMENT_CHARS = 2000
+DETECTOR_STYLE_BEGIN = "% SCI_DETECTOR_STYLE_BEGIN"
+DETECTOR_STYLE_END = "% SCI_DETECTOR_STYLE_END"
 CHINESE_TEXT_COMMANDS = (
     "cnabstract",
     "cnkeywords",
@@ -63,6 +75,10 @@ CHINESE_TEXT_COMMANDS = (
     "entitle",
     "keywords",
 )
+CHINESE_SINGLE_VALUE_COMMANDS = tuple(
+    dict.fromkeys((*CHINESE_TEXT_COMMANDS, "title", "enkeywords"))
+)
+CHINESE_SINGLE_VALUE_ENVIRONMENTS = ("abstract", "englishabstract")
 PUBLISHER_METADATA_CONTEXT_COMMANDS = (
     "author",
     "enauthor",
@@ -83,13 +99,38 @@ PUBLISHER_METADATA_CONTEXT_COMMANDS = (
 _REVISION_RUNTIME_TEMPLATE = (
     resources_root() / "revision" / "marked_runtime.tex"
 ).read_text(encoding="utf-8")
-
+_COMMON_PREAMBLE = resources_root() / "manuscript_preamble" / "common.tex"
 REVISION_RUNTIME = _REVISION_RUNTIME_TEMPLATE.replace("%%CJK_REVISION_PACKAGE%%", "")
 
 
 def _revision_runtime(language: str) -> str:
-    cjk_package = r"\RequirePackage{xeCJKfntef}" if language == "zh" else ""
-    return _REVISION_RUNTIME_TEMPLATE.replace("%%CJK_REVISION_PACKAGE%%", cjk_package)
+    """Return the packaged marked-style runtime for one manuscript language."""
+    del language
+    return _REVISION_RUNTIME_TEMPLATE.replace("%%CJK_REVISION_PACKAGE%%", "")
+
+
+def _validate_reference_style_contract() -> None:
+    """Require one shared pure-RGB blue contract for clean and marked output."""
+    common = _COMMON_PREAMBLE.read_text(encoding="utf-8")
+    required = (
+        r"\newcommand{\RevisionReviewerColor}{RubineRed}",
+        r"\definecolor{SciLinkBlue}{RGB}{0,0,255}",
+        "citecolor=SciLinkBlue",
+        "urlcolor=SciLinkBlue",
+    )
+    forbidden = (
+        "definecolor{SciRevision",
+        "ProcessBlue",
+        "citecolor=black",
+        "urlcolor=black",
+    )
+    if (
+        any(token not in common for token in required)
+        or "ForestGreen" not in REVISION_RUNTIME
+        or "SciLinkBlue" not in REVISION_RUNTIME
+        or any(token in common + REVISION_RUNTIME for token in forbidden)
+    ):
+        raise WorkflowError("CLEAN_MARKED_REFERENCE_STYLE_MISMATCH")
 
 
 @dataclass(frozen=True)
@@ -99,6 +140,8 @@ class MarkedResult:
     pdf: Path
     locations: dict[str, str]
     bibliography_notices: tuple["BibliographyNotice", ...] = ()
+    aux_path: Path | None = None
+    audit_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -113,10 +156,11 @@ class BibliographyNotice:
 
 
 @dataclass(frozen=True)
-class _DiffSegment:
-    kind: str
+class LatexdiffAddition:
+    """One current-source addition reported by ``latexdiff``."""
+
     content: str
-    macro: str = ""
+    macro: str
 
 
 @dataclass(frozen=True)
@@ -133,61 +177,197 @@ class _BibliographyDocument:
     footer: str
 
 
-@dataclass(frozen=True)
-class _DisplayEquation:
-    """One labelled display equation and its exact source boundaries."""
+def prepare_change_detection_sources(
+    parent: str,
+    current: str,
+) -> tuple[str, ProvenanceSource]:
+    """Return provenance-free inputs and current ownership intervals.
 
-    label: str
-    environment: str
-    start: int
-    end: int
-    body_without_label: str
-
-
-def _paragraph_boundary_matches(text: str) -> tuple[re.Match[str], ...]:
-    """Return source-owned physical boundaries in the document body.
-
-    A materialized ``.bbl`` contains formatter whitespace that is not part of
-    the manuscript's prose topology.  In particular, a blank line before the
-    first ``\\bibitem`` must remain structural list whitespace rather than be
-    converted into an explicit paragraph command.
+    The current source is the only possible final-layout authority. Parent-only
+    structure is supplied solely to ``latexdiff`` as change evidence.
     """
-    begin = text.find(r"\begin{document}")
-    if begin < 0:
-        return tuple(PARAGRAPH_BREAK_PATTERN.finditer(text))
-    begin += len(r"\begin{document}")
-    end = text.rfind(r"\end{document}")
-    if end < begin:
-        raise WorkflowError("Manuscript source has an unbalanced document body.")
-    bibliography_ranges: list[tuple[int, int]] = []
-    open_bibliographies: dict[str, list[int]] = {}
-    try:
-        environment_commands = scan_tex_commands(
-            text[begin:end], ("begin", "end"), field_count=1
-        )
-    except ValueError as exc:
-        raise WorkflowError("Malformed environment in manuscript body.") from exc
-    for command in environment_commands:
-        environment = command.fields[0].strip()
-        if not environment.endswith("bibliography"):
-            continue
-        absolute_start = begin + command.start
-        absolute_end = begin + command.end
-        if command.name == "begin":
-            open_bibliographies.setdefault(environment, []).append(absolute_start)
-            continue
-        openings = open_bibliographies.get(environment)
-        if not openings:
-            raise WorkflowError("Unbalanced bibliography environment.")
-        bibliography_ranges.append((openings.pop(), absolute_end))
-    if any(openings for openings in open_bibliographies.values()):
-        raise WorkflowError("Unbalanced bibliography environment.")
+    return strip_provenance_wrappers(parent), extract_provenance(current)
 
-    return tuple(
-        match
-        for match in PARAGRAPH_BREAK_PATTERN.finditer(text, begin, end)
-        if not any(start <= match.start() < stop for start, stop in bibliography_ranges)
+
+def _mask_overridden_frontmatter_fields(
+    text: str,
+    publisher: str,
+) -> tuple[str, int]:
+    """Mask inactive last-definition-wins fields without changing offsets.
+
+    The Chinese publisher template stores each frontmatter field in one macro,
+    so a later declaration replaces every earlier declaration. Latexdiff must
+    compare the declarations that the clean PDF actually renders. Masking keeps
+    source length and newline offsets exact, allowing detector spans to map
+    directly back to the untouched current source.
+    """
+    if publisher != "chinese":
+        return text, 0
+
+    occurrences: dict[str, list[tuple[int, int]]] = {}
+    try:
+        for command in scan_tex_commands(
+            text,
+            CHINESE_SINGLE_VALUE_COMMANDS,
+            field_count=1,
+        ):
+            occurrences.setdefault(f"command:{command.name}", []).append(
+                (command.start, command.end)
+            )
+    except ValueError as exc:
+        raise WorkflowError("Malformed single-value frontmatter command.") from exc
+
+    environment_pattern = re.compile(
+        r"\\(?P<edge>begin|end)\{(?P<name>"
+        + "|".join(map(re.escape, CHINESE_SINGLE_VALUE_ENVIRONMENTS))
+        + r")\}"
     )
+    open_environments: dict[str, list[int]] = {
+        name: [] for name in CHINESE_SINGLE_VALUE_ENVIRONMENTS
+    }
+    for match in environment_pattern.finditer(text):
+        if is_commented(text, match.start()):
+            continue
+        name = match.group("name")
+        if match.group("edge") == "begin":
+            open_environments[name].append(match.start())
+            continue
+        if not open_environments[name]:
+            raise WorkflowError(f"Unmatched \\end{{{name}}} in frontmatter source.")
+        start = open_environments[name].pop()
+        occurrences.setdefault(f"environment:{name}", []).append((start, match.end()))
+    unclosed = [name for name, starts in open_environments.items() if starts]
+    if unclosed:
+        raise WorkflowError(
+            "Unclosed single-value frontmatter environment: " + ", ".join(unclosed)
+        )
+
+    inactive = sorted(
+        span for spans in occurrences.values() for span in sorted(spans)[:-1]
+    )
+    if not inactive:
+        return text, 0
+    masked = list(text)
+    for start, end in inactive:
+        for index in range(start, end):
+            if masked[index] not in "\r\n":
+                masked[index] = " "
+    return "".join(masked), len(inactive)
+
+
+def _whitespace_events(text: str) -> tuple[tuple[int, str], ...]:
+    """Return exact TeX whitespace tokens with their current-source offsets."""
+    events: list[tuple[int, str]] = []
+    cursor = 0
+    while cursor < len(text):
+        if text.startswith(r"\ ", cursor):
+            events.append((cursor, r"\ "))
+            cursor += 2
+            continue
+        if text[cursor].isspace() or text[cursor] == "~":
+            events.append((cursor, text[cursor]))
+        cursor += 1
+    return tuple(events)
+
+
+def _diff_field(text: str, start: int) -> tuple[str, int]:
+    try:
+        return extract_braced(text, start)
+    except ValueError as exc:
+        raise WorkflowError(
+            "Unbalanced braces while parsing latexdiff change evidence."
+        ) from exc
+
+
+def extract_addition_evidence(
+    latexdiff_output: str,
+) -> tuple[LatexdiffAddition, ...]:
+    """Extract current additions without treating latexdiff output as layout."""
+    macros = (
+        r"\DIFaddFL",
+        r"\DIFadd",
+    )
+    additions: list[LatexdiffAddition] = []
+    cursor = 0
+    while cursor < len(latexdiff_output):
+        candidates = [
+            (latexdiff_output.find(f"{macro}{{", cursor), macro) for macro in macros
+        ]
+        matches = [candidate for candidate in candidates if candidate[0] >= 0]
+        if not matches:
+            break
+        index, macro = min(matches, key=lambda item: item[0])
+        content, end = _diff_field(latexdiff_output, index + len(macro))
+        additions.append(LatexdiffAddition(content, macro))
+        cursor = end
+    return tuple(additions)
+
+
+def run_latexdiff(
+    parent_source: Path,
+    current_source: Path,
+    output_path: Path,
+    *,
+    preamble: Path | None = None,
+    text_commands: tuple[str, ...] = (),
+    context_commands: tuple[str, ...] = (),
+) -> tuple[LatexdiffAddition, ...]:
+    """Run ``latexdiff`` as a change detector and persist its raw evidence."""
+    executable = shutil.which("latexdiff")
+    if executable is None:
+        raise WorkflowError("latexdiff is required for revision change detection.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        executable,
+        "--encoding=utf8",
+        "--packages=none",
+        "--math-markup=WHOLE",
+        "--no-del",
+        "--no-label",
+        "--disable-citation-markup",
+        "--ignore-warnings",
+    ]
+    if preamble is not None:
+        command.append(f"--preamble={preamble}")
+    if context_commands:
+        command.append("--append-context2cmd=" + ",".join(context_commands))
+    if text_commands:
+        command.append("--append-textcmd=" + ",".join(text_commands))
+    command.extend((str(parent_source), str(current_source)))
+    result = run_command(command, cwd=output_path.parent)
+    output_path.write_text(result.stdout, encoding="utf-8")
+    return extract_addition_evidence(result.stdout)
+
+
+def _locate_additions(
+    output: str,
+    provenance: ProvenanceSource,
+    detector_current: str | None = None,
+) -> tuple[list[HighlightSpan], tuple[str, ...]]:
+    """Map native addition fields back to exact current-source intervals."""
+    detector_text = (
+        detector_current if detector_current is not None else provenance.text
+    )
+    if len(detector_text) != len(provenance.text):
+        raise WorkflowError("Detector/current source offsets do not match.")
+    spans: list[HighlightSpan] = []
+    unresolved: list[str] = []
+    cursor = 0
+    for change in extract_addition_evidence(output):
+        content = re.sub(r"(?m)^([ \t]*)%DIF > ", r"\1%", change.content)
+        if not content:
+            continue
+        start = detector_text.find(content, cursor)
+        if start < 0:
+            if display_evidence_is_covered(provenance.text, content):
+                continue
+            unresolved.append(change.content)
+            continue
+        end = start + len(content)
+        for left, right, owner in split_by_review_provenance(provenance, start, end):
+            spans.append(HighlightSpan(left, right, owner))
+        cursor = end
+    return spans, tuple(unresolved)
 
 
 def _optional_field_end(text: str, start: int) -> int:
@@ -200,7 +380,7 @@ def _optional_field_end(text: str, start: int) -> int:
     while cursor < len(text):
         if text[cursor] == "%" and not is_escaped(text, cursor):
             newline = text.find("\n", cursor)
-            cursor = len(text) if newline == -1 else newline + 1
+            cursor = len(text) if newline < 0 else newline + 1
             continue
         if text[cursor] == "[" and not is_escaped(text, cursor):
             depth += 1
@@ -213,7 +393,7 @@ def _optional_field_end(text: str, start: int) -> int:
 
 
 def _parse_bibliography(text: str) -> _BibliographyDocument:
-    """Parse generated ``\\bibitem`` boundaries while preserving rendered TeX."""
+    """Parse generated ``\bibitem`` boundaries while preserving rendered TeX."""
     commands: list[tuple[int, int, str]] = []
     cursor = 0
     while cursor < len(text):
@@ -277,7 +457,7 @@ def _parse_bibliography(text: str) -> _BibliographyDocument:
 
 
 def _bibliography_change_states(old: str, current: str) -> dict[str, str]:
-    """Compare rendered entries by key while ignoring numbering and order."""
+    """Compare rendered entries by BibTeX key, never rendered number."""
     parent = _parse_bibliography(old)
     child = _parse_bibliography(current)
     parent_by_key = {entry.key: entry for entry in parent.entries}
@@ -301,8 +481,10 @@ def _current_bibliography_with_reference_provenance(
     old: str,
     current: str,
     response_path: Path,
+    citation_provenance: dict[str, CitationProvenance] | None = None,
+    citation_source_path: Path | None = None,
 ) -> tuple[str, tuple[BibliographyNotice, ...]]:
-    """Wrap eligible current entries invisibly for final-layout locations."""
+    """Track reviewer-owned current entries while rendering all entries black."""
     document = _parse_bibliography(current)
     states = _bibliography_change_states(old, current)
     try:
@@ -310,6 +492,7 @@ def _current_bibliography_with_reference_provenance(
     except WorkflowError:
         declarations = ()
     owners: dict[str, list[str]] = {}
+    declaration_lines: dict[str, list[int]] = {}
     notices: list[BibliographyNotice] = []
     for declaration in declarations:
         for key in declaration.citation_keys:
@@ -346,6 +529,26 @@ def _current_bibliography_with_reference_provenance(
             key_owners = owners.setdefault(key, [])
             if declaration.review_id not in key_owners:
                 key_owners.append(declaration.review_id)
+            declaration_lines.setdefault(key, []).append(declaration.source_line)
+
+    for key, provenance in (citation_provenance or {}).items():
+        declared = owners.get(key, [])
+        if provenance.review_ids is None and declared:
+            citation_location = (
+                f"{citation_source_path.resolve()}:{provenance.source_lines}"
+                if citation_source_path is not None
+                else f"current projection lines: {provenance.source_lines}"
+            )
+            raise WorkflowError(
+                "REFERENCE_PROVENANCE_CONFLICT\n"
+                f"key: {key}\n"
+                f"citation provenance: AUTHOR ({citation_location})\n"
+                "ReviewReference provenance: REVIEWER "
+                f"{tuple(declared)} ({response_path.resolve()}:"
+                f"{tuple(declaration_lines.get(key, []))})"
+            )
+        if provenance.review_ids is not None:
+            owners[key] = list(dict.fromkeys((*provenance.review_ids, *declared)))
 
     parts = [document.header]
     for entry in document.entries:
@@ -353,12 +556,21 @@ def _current_bibliography_with_reference_provenance(
         rendered_owners = owners.get(entry.key)
         if rendered_owners:
             parts.append(
-                f"\\SCIReviewSpan{{{','.join(rendered_owners)}}}{{{entry.content}}}"
+                f"\\SCIReviewReferenceSpan{{{','.join(rendered_owners)}}}"
+                f"{{{entry.content}}}"
             )
         else:
             parts.append(entry.content)
     parts.append(document.footer)
     return "".join(parts), tuple(notices)
+
+
+def _remove_revision_output_diagnostics(output_dir: Path) -> None:
+    """Remove obsolete machine audit copies from the user-facing PDF directory."""
+    for name in ("diff_audit.json", "highlight_audit.json"):
+        path = output_dir / name
+        if path.is_file():
+            path.unlink()
 
 
 def _replace_bibliography(text: str, bibliography: str) -> str:
@@ -387,177 +599,6 @@ def _replace_bibliography(text: str, bibliography: str) -> str:
         cursor = command.end
     pieces.append(text[cursor:])
     return "".join(pieces)
-
-
-def _replace_materialized_bibliography_entries(text: str, bibliography: str) -> str:
-    """Replace one rendered bibliography with current entries only."""
-    target = _parse_bibliography(text)
-    current = _parse_bibliography(bibliography)
-    entries = "".join(entry.command + entry.content for entry in current.entries)
-    return target.header + entries + target.footer
-
-
-def _display_equations(text: str) -> tuple[_DisplayEquation, ...]:
-    """Return active, labelled outer display-math environments in source order."""
-    try:
-        commands = scan_tex_commands(text, ("begin", "end"), field_count=1)
-    except ValueError as exc:
-        raise WorkflowError(
-            "Malformed display environment in manuscript source."
-        ) from exc
-    stack = []
-    equations: list[_DisplayEquation] = []
-    seen_labels: set[str] = set()
-    for command in commands:
-        environment = command.fields[0].strip()
-        if command.name == "begin":
-            stack.append(command)
-            continue
-        if not stack or stack[-1].fields[0].strip() != environment:
-            raise WorkflowError("Unbalanced display environment in manuscript source.")
-        opening = stack.pop()
-        if environment not in {
-            "equation",
-            "align",
-            "gather",
-            "multline",
-        }:
-            continue
-        body = text[opening.end : command.start]
-        try:
-            labels = scan_tex_commands(body, ("label",), field_count=1)
-        except ValueError as exc:
-            raise WorkflowError(
-                "Malformed equation label in manuscript source."
-            ) from exc
-        if not labels:
-            continue
-        if len(labels) != 1:
-            raise WorkflowError(
-                "A display equation must contain at most one active \\label command."
-            )
-        label = labels[0].fields[0].strip()
-        if not label:
-            raise WorkflowError("A display equation contains an empty label.")
-        if label in seen_labels:
-            raise WorkflowError(f"Duplicate display equation label: {label}")
-        seen_labels.add(label)
-        body_without_label = body[: labels[0].start] + body[labels[0].end :]
-        equations.append(
-            _DisplayEquation(
-                label=label,
-                environment=environment,
-                start=opening.start,
-                end=command.end,
-                body_without_label=body_without_label,
-            )
-        )
-    if stack:
-        raise WorkflowError("Unbalanced display environment in manuscript source.")
-    return tuple(equations)
-
-
-def _normalized_equation_body(body: str) -> str:
-    """Normalize insignificant whitespace for structural similarity testing."""
-    return " ".join(body.split())
-
-
-def _replace_spans(text: str, replacements: list[tuple[int, int, str]]) -> str:
-    """Apply non-overlapping source replacements from right to left."""
-    result = text
-    for start, end, replacement in sorted(replacements, reverse=True):
-        result = result[:start] + replacement + result[end:]
-    return result
-
-
-def _align_changed_display_equations(old: str, current: str) -> tuple[str, str]:
-    """Render each changed labelled equation atomically before ``latexdiff``.
-
-    The old formula is rendered as an unnumbered deletion and the complete
-    current formula as one numbered addition with preserved provenance.
-    """
-    old_equations = {equation.label: equation for equation in _display_equations(old)}
-    current_equations = {
-        equation.label: equation for equation in _display_equations(current)
-    }
-    current_provenance = extract_provenance(current)
-    visible_current_equations = {
-        equation.label: equation
-        for equation in _display_equations(current_provenance.text)
-    }
-    old_replacements: list[tuple[int, int, str]] = []
-    current_replacements: list[tuple[int, int, str]] = []
-    for label in old_equations.keys() & current_equations.keys():
-        previous = old_equations[label]
-        revised = current_equations[label]
-        old_body = _normalized_equation_body(previous.body_without_label)
-        new_body = _normalized_equation_body(revised.body_without_label)
-        if old_body == new_body:
-            continue
-        deleted_body = previous.body_without_label.strip()
-        added_body = revised.body_without_label.strip()
-        if revised.environment == "equation" and previous.environment == "equation":
-            deleted = f"\\SCIDeletedEquation{{{deleted_body}}}\n"
-        else:
-            deleted_environment = previous.environment + "*"
-            deleted = (
-                f"\\SCIDeletedDisplay{{{deleted_environment}}}{{{deleted_body}}}\n"
-            )
-        visible_revised = visible_current_equations[label]
-        owner = next(
-            (
-                span.review_ids
-                for span in current_provenance.review_spans
-                if span.start <= visible_revised.start
-                and visible_revised.end <= span.end
-            ),
-            None,
-        )
-        if revised.environment == "equation":
-            addition_command = (
-                "SCIReviewerAddedEquation" if owner else "SCIAddedEquation"
-            )
-            addition = f"\\{addition_command}{{{added_body}}}{{{revised.label}}}\n"
-        else:
-            addition_command = "SCIReviewerAddedDisplay" if owner else "SCIAddedDisplay"
-            addition = (
-                f"\\{addition_command}{{{revised.environment}}}"
-                f"{{{added_body}}}{{{revised.label}}}\n"
-            )
-        replacement = deleted + addition
-        if owner:
-            replacement = f"\\SCIReviewSpan{{{','.join(owner)}}}{{{replacement}}}"
-        old_replacements.append((previous.start, previous.end, replacement))
-        current_replacements.append((revised.start, revised.end, replacement))
-    return (
-        _replace_spans(old, old_replacements),
-        _replace_spans(current, current_replacements),
-    )
-
-
-def _materialize_bibliography(
-    source: Path,
-    flattened: str,
-    build_dir: Path,
-    config: ProjectConfig,
-    engine_override: str | None,
-) -> str:
-    """Compile one staged round and return its publisher-rendered ``.bbl``."""
-    if not scan_tex_commands(flattened, ("bibliography",), field_count=1):
-        raise WorkflowError("Manuscript has no active bibliography command.")
-    compile_tex(
-        source,
-        build_dir,
-        config,
-        engine_override,
-        keep_intermediates=True,
-    )
-    bibliography = build_dir / f"{source.stem}.bbl"
-    if not bibliography.is_file():
-        raise WorkflowError(
-            "Compiler did not materialize the expected bibliography .bbl."
-        )
-    return bibliography.read_text(encoding="utf-8")
 
 
 def _flatten_tex(
@@ -613,593 +654,77 @@ def _flatten_tex(
     return "".join(pieces)
 
 
-def _copy_resources(config: ProjectConfig, target: Path) -> None:
-    stage_runtime_resources(
-        config,
-        config.current_round,
-        target,
-        include_manuscript=False,
+def _inject_revision_style(text: str, config: ProjectConfig) -> str:
+    marker = r"\begin{document}"
+    if text.count(marker) != 1:
+        raise WorkflowError("Current source requires exactly one document start.")
+    user_style = (config.references / "revision_style.tex").read_text(encoding="utf-8")
+    style = (
+        f"{STYLE_BEGIN}\n{user_style}\n{_revision_runtime(config.language)}\n"
+        f"{STYLE_END}\n"
     )
+    return text.replace(marker, style + marker, 1)
 
 
-def _diff_field(text: str, start: int) -> tuple[str, int]:
-    try:
-        return extract_braced(text, start)
-    except ValueError as exc:
-        raise WorkflowError(
-            "Unbalanced braces while processing revision diff output."
-        ) from exc
+_AUX_IDENTITY = re.compile(
+    r"\\(?:newlabel|bibcite)\{(?P<key>[^}]+)\}\{\{?(?P<value>[^{}]*)"
+)
 
 
-def _split_diff_segments(text: str) -> list[_DiffSegment]:
-    macros = (
-        (r"\DIFaddReviewFL", "add-review"),
-        (r"\DIFaddReview", "add-review"),
-        (r"\DIFaddFL", "add"),
-        (r"\DIFdelFL", "del"),
-        (r"\DIFadd", "add"),
-        (r"\DIFdel", "del"),
-    )
-    segments: list[_DiffSegment] = []
-    cursor = 0
-    while cursor < len(text):
-        candidates: list[tuple[int, str, str]] = []
-        for macro, kind in macros:
-            index = text.find(f"{macro}{{", cursor)
-            if index >= 0:
-                candidates.append((index, macro, kind))
-        if not candidates:
-            segments.append(_DiffSegment("plain", text[cursor:]))
-            break
-        index, macro, kind = min(candidates, key=lambda item: item[0])
-        if index > cursor:
-            segments.append(_DiffSegment("plain", text[cursor:index]))
-        content, end = _diff_field(text, index + len(macro))
-        segments.append(_DiffSegment(kind, content, macro))
-        cursor = end
-    return segments
-
-
-def _separator_is_diff_only(text: str) -> bool:
-    stripped = DIF_COMMENT_PATTERN.sub("", text)
-    stripped = DIF_CONTROL_PATTERN.sub("", stripped)
-    return not stripped.strip()
-
-
-def _encode_paragraph_boundaries(text: str, command: str) -> str:
-    """Replace active physical paragraph breaks with ordered semantic markers."""
-    replacements = [
-        (match.start(), match.end(), f"\n\\{command}{{{index}}}\n")
-        for index, match in enumerate(_paragraph_boundary_matches(text))
-    ]
-    return _replace_spans(text, replacements)
-
-
-def _map_boundary_offset(
-    position: int,
-    replacements: tuple[tuple[int, int, str], ...],
-) -> int:
-    delta = 0
-    for start, end, replacement in replacements:
-        if position <= start:
-            break
-        if position < end:
-            raise WorkflowError("Reviewer provenance bisected a paragraph boundary.")
-        delta += len(replacement) - (end - start)
-    return position + delta
-
-
-def _encode_provenance_paragraph_boundaries(
-    source: ProvenanceSource,
-) -> ProvenanceSource:
-    """Encode current boundaries while keeping markers outside review ownership."""
-    replacements = tuple(
-        (
-            match.start(),
-            match.end(),
-            f"\n\\{CURRENT_PARAGRAPH_BOUNDARY}{{{index}}}\n",
+def _numbering_state(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        raise WorkflowError(f"Numbering AUX is missing: {path}")
+    return {
+        match.group("key"): match.group("value")
+        for match in _AUX_IDENTITY.finditer(
+            path.read_text(encoding="utf-8", errors="replace")
         )
-        for index, match in enumerate(_paragraph_boundary_matches(source.text))
-    )
-    encoded = _replace_spans(source.text, list(replacements))
-    spans: list[ReviewSpan] = []
-    for span in source.review_spans:
-        cursor = span.start
-        for start, end, _ in replacements:
-            if end <= cursor or start >= span.end:
-                continue
-            if cursor < start:
-                spans.append(
-                    ReviewSpan(
-                        span.review_ids,
-                        _map_boundary_offset(cursor, replacements),
-                        _map_boundary_offset(start, replacements),
-                    )
-                )
-            cursor = max(cursor, end)
-        if cursor < span.end:
-            spans.append(
-                ReviewSpan(
-                    span.review_ids,
-                    _map_boundary_offset(cursor, replacements),
-                    _map_boundary_offset(span.end, replacements),
-                )
-            )
-    return ProvenanceSource(encoded, tuple(spans))
-
-
-def _neutralize_unowned_paragraph_breaks(latexdiff_output: str) -> str:
-    """Make every unmarked blank physical line TeX-inert.
-
-    Both parent and current sources have already made their paragraph topology
-    explicit.  Any blank line created by ``latexdiff`` is therefore internal
-    serialization whitespace and cannot own manuscript structure.
-    """
-    return IMPLICIT_BLANK_LINE_PATTERN.sub("%", latexdiff_output)
-
-
-def _materialize_current_paragraph_boundaries(
-    text: str,
-    expected_count: int,
-) -> tuple[str, dict[str, int]]:
-    """Restore only ordered current boundaries and verify the final topology."""
-    current_ids = tuple(
-        int(value) for value in CURRENT_PARAGRAPH_BOUNDARY_PATTERN.findall(text)
-    )
-    expected_ids = tuple(range(expected_count))
-    if current_ids != expected_ids:
-        missing = len(set(expected_ids) - set(current_ids))
-        invented = len(set(current_ids) - set(expected_ids))
-        raise WorkflowError(
-            "Marked paragraph topology diverged from the current manuscript: "
-            f"missing={missing}, invented={invented}."
-        )
-    materialized = PARENT_PARAGRAPH_BOUNDARY_PATTERN.sub("%", text)
-    materialized = CURRENT_PARAGRAPH_BOUNDARY_PATTERN.sub(
-        lambda _: MATERIALIZED_PARAGRAPH_BOUNDARY,
-        materialized,
-    )
-    marked_count = materialized.count(MATERIALIZED_PARAGRAPH_BOUNDARY)
-    missing = max(0, expected_count - marked_count)
-    invented = max(0, marked_count - expected_count)
-    if missing or invented:
-        raise WorkflowError(
-            "Marked paragraph topology diverged from the current manuscript: "
-            f"missing={missing}, invented={invented}."
-        )
-    return materialized, {
-        "current_paragraph_boundaries": expected_count,
-        "marked_current_paragraph_boundaries": marked_count,
-        "missing_boundaries": missing,
-        "invented_boundaries": invented,
+        if not match.group("key").endswith("@cref")
+        and not match.group("key").startswith("sci:loc:")
     }
 
 
-def _character_refinement_matcher(old: str, new: str) -> SequenceMatcher[str] | None:
-    """Return a matcher only for bounded, structurally safe, similar prose."""
-    unsafe = set(r"\{}$%&#_^~")
-    if any(char in unsafe for char in old + new):
-        return None
-    if max(len(old), len(new)) > MAX_CHARACTER_REFINEMENT_CHARS:
-        return None
-    matcher = SequenceMatcher(a=old, b=new, autojunk=False)
-    if matcher.ratio() < CHARACTER_REFINEMENT_THRESHOLD:
-        return None
-    return matcher
-
-
-def _safe_character_refinement(old: str, new: str) -> bool:
-    """Return whether a replacement is eligible for character refinement."""
-    return _character_refinement_matcher(old, new) is not None
-
-
-class _AdditionLocator:
-    """Map latexdiff additions back to exact offsets in the clean new source."""
-
-    def __init__(self, source: ProvenanceSource) -> None:
-        self.source = source
-        self.cursor = 0
-
-    def locate(self, content: str) -> tuple[int, int]:
-        if not content:
-            return self.cursor, self.cursor
-        index = self.source.text.find(content, self.cursor)
-        matched_end: int | None = None
-        if index < 0 and CURRENT_PARAGRAPH_BOUNDARY_PATTERN.search(content):
-            tokens = re.split(r"(\s+)", content)
-            pattern = "".join(
-                r"\s*" if token.isspace() else re.escape(token)
-                for token in tokens
-                if token
-            )
-            match = re.search(pattern, self.source.text[self.cursor :])
-            if match is not None:
-                index = self.cursor + match.start()
-                matched_end = self.cursor + match.end()
-        if index < 0:
-            sample = " ".join(content.strip().split())[:120]
-            raise WorkflowError(
-                "Could not map a latexdiff addition back to the provenance-free "
-                f"revision source: {sample!r}."
-            )
-        end = matched_end if matched_end is not None else index + len(content)
-        self.cursor = end
-        return index, end
-
-
-def _render_addition(
-    provenance: ProvenanceSource,
-    start: int,
-    end: int,
-    *,
-    full_document: bool,
-) -> str:
-    def render_content(content: str, macro: str, owner: tuple[str, ...] | None) -> str:
-        rendered_parts: list[str] = []
-        cursor = 0
-        for marker in CURRENT_PARAGRAPH_BOUNDARY_PATTERN.finditer(content):
-            ordinary = content[cursor : marker.start()]
-            if ordinary:
-                rendered = f"{macro}{{{ordinary}}}"
-                if owner:
-                    rendered = f"\\SCIReviewSpan{{{','.join(owner)}}}{{{rendered}}}"
-                rendered_parts.append(rendered)
-            rendered_parts.append(marker.group(0))
-            cursor = marker.end()
-        ordinary = content[cursor:]
-        if ordinary:
-            rendered = f"{macro}{{{ordinary}}}"
-            if owner:
-                rendered = f"\\SCIReviewSpan{{{','.join(owner)}}}{{{rendered}}}"
-            rendered_parts.append(rendered)
-        return "".join(rendered_parts)
-
-    pieces: list[str] = []
-    for left, right, owner in split_by_review_provenance(provenance, start, end):
-        content = provenance.text[left:right]
-        if not content:
-            continue
-        if content.isspace():
-            pieces.append(content)
-            continue
-        if owner:
-            macro = r"\DIFaddReviewFL" if full_document else r"\DIFaddReview"
-        else:
-            macro = r"\DIFaddFL" if full_document else r"\DIFadd"
-        pieces.append(render_content(content, macro, owner))
-    return "".join(pieces)
-
-
-def _refine_replacement(
-    old: str,
-    new: str,
-    provenance: ProvenanceSource,
-    new_start: int,
-    matcher: SequenceMatcher[str],
-    *,
-    full_document: bool,
-) -> str:
-    pieces: list[str] = []
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            pieces.append(new[j1:j2])
-            continue
-        if tag in {"delete", "replace"} and i1 != i2:
-            macro = r"\DIFdelFL" if full_document else r"\DIFdel"
-            pieces.append(f"{macro}{{{old[i1:i2]}}}")
-        if tag in {"insert", "replace"} and j1 != j2:
-            pieces.append(
-                _render_addition(
-                    provenance,
-                    new_start + j1,
-                    new_start + j2,
-                    full_document=full_document,
-                )
-            )
-    return "".join(pieces)
-
-
-def _refine_topology_aligned_replacement(
-    old: str,
-    new: str,
-    provenance: ProvenanceSource,
-    new_start: int,
-    *,
-    full_document: bool,
-) -> str | None:
-    """Refine prose between aligned topology markers, never through markers."""
-    parent_markers = tuple(PARENT_PARAGRAPH_BOUNDARY_PATTERN.finditer(old))
-    current_markers = tuple(CURRENT_PARAGRAPH_BOUNDARY_PATTERN.finditer(new))
-    if not parent_markers and not current_markers:
-        return None
-    if len(parent_markers) != len(current_markers):
-        return None
-
-    old_starts = (0, *(marker.end() for marker in parent_markers))
-    old_stops = (*(marker.start() for marker in parent_markers), len(old))
-    new_starts = (0, *(marker.end() for marker in current_markers))
-    new_stops = (*(marker.start() for marker in current_markers), len(new))
-    pieces: list[str] = []
-    for index, (old_left, old_right, new_left, new_right) in enumerate(
-        zip(old_starts, old_stops, new_starts, new_stops, strict=True)
-    ):
-        old_part = old[old_left:old_right]
-        new_part = new[new_left:new_right]
-        matcher = _character_refinement_matcher(old_part, new_part)
-        if matcher is None:
-            if old_part:
-                macro = r"\DIFdelFL" if full_document else r"\DIFdel"
-                pieces.append(f"{macro}{{{old_part}}}")
-            if new_part:
-                pieces.append(
-                    _render_addition(
-                        provenance,
-                        new_start + new_left,
-                        new_start + new_right,
-                        full_document=full_document,
-                    )
-                )
-        else:
-            pieces.append(
-                _refine_replacement(
-                    old_part,
-                    new_part,
-                    provenance,
-                    new_start + new_left,
-                    matcher,
-                    full_document=full_document,
-                )
-            )
-        if index < len(current_markers):
-            pieces.append(current_markers[index].group(0))
-    return "".join(pieces)
-
-
-def _replacement_shape(
-    segments: list[_DiffSegment],
-    index: int,
-) -> tuple[int, str] | None:
-    """Return the addition index and ignorable separator for one replacement."""
-    if segments[index].kind != "del" or index + 1 >= len(segments):
-        return None
-    if segments[index + 1].kind == "add":
-        return index + 1, ""
-    if (
-        index + 2 < len(segments)
-        and segments[index + 1].kind == "plain"
-        and segments[index + 2].kind == "add"
-        and _separator_is_diff_only(segments[index + 1].content)
-    ):
-        return index + 2, segments[index + 1].content
-    return None
-
-
-def _classify_region(
-    text: str,
-    provenance: ProvenanceSource,
-    locator: _AdditionLocator,
-) -> str:
-    """Classify one real manuscript region, excluding generated diff style."""
-    segments = _split_diff_segments(text)
-    output: list[str] = []
-    index = 0
-    while index < len(segments):
-        segment = segments[index]
-        replacement = _replacement_shape(segments, index)
-        if replacement is not None:
-            addition_index, separator = replacement
-            addition = segments[addition_index]
-            start, end = locator.locate(addition.content)
-            full_document = addition.macro.endswith("FL")
-            topology_refinement = _refine_topology_aligned_replacement(
-                segment.content,
-                addition.content,
-                provenance,
-                start,
-                full_document=full_document,
-            )
-            matcher = _character_refinement_matcher(segment.content, addition.content)
-            if topology_refinement is not None:
-                output.append(topology_refinement)
-            elif matcher is not None:
-                output.append(
-                    _refine_replacement(
-                        segment.content,
-                        addition.content,
-                        provenance,
-                        start,
-                        matcher,
-                        full_document=full_document,
-                    )
-                )
-            else:
-                output.append(f"{segment.macro}{{{segment.content}}}")
-                output.append(separator)
-                output.append(
-                    _render_addition(
-                        provenance,
-                        start,
-                        end,
-                        full_document=full_document,
-                    )
-                )
-            index = addition_index + 1
-            continue
-
-        if segment.kind == "add":
-            start, end = locator.locate(segment.content)
-            output.append(
-                _render_addition(
-                    provenance,
-                    start,
-                    end,
-                    full_document=segment.macro.endswith("FL"),
-                )
-            )
-        elif segment.kind == "add-review":
-            raise WorkflowError(
-                "Reviewer-specific diff markup appeared before provenance "
-                "classification; the diff engine must remain provenance-free."
-            )
-        elif segment.kind == "del":
-            output.append(f"{segment.macro}{{{segment.content}}}")
-        else:
-            output.append(segment.content)
-        index += 1
-    return "".join(output)
-
-
-def _classify_reviewer_additions(
-    latexdiff_output: str,
-    provenance: ProvenanceSource,
-) -> str:
-    """Classify additions everywhere, including Chinese pre-document frontmatter."""
-    start = latexdiff_output.find(STYLE_BEGIN)
-    end = latexdiff_output.find(STYLE_END)
-    locator = _AdditionLocator(provenance)
-    if start < 0 and end < 0:
-        return _classify_region(latexdiff_output, provenance, locator)
-    if start < 0 or end < 0 or end < start:
-        raise WorkflowError("Marked diff style boundaries are incomplete.")
-    style_end = end + len(STYLE_END)
-    prefix = latexdiff_output[:start]
-    style = latexdiff_output[start:style_end]
-    suffix = latexdiff_output[style_end:]
-    return (
-        _classify_region(prefix, provenance, locator)
-        + style
-        + _classify_region(suffix, provenance, locator)
-    )
-
-
-def _find_inline_math_end(text: str, start: int) -> int | None:
-    if text.startswith("$$", start):
-        delimiter = "$$"
-        cursor = start + 2
-    elif text[start] == "$":
-        delimiter = "$"
-        cursor = start + 1
-    elif text.startswith(r"\(", start):
-        delimiter = r"\)"
-        cursor = start + 2
-    else:
-        return None
-    while cursor < len(text):
-        if text.startswith(delimiter, cursor) and not is_escaped(text, cursor):
-            return cursor + len(delimiter)
-        cursor += 1
-    raise WorkflowError("Unbalanced inline mathematics in revision diff markup.")
-
-
-def _split_inline_math(content: str, macro: str) -> str:
-    if macro in {r"\DIFaddReview", r"\DIFaddReviewFL"}:
-        math_macro = r"\DIFaddReviewMath"
-    elif macro in {r"\DIFadd", r"\DIFaddFL"}:
-        math_macro = r"\DIFaddMath"
-    else:
-        math_macro = r"\DIFdelMath"
-    pieces: list[str] = []
-    plain_start = 0
-    cursor = 0
-    found = False
-    while cursor < len(content):
-        if content[cursor] == "%" and not is_escaped(content, cursor):
-            newline = content.find("\n", cursor)
-            cursor = len(content) if newline == -1 else newline + 1
-            continue
-        is_math = (
-            content[cursor] == "$" and not is_escaped(content, cursor)
-        ) or content.startswith(r"\(", cursor)
-        if not is_math:
-            cursor += 1
-            continue
-        end = _find_inline_math_end(content, cursor)
-        if end is None:
-            cursor += 1
-            continue
-        plain = content[plain_start:cursor]
-        if plain:
-            pieces.append(plain if plain.isspace() else f"{macro}{{{plain}}}")
-        if content.startswith("$$", cursor):
-            left = right = "$$"
-        elif content[cursor] == "$":
-            left = right = "$"
-        else:
-            left, right = r"\(", r"\)"
-        body = content[cursor + len(left) : end - len(right)]
-        pieces.append(f"{left}{math_macro}{{{body}}}{right}")
-        cursor = end
-        plain_start = end
-        found = True
-    if not found:
-        return f"{macro}{{{content}}}"
-    plain = content[plain_start:]
-    if plain:
-        pieces.append(plain if plain.isspace() else f"{macro}{{{plain}}}")
-    return "".join(pieces)
-
-
-def _separate_inline_math_from_diff_markup(text: str) -> str:
-    macros = (
-        r"\DIFaddReviewFL",
-        r"\DIFaddReview",
-        r"\DIFaddFL",
-        r"\DIFdelFL",
-        r"\DIFadd",
-        r"\DIFdel",
-    )
-    output: list[str] = []
-    cursor = 0
-    while cursor < len(text):
-        candidates = [(text.find(f"{macro}{{", cursor), macro) for macro in macros]
-        matches = [item for item in candidates if item[0] >= 0]
-        if not matches:
-            output.append(text[cursor:])
-            break
-        index, macro = min(matches, key=lambda item: item[0])
-        output.append(text[cursor:index])
-        content, end = _diff_field(text, index + len(macro))
-        output.append(_split_inline_math(content, macro))
-        cursor = end
-    return "".join(output)
-
-
-def _lift_review_spans_from_moving_arguments(text: str) -> str:
-    """Move whole-field internal spans outside sectioning commands.
-
-    Line labels cannot safely execute inside TeX moving arguments. The visible
-    reviewer markup remains inside the title, while the invisible location span
-    encloses the complete command.
-    """
-    names = ("section", "subsection", "subsubsection", "paragraph")
+def _pdf_text_projection(path: Path, *, remove_line_numbers: bool) -> str:
+    pdftotext = shutil.which("pdftotext")
+    if pdftotext is None:
+        raise WorkflowError("pdftotext is required for marked-manuscript identity.")
+    xml = run_command([pdftotext, "-bbox", str(path), "-"], cwd=path.parent).stdout
     try:
-        commands = scan_tex_commands(text, names, field_count=1)
-    except ValueError as exc:
-        raise WorkflowError("Malformed sectioning command in marked source.") from exc
-    replacements: list[tuple[int, int, str]] = []
-    for command in commands:
-        field = command.fields[0]
-        cursor = skip_tex_space(field, 0)
-        if not command_at(field, cursor, "SCIReviewSpan"):
-            continue
-        try:
-            ids, after_ids = extract_braced(field, cursor + len(r"\SCIReviewSpan"))
-            body, end = extract_braced(field, after_ids)
-        except ValueError as exc:
-            raise WorkflowError(
-                "Malformed internal reviewer span in a section title."
-            ) from exc
-        if skip_tex_space(field, end) != len(field):
-            continue
-        visible_command = f"\\{command.name}{{{body}}}"
-        replacements.append(
-            (
-                command.start,
-                command.end,
-                f"\\SCIReviewSpan{{{ids}}}{{{visible_command}}}",
-            )
-        )
-    return _replace_spans(text, replacements)
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        raise WorkflowError("Poppler produced malformed PDF identity XML.") from exc
+    values: list[str] = []
+    pages = [item for item in root.iter() if item.tag.rsplit("}", 1)[-1] == "page"]
+    for page in pages:
+        width = float(page.attrib["width"])
+        for word in (
+            item for item in page.iter() if item.tag.rsplit("}", 1)[-1] == "word"
+        ):
+            value = "".join(word.itertext())
+            if (
+                remove_line_numbers
+                and value.isdigit()
+                and (
+                    float(word.attrib["xMax"]) <= width * 0.25
+                    or float(word.attrib["xMin"]) >= width * 0.75
+                )
+            ):
+                continue
+            values.extend("".join(value.split()))
+    # Exact source projection already proves order and structure. At PDF level,
+    # compare page count plus the rendered character inventory: color-induced
+    # line wrapping and math subscripts can change Poppler's word order without
+    # changing any visible scientific content.
+    return f"pages={len(pages)}\n{''.join(sorted(values))}"
+
+
+def _latexdiff_version() -> str:
+    executable = shutil.which("latexdiff")
+    if executable is None:
+        raise WorkflowError("latexdiff is required for revision change detection.")
+    result = run_command([executable, "--version"], cwd=Path.cwd())
+    output = "\n".join((result.stdout, result.stderr))
+    return next((line.strip() for line in output.splitlines() if line.strip()), "")
 
 
 def build_marked_manuscript(
@@ -1207,173 +732,395 @@ def build_marked_manuscript(
     round_number: int,
     run_dir: Path,
     engine_override: str | None = None,
+    *,
+    validate_clean: bool = True,
+    include_locations: bool = True,
+    reuse_marked_pdf: Path | None = None,
+    current_bibliography_text: str | None = None,
+    telemetry: BuildTelemetry | None = None,
 ) -> MarkedResult:
-    """Build an adjacent revision diff with reviewer provenance classified in Python."""
+    """Publish the current manuscript with addition-only revision highlights."""
     if round_number < 1:
-        raise WorkflowError("R0 has no marked manuscript; build its clean PDF instead.")
-    previous = config.round_dir(round_number - 1)
-    current = config.round_dir(round_number)
-    if not previous.is_dir() or not current.is_dir():
-        raise WorkflowError(
-            f"Revision requires both r{round_number - 1} and r{round_number}."
+        raise WorkflowError("R0 has no highlighted revision manuscript.")
+    migrate_revision_style_file(
+        config.references / "revision_style.tex",
+        config.archive_root(),
+    )
+    parent_dir = config.round_dir(round_number - 1)
+    current_dir = config.round_dir(round_number)
+    if not parent_dir.is_dir() or not current_dir.is_dir():
+        raise WorkflowError("Highlighted revision requires adjacent rounds.")
+    _remove_revision_output_diagnostics(config.output_dir(round_number))
+
+    source_stage = (
+        telemetry.measure("source_projection")
+        if telemetry
+        else contextlib.nullcontext()
+    )
+    with source_stage:
+        source_dir = run_dir / "marked_source"
+        parent_source_dir = run_dir / "parent_source"
+        parent_source = stage_runtime_resources(
+            config, round_number - 1, parent_source_dir, include_manuscript=True
         )
-    if shutil.which("latexdiff") is None:
-        raise WorkflowError("latexdiff is required for structural LaTeX comparison.")
-    if shutil.which("pdftotext") is None:
-        raise WorkflowError("pdftotext is required for marked-manuscript validation.")
-
-    source_dir = run_dir / "marked_source"
-    build_dir = run_dir / "marked_build"
-    source_dir.mkdir(parents=True)
-    old_runtime = source_dir / "old_runtime"
-    new_runtime = source_dir / "new_runtime"
-    old_runtime_source = stage_runtime_resources(
-        config,
-        round_number - 1,
-        old_runtime,
-        include_manuscript=True,
-    )
-    new_runtime_source = stage_runtime_resources(
-        config,
-        round_number,
-        new_runtime,
-        include_manuscript=True,
-    )
-    old_flattened = _flatten_tex(
-        old_runtime_source,
-        (old_runtime,),
-    )
-    new_flattened = _flatten_tex(
-        new_runtime_source,
-        (new_runtime,),
-    )
-    old_bibliography = _materialize_bibliography(
-        old_runtime_source,
-        old_flattened,
-        run_dir / "old_bibliography_build",
-        config,
-        engine_override,
-    )
-    new_bibliography = _materialize_bibliography(
-        new_runtime_source,
-        new_flattened,
-        run_dir / "new_bibliography_build",
-        config,
-        engine_override,
-    )
-    visible_bibliography, bibliography_notices = (
-        _current_bibliography_with_reference_provenance(
-            old_bibliography,
-            new_bibliography,
-            config.response_dir(round_number) / "responses.tex",
+        current_source = stage_runtime_resources(
+            config, round_number, source_dir, include_manuscript=True
         )
-    )
-    old_visible = _replace_bibliography(old_flattened, visible_bibliography)
-    new_visible = _replace_bibliography(new_flattened, visible_bibliography)
-    old_visible, new_visible = _align_changed_display_equations(
-        old_visible,
-        new_visible,
-    )
-    old_text = strip_provenance_wrappers(old_visible)
-    provenance = extract_provenance(new_visible)
-    old_source = source_dir / "old.tex"
-    new_source = source_dir / "new.tex"
-    old_source.write_text(old_text, encoding="utf-8")
-    new_source.write_text(provenance.text, encoding="utf-8")
-    old_encoded_source = source_dir / "old_topology_encoded.tex"
-    new_encoded_source = source_dir / "new_topology_encoded.tex"
-    old_encoded_source.write_text(
-        _encode_paragraph_boundaries(old_text, PARENT_PARAGRAPH_BOUNDARY),
-        encoding="utf-8",
-    )
-    encoded_provenance = _encode_provenance_paragraph_boundaries(provenance)
-    new_encoded_source.write_text(encoded_provenance.text, encoding="utf-8")
-    expected_paragraph_count = len(
-        CURRENT_PARAGRAPH_BOUNDARY_PATTERN.findall(encoded_provenance.text)
-    )
+        parent_flat = _flatten_tex(parent_source, (parent_source_dir,))
+        current_flat = _flatten_tex(current_source, (source_dir,))
 
-    style = source_dir / "revision_preamble.tex"
-    user_style = (config.references / "revision_style.tex").read_text(encoding="utf-8")
-    style.write_text(
-        f"{STYLE_BEGIN}\n{user_style}\n{_revision_runtime(config.language)}\n{STYLE_END}\n",
-        encoding="utf-8",
+    bibliography_stage = (
+        telemetry.measure("bibliography_prepare")
+        if telemetry
+        else contextlib.nullcontext()
     )
-    _copy_resources(config, source_dir)
+    with bibliography_stage:
+        bibliography_cache = config.tmp_root() / "cache" / "bibliography"
+        parent_bibliography = materialize_bibliography(
+            parent_source,
+            parent_flat,
+            run_dir / "parent_bibliography_build",
+            config,
+            engine_override,
+            telemetry,
+            bibliography_cache,
+        )
+        current_bibliography = current_bibliography_text
+        if current_bibliography is None:
+            current_bibliography = materialize_bibliography(
+                current_source,
+                current_flat,
+                run_dir / "current_bibliography_build",
+                config,
+                engine_override,
+                telemetry,
+                bibliography_cache,
+            )
 
-    text_commands = ["SCIDeletedEquation", "SCIDeletedDisplay"]
-    if config.metadata.publisher == "chinese":
-        text_commands.extend(CHINESE_TEXT_COMMANDS)
-    command = [
-        shutil.which("latexdiff") or "latexdiff",
-        "--encoding=utf8",
-        "--packages=none",
-        "--math-markup=WHOLE",
-        f"--preamble={style}",
-        "--append-context2cmd=" + ",".join(PUBLISHER_METADATA_CONTEXT_COMMANDS),
-        "--append-textcmd=" + ",".join(text_commands),
-        "--append-safecmd=latin,nolinkurl,"
-        f"{PARENT_PARAGRAPH_BOUNDARY},{CURRENT_PARAGRAPH_BOUNDARY}",
-        "--disable-citation-markup",
-        "--ignore-warnings",
-        str(old_encoded_source),
-        str(new_encoded_source),
-    ]
-    result = run_command(command, cwd=source_dir)
-    (source_dir / "latexdiff_raw.tex").write_text(result.stdout, encoding="utf-8")
-    structurally_normalized = _neutralize_unowned_paragraph_breaks(result.stdout)
-    (source_dir / "latexdiff_structure_normalized.tex").write_text(
-        structurally_normalized, encoding="utf-8"
+    provenance_stage = (
+        telemetry.measure("provenance_mapping")
+        if telemetry
+        else contextlib.nullcontext()
     )
-    classified = _classify_reviewer_additions(
-        structurally_normalized, encoded_provenance
+    with provenance_stage:
+        parent_compare = _replace_bibliography(parent_flat, current_bibliography)
+        current_compare = _replace_bibliography(current_flat, current_bibliography)
+        parent_compare, provenance = prepare_change_detection_sources(
+            parent_compare, current_compare
+        )
+        detector_parent_text, shadowed_parent_fields = (
+            _mask_overridden_frontmatter_fields(
+                parent_compare, config.metadata.publisher
+            )
+        )
+        detector_current_text, shadowed_current_fields = (
+            _mask_overridden_frontmatter_fields(
+                provenance.text, config.metadata.publisher
+            )
+        )
+        detector_parent = source_dir / "detector_parent.tex"
+        detector_current = source_dir / "detector_current.tex"
+        detector_parent.write_text(detector_parent_text, encoding="utf-8")
+        detector_current.write_text(detector_current_text, encoding="utf-8")
+        evidence_path = source_dir / "latexdiff_addition_evidence.tex"
+        detector_preamble = source_dir / "detector_preamble.tex"
+        detector_preamble.write_text(
+            f"{DETECTOR_STYLE_BEGIN}\n"
+            "\\providecommand{\\DIFadd}[1]{#1}\n"
+            "\\providecommand{\\DIFaddbegin}{}\n"
+            "\\providecommand{\\DIFaddend}{}\n"
+            "\\providecommand{\\DIFaddFL}[1]{#1}\n"
+            "\\providecommand{\\DIFaddbeginFL}{}\n"
+            "\\providecommand{\\DIFaddendFL}{}\n"
+            f"{DETECTOR_STYLE_END}\n",
+            encoding="utf-8",
+        )
+
+    latexdiff_stage = (
+        telemetry.measure("latexdiff") if telemetry else contextlib.nullcontext()
     )
-    (source_dir / "manuscript_classified.tex").write_text(classified, encoding="utf-8")
-    classified, paragraph_topology = _materialize_current_paragraph_boundaries(
-        classified,
-        expected_paragraph_count,
+    with latexdiff_stage:
+        if telemetry is not None:
+            telemetry.latexdiff_invocations += 1
+        run_latexdiff(
+            detector_parent,
+            detector_current,
+            evidence_path,
+            preamble=detector_preamble,
+            text_commands=CHINESE_TEXT_COMMANDS
+            if config.metadata.publisher == "chinese"
+            else (),
+            context_commands=PUBLISHER_METADATA_CONTEXT_COMMANDS,
+        )
+
+    mapping_stage = (
+        telemetry.measure("provenance_mapping")
+        if telemetry
+        else contextlib.nullcontext()
     )
-    (run_dir / "paragraph_topology.json").write_text(
-        json.dumps(paragraph_topology, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    with mapping_stage:
+        evidence = evidence_path.read_text(encoding="utf-8")
+        additions, unresolved = _locate_additions(
+            evidence, provenance, detector_current_text
+        )
+        if unresolved:
+            raise WorkflowError(
+                "Latexdiff additions could not be resolved onto the current source."
+            )
+        additions, moves = suppress_exact_moves(
+            parent_compare, provenance.text, additions, provenance
+        )
+        additions, block_count, fine_blocks, whole_blocks = adaptive_blocks(
+            provenance.text, additions
+        )
+        additions, equations, equation_audit = resolve_equation_spans(
+            parent_compare, provenance, additions
+        )
+        citations = citation_spans(parent_compare, provenance, additions)
+        citation_provenance = added_citation_provenance(
+            parent_compare, provenance, additions
+        )
+        marked_bibliography, bibliography_notices = (
+            _current_bibliography_with_reference_provenance(
+                parent_bibliography,
+                current_bibliography,
+                config.response_dir(round_number) / "responses.tex",
+                citation_provenance,
+                detector_current,
+            )
+        )
+        all_protected_citations = protected_citation_spans(
+            provenance, additions, citations
+        )
+        protected_citations = [
+            citation
+            for citation in all_protected_citations
+            if not any(
+                equation.start < citation.end and equation.end > citation.start
+                for equation in equations
+            )
+        ]
+        additions = replace_special_spans(additions, [*protected_citations, *equations])
+        additions = preserve_topology_seams(provenance.text, additions)
+        additions, tiny_islands = coalesce_tiny_unchanged_islands(
+            provenance.text, additions
+        )
+        additions = preserve_text_command_shells(
+            provenance.text,
+            additions,
+            CHINESE_SINGLE_VALUE_COMMANDS
+            if config.metadata.publisher == "chinese"
+            else (),
+        )
+
+    render_stage = (
+        telemetry.measure("highlight_render") if telemetry else contextlib.nullcontext()
     )
+    with render_stage:
+        highlighted = apply_highlights(provenance.text, additions)
+        (source_dir / "highlighted_pre_bibliography.tex").write_text(
+            highlighted, encoding="utf-8"
+        )
+        if highlighted.count(current_bibliography) != 1:
+            raise WorkflowError(
+                "Current bibliography boundary changed during highlighting."
+            )
+        highlighted = highlighted.replace(current_bibliography, marked_bibliography, 1)
+        current_projection = provenance.text
+        marked_text = _inject_revision_style(highlighted, config)
+        projected_marked = _strip_highlight_markup(marked_text, STYLE_BEGIN, STYLE_END)
+        (source_dir / "current_projection.tex").write_text(
+            current_projection, encoding="utf-8"
+        )
+        (source_dir / "marked_projection.tex").write_text(
+            projected_marked, encoding="utf-8"
+        )
+        source_projection_identity = projected_marked == current_projection
+        whitespace_seam_identity = _whitespace_events(
+            projected_marked
+        ) == _whitespace_events(current_projection)
+        if not source_projection_identity or not whitespace_seam_identity:
+            raise WorkflowError(
+                "Highlighted source projection differs from the current clean source."
+            )
+        topology = validate_topology_identity(
+            current_projection,
+            projected_marked,
+            source_dir / "marked_projection.tex",
+        )
+
     marked_source = source_dir / "manuscript_marked.tex"
-    marked_source.write_text(
-        _lift_review_spans_from_moving_arguments(
-            _separate_inline_math_from_diff_markup(classified)
+    marked_source.write_text(marked_text, encoding="utf-8")
+    if include_locations:
+        instrument_location_source(marked_source, round_number)
+    marked_aux: Path | None = None
+    if reuse_marked_pdf is None:
+        compile_stage = (
+            telemetry.measure("marked_compile")
+            if telemetry
+            else contextlib.nullcontext()
+        )
+        with compile_stage:
+            compiled = compile_tex(
+                marked_source,
+                run_dir / "marked_build",
+                config,
+                engine_override,
+                keep_intermediates=True,
+                telemetry=telemetry,
+            )
+        marked_pdf = compiled.pdf
+        marked_aux = run_dir / "marked_build" / "manuscript_marked.aux"
+    else:
+        if not reuse_marked_pdf.is_file():
+            raise WorkflowError(
+                f"Reusable marked artifact is missing: {reuse_marked_pdf}"
+            )
+        marked_pdf = reuse_marked_pdf
+
+    validation_stage = (
+        telemetry.measure("validation") if telemetry else contextlib.nullcontext()
+    )
+    with validation_stage:
+        text_identity: bool | None = None
+        numbering_identity: bool | None = None
+        if validate_clean:
+            clean_pdf = config.output_dir(round_number) / "manuscript_clean.pdf"
+            if not clean_pdf.is_file():
+                raise WorkflowError(
+                    "Full marked validation requires the current clean manuscript."
+                )
+            if marked_aux is None:
+                raise WorkflowError(
+                    "Full marked validation requires a fresh marked compilation."
+                )
+            text_identity = _pdf_text_projection(
+                clean_pdf, remove_line_numbers=True
+            ) == _pdf_text_projection(marked_pdf, remove_line_numbers=True)
+            clean_aux = run_dir / "clean_build" / "manuscript.aux"
+            numbering_identity = _numbering_state(clean_aux) == _numbering_state(
+                marked_aux
+            )
+            if not text_identity or not numbering_identity:
+                raise WorkflowError(
+                    "Clean/marked scientific text or numbering identity validation "
+                    "failed."
+                )
+
+    locations: dict[str, str] = {}
+    if include_locations:
+        locations = build_review_locations(
+            config,
+            round_number,
+            run_dir,
+            engine_override,
+            marked_source,
+            marked_pdf,
+            telemetry,
+        )
+    reviewer_ids = {
+        review_id for span in additions for review_id in (span.review_ids or ())
+    }
+    pure_deletions: list[str] = []
+    if include_locations:
+        pure_deletions = sorted(
+            review_ids_from_sources(config, round_number)
+            - reviewer_ids
+            - set(locations)
+        )
+        deletion_note = (
+            "相关内容已删除，当前稿无对应高亮文本"  # noqa: RUF001
+            if config.language == "zh"
+            else "The relevant text has been removed; no corresponding highlighted "
+            "text remains in the revised manuscript"
+        )
+        locations.update(dict.fromkeys(pure_deletions, deletion_note))
+
+    bibliography_states = _bibliography_change_states(
+        parent_bibliography, current_bibliography
+    )
+    _validate_reference_style_contract()
+    bibliography_changes = sum(
+        state in {"added", "modified"} for state in bibliography_states.values()
+    )
+    reviewer_bibliography_events = marked_bibliography.count(
+        r"\SCIReviewReferenceSpan{"
+    )
+    audit = {
+        "latexdiff_version": _latexdiff_version(),
+        "current_blocks": block_count,
+        "fine_highlight_blocks": fine_blocks,
+        "whole_highlight_blocks": whole_blocks,
+        "reviewer_highlight_spans": sum(
+            item.review_ids is not None and item.kind != "citation"
+            for item in additions
         ),
-        encoding="utf-8",
-    )
-    compiled = compile_tex(
-        marked_source,
-        build_dir,
-        config,
-        engine_override,
-        keep_intermediates=True,
-    )
-
-    extracted_text = run_dir / "marked_manuscript.txt"
-    run_command(
-        [
-            shutil.which("pdftotext") or "pdftotext",
-            str(compiled.pdf),
-            str(extracted_text),
-        ],
-        cwd=run_dir,
-    )
-    if not extracted_text.exists() or extracted_text.stat().st_size == 0:
-        raise WorkflowError("Marked PDF text extraction produced no text.")
-
-    locations = build_review_locations(
-        config,
-        round_number,
-        run_dir,
-        engine_override,
-        marked_source,
+        "author_highlight_spans": sum(
+            item.review_ids is None and item.kind != "citation" for item in additions
+        ),
+        "exact_moves_suppressed": moves,
+        "equations_whole_highlighted": len(equations),
+        "equations_examined": equation_audit.examined,
+        "equations_normalized_identical": equation_audit.normalized_identical,
+        "equations_highlighted": equation_audit.highlighted,
+        "equation_identity_ambiguous": equation_audit.ambiguous,
+        "citation_groups_highlighted": 0,
+        "bibliography_entries_highlighted": 0,
+        "reference_visual_policy": "SciLinkBlue RGB(0,0,255)",
+        "clean_marked_reference_style_identity": True,
+        "citation_changes_tracked": len(citations),
+        "bibliography_changes_tracked": bibliography_changes,
+        "reviewer_reference_location_events": sum(
+            item.review_ids is not None for item in all_protected_citations
+        )
+        + reviewer_bibliography_events,
+        "author_reference_changes": sum(item.review_ids is None for item in citations)
+        + max(0, bibliography_changes - reviewer_bibliography_events),
+        "protected_citation_spans": len(all_protected_citations),
+        "pure_deletion_reviews": pure_deletions,
+        "validation_scope": "full" if validate_clean else "source",
+        "clean_marked_text_identity": text_identity,
+        "clean_marked_source_projection_identity": source_projection_identity,
+        "clean_marked_numbering_identity": numbering_identity,
+        "clean_marked_block_topology_identity": True,
+        "clean_marked_paragraph_identity": True,
+        "paragraph_boundary_count_clean": topology.paragraph_boundary_count_clean,
+        "paragraph_boundary_count_marked": topology.paragraph_boundary_count_marked,
+        "clean_paragraph_count": topology.paragraph_count_clean,
+        "marked_paragraph_count": topology.paragraph_count_marked,
+        "whitespace_seam_identity": whitespace_seam_identity,
+        "tiny_islands_examined": tiny_islands.examined,
+        "tiny_islands_coalesced": tiny_islands.coalesced,
+        "tiny_islands_rejected_density": tiny_islands.rejected_density,
+        "tiny_islands_rejected_boundary": tiny_islands.rejected_boundary,
+        "tiny_islands_rejected_protected": tiny_islands.rejected_protected,
+        "tiny_islands_rejected_provenance": tiny_islands.rejected_provenance,
+        "shadowed_frontmatter_fields_parent": shadowed_parent_fields,
+        "shadowed_frontmatter_fields_current": shadowed_current_fields,
+        "reference_provenance_conflicts": 0,
+        "unresolved_additions": len(unresolved),
+    }
+    audit_path = run_dir / "highlight_audit.json"
+    audit_path.write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     output = config.output_dir(round_number) / "manuscript_marked.pdf"
-    publish_file_atomically(compiled.pdf, output)
+    if reuse_marked_pdf is None:
+        publish_stage = (
+            telemetry.measure("artifact_publish")
+            if telemetry
+            else contextlib.nullcontext()
+        )
+        with publish_stage:
+            output = publish_file_atomically(marked_pdf, output)
+    aux_path = marked_aux
+    if aux_path is None and include_locations:
+        candidate = run_dir / "marked_build" / "manuscript_marked.aux"
+        aux_path = candidate if candidate.is_file() else None
     return MarkedResult(
-        pdf=output,
-        locations=locations,
-        bibliography_notices=bibliography_notices,
+        output,
+        locations,
+        bibliography_notices,
+        aux_path,
+        audit_path,
     )

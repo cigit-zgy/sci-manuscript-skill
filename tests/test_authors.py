@@ -1,5 +1,7 @@
 """Global and explicit author-library behavior tests."""
 
+# ruff: noqa: RUF001 -- exact Chinese correspondence-address fixtures.
+
 from __future__ import annotations
 
 import argparse
@@ -11,6 +13,8 @@ import pytest
 from sci_manuscript import cli
 from sci_manuscript.authors import (
     CONFIG_DIRECTORY_ENV,
+    AuthorRecord,
+    AuthorSelection,
     configure_author_library,
     configured_author_library_path,
     load_author_library,
@@ -68,6 +72,52 @@ def _metadata(*, other: tuple[str, ...] = ("author_two",)) -> ManuscriptMetadata
     )
 
 
+def _multi_library(path: Path) -> Path:
+    path.write_text(
+        """affiliations:
+  first:
+    name_en: First Institute, City 100001, Country
+    name_zh: 第一研究院，城市 100001
+  second:
+    name_en: Second Institute, City 100002, Country
+    name_zh: 第二研究院，城市 100002
+authors:
+  author_one:
+    name_en: Author One
+    name_zh: 作者甲
+    email: one@example.invalid
+    affiliations: [first, second]
+  author_two:
+    name_en: Author Two
+    name_zh: 作者乙
+    email: two@example.invalid
+    correspondence_address: Explicit Address, City 200002
+    affiliations: [second]
+  author_three:
+    name_en: Author Three
+    name_zh: 作者丙
+    email: three@example.invalid
+    affiliations: [first]
+  non_corresponding:
+    name_en: Other Author
+    name_zh: 其他作者
+    affiliations: [second]
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _multi_metadata(count: int) -> ManuscriptMetadata:
+    corresponding = ("author_three", "author_one", "author_two")[:count]
+    return replace(
+        _metadata(),
+        first_authors=("author_one",),
+        other_authors=("non_corresponding", "author_two", "author_three"),
+        corresponding_authors=corresponding,
+    )
+
+
 def test_email_is_optional_but_corresponding_email_is_required(tmp_path: Path) -> None:
     library = load_author_library(_library(tmp_path / "authors.yaml"))
     selection = resolve_authors(_metadata(), library)
@@ -78,8 +128,115 @@ def test_email_is_optional_but_corresponding_email_is_required(tmp_path: Path) -
         corresponding_authors=("author_two",),
         other_authors=(),
     )
-    with pytest.raises(MetadataError, match="email"):
+    with pytest.raises(MetadataError) as error:
         resolve_authors(invalid, library)
+    message = str(error.value)
+    assert 'Missing email for corresponding author "Anonymous Two".' in message
+    assert f"Source: author metadata ({library.source})." in message
+    assert "Missing field: email." in message
+
+
+@pytest.mark.parametrize("count", (1, 2, 3))
+def test_response_correspondence_supports_one_to_three_authors(
+    tmp_path: Path, count: int
+) -> None:
+    library = load_author_library(_multi_library(tmp_path / "authors.yaml"))
+    metadata = _multi_metadata(count)
+    selection = resolve_authors(metadata, library)
+    rendered = render_author_metadata(metadata, selection)
+
+    expected_ids = tuple(
+        author.author_id
+        for author in selection.authors
+        if author.author_id in set(metadata.corresponding_authors)
+    )
+    assert tuple(author.author_id for author in selection.corresponding_authors) == (
+        expected_ids
+    )
+    assert rendered.count(r"\vspace{0.55\baselineskip}") == 2 * (count - 1)
+    assert rendered.count(r"\vspace{0.15\baselineskip}") == 2 * count * 2
+
+
+def test_corresponding_authors_follow_manuscript_order_and_skip_other_authors(
+    tmp_path: Path,
+) -> None:
+    library = load_author_library(_multi_library(tmp_path / "authors.yaml"))
+    metadata = _multi_metadata(3)
+    selection = resolve_authors(metadata, library)
+
+    assert tuple(author.author_id for author in selection.authors) == (
+        "author_one",
+        "non_corresponding",
+        "author_two",
+        "author_three",
+    )
+    assert tuple(author.author_id for author in selection.corresponding_authors) == (
+        "author_one",
+        "author_two",
+        "author_three",
+    )
+
+
+def test_response_correspondence_uses_explicit_address_then_first_affiliation(
+    tmp_path: Path,
+) -> None:
+    library = load_author_library(_multi_library(tmp_path / "authors.yaml"))
+    metadata = _multi_metadata(3)
+    rendered = render_author_metadata(metadata, resolve_authors(metadata, library))
+    zh = rendered.split(r"\newcommand{\CorrespondenceAuthorsZh}{%", 1)[1].split(
+        "\n}", 1
+    )[0]
+    en = rendered.split(r"\newcommand{\CorrespondenceAuthorsEn}{%", 1)[1].split(
+        "\n}", 1
+    )[0]
+
+    assert "作者甲" in zh
+    assert "通讯地址：第一研究院，城市 100001" in zh
+    assert "作者乙" in zh
+    assert "通讯地址：Explicit Address, City 200002" in zh
+    assert "Correspondence address: First Institute, City 100001, Country" in en
+    assert "Correspondence address: Explicit Address, City 200002" in en
+    assert (
+        "Second Institute" not in en.split("Author One", 1)[1].split("Author Two", 1)[0]
+    )
+
+
+def test_response_correspondence_renders_locale_labels_and_no_final_gap(
+    tmp_path: Path,
+) -> None:
+    library = load_author_library(_multi_library(tmp_path / "authors.yaml"))
+    metadata = _multi_metadata(3)
+    rendered = render_author_metadata(metadata, resolve_authors(metadata, library))
+    zh = rendered.split(r"\newcommand{\CorrespondenceAuthorsZh}{%", 1)[1].split(
+        "\n}", 1
+    )[0]
+    en = rendered.split(r"\newcommand{\CorrespondenceAuthorsEn}{%", 1)[1].split(
+        "\n}", 1
+    )[0]
+
+    assert zh.count("通讯地址：") == 3
+    assert zh.count("邮箱：") == 3
+    assert en.count("Correspondence address: ") == 3
+    assert en.count("E-mail: ") == 3
+    assert zh.rstrip().endswith("three@example.invalid}")
+    assert en.rstrip().endswith("three@example.invalid}")
+
+
+def test_missing_correspondence_address_is_actionable() -> None:
+    author = AuthorRecord(
+        "missing_address",
+        "缺地址作者",
+        "Missing Address",
+        "missing@example.invalid",
+        (),
+    )
+    selection = AuthorSelection((author,), (), (author,), (author,), {})
+
+    with pytest.raises(
+        MetadataError,
+        match='Missing correspondence address for corresponding author "Missing Address"',
+    ):
+        render_author_metadata(_metadata(other=()), selection)
 
 
 def test_unknown_affiliation_and_selected_author_are_rejected(tmp_path: Path) -> None:
@@ -159,7 +316,7 @@ def test_bundled_public_library_is_the_final_fallback(
     )
     assert library.authors["song_cheng"].email == "songcheng@cigit.ac.cn"
     assert library.authors["zhao_guangyao"].bio_zh == (
-        "赵光耀（1991--），男，博士，助理研究员，主要研究方向为污水处理模型，"  # noqa: RUF001
+        "赵光耀（1991--），男，博士，助理研究员，主要研究方向为污水处理模型，"
         "zhaoguangyao@cigit.ac.cn"
     )
     assert library.authors["liu_hong"].bio_en == (
@@ -168,8 +325,8 @@ def test_bundled_public_library_is_the_final_fallback(
     )
     affiliation_1 = library.affiliations["1"]
     affiliation_2 = library.affiliations["2"]
-    assert affiliation_1.name_zh == "中国科学院重庆绿色智能技术研究院，重庆 400714"  # noqa: RUF001
-    assert affiliation_2.name_zh == "三峡实验室，重庆400714"  # noqa: RUF001
+    assert affiliation_1.name_zh == "中国科学院重庆绿色智能技术研究院，重庆 400714"
+    assert affiliation_2.name_zh == "三峡实验室，重庆400714"
     assert affiliation_1.address == ""
     assert affiliation_2.address == ""
     assert affiliation_1.name_en == (
@@ -238,6 +395,20 @@ def test_correspondence_metadata_is_data_driven(tmp_path: Path) -> None:
     assert r"\newcommand{\EditorName}{Anonymous Editor}" in rendered
     assert r"\newcommand{\EditorTitle}{Handling Editor}" in rendered
     assert r"\newcommand{\CorrespondenceAuthorName}{Anonymous One}" in rendered
+
+
+def test_author_without_affiliation_has_actionable_metadata_error(
+    tmp_path: Path,
+) -> None:
+    path = _library(tmp_path / "authors.yaml")
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "affiliations: [institute]", "affiliations: []", 1
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(MetadataError, match="affiliations must be a non-empty list"):
+        load_author_library(path)
 
 
 def test_authors_cli_configure_list_and_show(

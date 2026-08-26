@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import shutil
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal, cast
 
 from .authors import load_author_library, resolve_author_library_path, resolve_authors
 from .bibliography import sync_bibliography
@@ -33,14 +35,18 @@ from .review import (
     ReviewAuditIssue,
     ReviewAuditResult,
     audit_reviews,
+    parse_response_source,
     parse_reviews,
     review_ids_from_sources,
 )
 from .submission import prepare_submission_artifacts
 from .templates import ensure_manuscript_sources
+from .timing import BuildTelemetry, TimingReport
 from .workspace import (
     GENERATED_SUBMISSION_PATHS,
     ProjectConfig,
+    bibliography_source_for_round,
+    build_artifact_is_current,
     finalize_revision_creation,
     initialize_draft_project,
     initialize_project,
@@ -57,6 +63,9 @@ from .workspace import (
     temporary_run,
     write_build_manifest,
 )
+
+BuildTarget = Literal["marked", "clean", "response", "all"]
+BUILD_TARGETS: tuple[BuildTarget, ...] = ("marked", "clean", "response", "all")
 
 OUTPUT_PDF_NAMES = (
     "manuscript.pdf",
@@ -99,6 +108,7 @@ class LifecycleResult:
     version: str
     artifacts: tuple[Artifact, ...]
     review_audit: ReviewAuditResult | None = None
+    timing: TimingReport | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +154,148 @@ def _restore_files(snapshot: dict[Path, Path | None]) -> None:
 def _output_pdf_paths(config: ProjectConfig, round_number: int) -> tuple[Path, ...]:
     output = config.output_dir(round_number)
     return tuple(output / name for name in OUTPUT_PDF_NAMES)
+
+
+def _enforce_output_purity(config: ProjectConfig, round_number: int) -> None:
+    """Keep the user-facing output directory limited to canonical PDFs."""
+    output = config.output_dir(round_number)
+    allowed = (
+        {"manuscript.pdf"}
+        if round_number == 0
+        else {
+            "manuscript_clean.pdf",
+            "manuscript_marked.pdf",
+            "response_letter.pdf",
+        }
+    )
+    unexpected_directories = sorted(
+        path.name for path in output.iterdir() if path.is_dir()
+    )
+    if unexpected_directories:
+        raise WorkflowError(
+            "Output purity check found unexpected directories: "
+            + ", ".join(unexpected_directories)
+        )
+    for path in output.iterdir():
+        if path.name not in allowed:
+            path.unlink()
+
+
+def _selected_build_target(
+    round_number: int,
+    target: str | None,
+) -> BuildTarget:
+    if target is None:
+        return "clean" if round_number == 0 else "marked"
+    if target not in BUILD_TARGETS:
+        raise WorkflowError(
+            f"Unknown build target {target!r}; choose from {', '.join(BUILD_TARGETS)}."
+        )
+    selected = target
+    if round_number == 0 and selected in {"marked", "response"}:
+        raise WorkflowError(
+            f'Target "{selected}" is unavailable for initial_submission.\n'
+            "Available targets:\n- clean\n- all"
+        )
+    return cast(BuildTarget, selected)
+
+
+def _buildability_issues(
+    config: ProjectConfig,
+    round_number: int,
+    target: BuildTarget,
+) -> tuple[str, ...]:
+    version = config.round_dir(round_number)
+    issues: list[str] = []
+    if not (version / "manuscript.tex").is_file():
+        issues.append("manuscript.tex is missing")
+    if not (version / "meta.yaml").is_file():
+        issues.append("meta.yaml is missing")
+    try:
+        bibliography_source_for_round(config, round_number)
+    except WorkflowError as exc:
+        issues.append(str(exc))
+    if round_number > 0 and target in {"marked", "response", "all"}:
+        parent = config.round_dir(round_number - 1)
+        if not (parent / "manuscript.tex").is_file():
+            issues.append(f"parent {parent.name}/manuscript.tex is missing")
+        try:
+            bibliography_source_for_round(config, round_number - 1)
+        except WorkflowError as exc:
+            issues.append(str(exc))
+    if round_number > 0 and target in {"response", "all"}:
+        response_dir = config.response_dir(round_number)
+        comments = response_dir / "reviewer_comments.md"
+        responses = response_dir / "responses.tex"
+        if not comments.is_file():
+            issues.append("response/reviewer_comments.md is missing")
+        else:
+            try:
+                blocks = parse_reviews(comments)
+            except WorkflowError as exc:
+                issues.append(f"response/reviewer_comments.md is invalid: {exc}")
+            else:
+                if not any(block.comments for block in blocks):
+                    issues.append(
+                        "response/reviewer_comments.md has no detailed comments"
+                    )
+        if not responses.is_file():
+            issues.append("response/responses.tex is missing")
+        else:
+            try:
+                parse_response_source(responses)
+            except WorkflowError as exc:
+                issues.append(f"response/responses.tex is invalid: {exc}")
+    return tuple(dict.fromkeys(issues))
+
+
+def _available_build_targets(
+    config: ProjectConfig,
+    round_number: int,
+) -> tuple[str, ...]:
+    candidates: tuple[BuildTarget, ...] = (
+        ("clean", "all") if round_number == 0 else BUILD_TARGETS
+    )
+    return tuple(
+        candidate
+        for candidate in candidates
+        if not _buildability_issues(
+            config,
+            round_number,
+            candidate,
+        )
+    )
+
+
+def _preflight_build_target(
+    config: ProjectConfig,
+    round_number: int,
+    target: BuildTarget,
+) -> None:
+    issues = _buildability_issues(config, round_number, target)
+    if not issues:
+        return
+    missing = "\n".join(f"- {issue}" for issue in issues)
+    available = _available_build_targets(config, round_number)
+    available_text = "\n".join(f"- {item}" for item in available) or "- none"
+    raise WorkflowError(
+        f'Round "{revision_directory_name(round_number)}" exists but target '
+        f'"{target}" is not buildable.\nMissing/invalid:\n{missing}\n'
+        f"Available targets:\n{available_text}"
+    )
+
+
+def _remove_stale_output_pdfs(
+    config: ProjectConfig,
+    round_number: int,
+    current_outputs: set[Path],
+) -> None:
+    output = config.output_dir(round_number)
+    for path in output.glob("*.pdf"):
+        if path not in current_outputs and not build_artifact_is_current(
+            config, round_number, path
+        ):
+            path.unlink()
 
 
 def _submission_publication_paths(
@@ -403,20 +555,40 @@ class ManuscriptProject:
         self,
         round: str | int | None = None,
         *,
+        target: BuildTarget | None = None,
         engine: str | None = None,
         keep_temp: bool = False,
     ) -> LifecycleResult:
-        """Compile clean and marked outputs and audit revision completeness."""
-        latest = load_project(self.root)
-        selected = parse_round(round, latest.current_round)
-        config = load_project(self.root, selected)
-        ensure_manuscript_sources(config, selected)
+        """Build one selected round and the minimum dependencies for one target."""
+        telemetry = BuildTelemetry()
+        with telemetry.measure("project_load"):
+            latest = load_project(self.root)
+        with telemetry.measure("round_resolution"):
+            selected = parse_round(round, latest.current_round)
+            config = load_project(self.root, selected)
+            selected_target = _selected_build_target(selected, target)
+        with telemetry.measure("preflight"):
+            if selected == latest.current_round:
+                ensure_manuscript_sources(config, selected)
+            _preflight_build_target(config, selected, selected_target)
+            if selected_target in {"marked", "response"}:
+                ensure_cjk_environment(config, engine, telemetry)
+            if selected > 0 and selected_target != "clean":
+                review_ids_from_sources(config, selected)
+
         audit: ReviewAuditResult | None = None
-        response_output = config.output_dir(selected) / "response_letter.pdf"
-        if selected > 0:
-            review_ids_from_sources(config, selected)
         with temporary_run(self.root, keep_temp) as run_dir:
             publication_paths = _output_pdf_paths(config, selected)
+            output = config.output_dir(selected)
+            publication_paths = (
+                *publication_paths,
+                *(
+                    path
+                    for path in output.iterdir()
+                    if (path.is_file() or path.is_symlink())
+                    and path not in publication_paths
+                ),
+            )
             if selected == latest.current_round:
                 publication_paths = (
                     *publication_paths,
@@ -424,60 +596,152 @@ class ManuscriptProject:
                 )
             snapshot = _snapshot_files(publication_paths, run_dir / "output_rollback")
             try:
-                clean = build_clean_manuscript(config, selected, run_dir, engine)
-                artifacts = [Artifact("Clean manuscript", clean)]
-                if selected > 0:
-                    marked = build_marked_manuscript(config, selected, run_dir, engine)
-                    artifacts.append(Artifact("Marked manuscript", marked.pdf))
-                    validate_revision_layout(
-                        (run_dir / "clean_build" / "manuscript.compiler.log").read_text(
-                            encoding="utf-8"
-                        ),
-                        (
-                            run_dir / "marked_build" / "manuscript_marked.compiler.log"
-                        ).read_text(encoding="utf-8"),
-                        run_dir / "revision_layout_qa.txt",
+                artifacts: list[Artifact] = []
+                clean: Path | None = None
+                marked = None
+                bibliography_aux: Path | None = None
+                build_clean = selected_target in {"clean", "all"}
+                build_marked = selected > 0 and selected_target in {
+                    "marked",
+                    "response",
+                    "all",
+                }
+                build_response_target = selected > 0 and selected_target in {
+                    "response",
+                    "all",
+                }
+
+                if build_clean:
+                    clean = build_clean_manuscript(
+                        config,
+                        selected,
+                        run_dir,
+                        engine,
+                        telemetry,
                     )
-                    ensure_response_source(config, selected)
-                    audit = audit_reviews(config, selected, record_index=True)
+                    label = "Manuscript" if selected == 0 else "Clean manuscript"
+                    artifacts.append(Artifact(label, clean))
+                    bibliography_aux = run_dir / "clean_build" / "manuscript.aux"
+
+                if build_marked:
+                    current_bibliography = None
+                    current_bbl = run_dir / "clean_build" / "manuscript.bbl"
+                    if current_bbl.is_file():
+                        current_bibliography = current_bbl.read_text(encoding="utf-8")
+                    marked_output = (
+                        config.output_dir(selected) / "manuscript_marked.pdf"
+                    )
+                    reuse_marked = (
+                        marked_output
+                        if selected_target == "response"
+                        and build_artifact_is_current(config, selected, marked_output)
+                        else None
+                    )
+                    marked = build_marked_manuscript(
+                        config,
+                        selected,
+                        run_dir,
+                        engine,
+                        validate_clean=selected_target == "all",
+                        include_locations=build_response_target,
+                        reuse_marked_pdf=reuse_marked,
+                        current_bibliography_text=current_bibliography,
+                        telemetry=telemetry,
+                    )
+                    if reuse_marked is None:
+                        artifacts.append(Artifact("Marked manuscript", marked.pdf))
+                    bibliography_aux = marked.aux_path or bibliography_aux
+                    audit = audit_reviews(
+                        config,
+                        selected,
+                        record_index=selected == latest.current_round,
+                    )
                     audit = _with_bibliography_notices(audit, marked)
-                    malformed = any(
-                        issue.code in {"COMMENTS_INVALID", "RESPONSES_INVALID"}
-                        for issue in audit.issues
-                    )
-                    if audit.total and not malformed:
-                        response = build_response(
-                            config,
-                            selected,
-                            marked.locations,
-                            run_dir,
-                            engine,
+
+                if selected_target == "all" and selected > 0:
+                    with telemetry.measure("validation"):
+                        validate_revision_layout(
+                            (
+                                run_dir / "clean_build" / "manuscript.compiler.log"
+                            ).read_text(encoding="utf-8"),
+                            (
+                                run_dir
+                                / "marked_build"
+                                / "manuscript_marked.compiler.log"
+                            ).read_text(encoding="utf-8"),
+                            run_dir / "revision_layout_qa.txt",
                         )
-                        artifacts.append(Artifact("Response letter", response))
-                    elif response_output.exists():
-                        response_output.unlink()
-                if selected == latest.current_round:
+
+                if build_response_target:
+                    if marked is None:
+                        raise WorkflowError("Response target requires marked layout.")
+                    response = build_response(
+                        config,
+                        selected,
+                        marked.locations,
+                        run_dir,
+                        engine,
+                        telemetry,
+                    )
+                    artifacts.append(Artifact("Response letter", response))
+
+                if selected == latest.current_round and bibliography_aux is not None:
                     snapshot_bibliography(
                         config,
                         selected,
-                        run_dir / "clean_build" / "manuscript.aux",
+                        bibliography_aux,
                     )
-                write_build_manifest(
+                _remove_stale_output_pdfs(
                     config,
                     selected,
-                    "build",
-                    tuple(item.path for item in artifacts),
-                    engine,
-                    run_dir,
+                    {item.path for item in artifacts},
                 )
+                _enforce_output_purity(config, selected)
+                with telemetry.measure("validation"):
+                    write_build_manifest(
+                        config,
+                        selected,
+                        "build",
+                        tuple(item.path for item in artifacts),
+                        engine,
+                        run_dir,
+                        (selected_target,),
+                    )
+                    if marked is not None and marked.audit_path is not None:
+                        highlight_audit = json.loads(
+                            marked.audit_path.read_text(encoding="utf-8")
+                        )
+                        response_audit_path = run_dir / "response_audit.json"
+                        if response_audit_path.is_file():
+                            highlight_audit.update(
+                                json.loads(
+                                    response_audit_path.read_text(encoding="utf-8")
+                                )
+                            )
+                        existing_pdfs = tuple(output.glob("*.pdf"))
+                        highlight_audit["artifact_freshness"] = all(
+                            build_artifact_is_current(config, selected, path)
+                            for path in existing_pdfs
+                        )
+                        highlight_audit["output_purity"] = all(
+                            path.name in OUTPUT_PDF_NAMES for path in output.iterdir()
+                        )
+                        marked.audit_path.write_text(
+                            json.dumps(highlight_audit, ensure_ascii=False, indent=2)
+                            + "\n",
+                            encoding="utf-8",
+                        )
+                telemetry.write(run_dir / "build_timing.json")
             except Exception:
                 _restore_files(snapshot)
                 raise
+            timing = telemetry.report()
         return LifecycleResult(
             "build",
             revision_directory_name(selected),
             tuple(artifacts),
             audit,
+            timing,
         )
 
     def start_revision(

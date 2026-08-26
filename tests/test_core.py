@@ -21,13 +21,11 @@ from sci_manuscript.compile import (
     validate_revision_layout,
 )
 from sci_manuscript.diff import (
-    _align_changed_display_equations,
     _bibliography_change_states,
     _current_bibliography_with_reference_provenance,
     _flatten_tex,
-    _lift_review_spans_from_moving_arguments,
+    _remove_revision_output_diagnostics,
     _replace_bibliography,
-    _separate_inline_math_from_diff_markup,
 )
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
@@ -37,9 +35,13 @@ from sci_manuscript.metadata import (
     render_author_metadata,
     render_publisher_metadata,
 )
-from sci_manuscript.provenance import extract_provenance
-from sci_manuscript.review import parse_response_entries, parse_reviews
+from sci_manuscript.review import (
+    parse_response_entries,
+    parse_response_source,
+    parse_reviews,
+)
 from sci_manuscript.review_ids import validate_review_id_list
+from sci_manuscript.revision_render import CitationProvenance
 from sci_manuscript.submission import ensure_submission_workspace
 from sci_manuscript.workspace import (
     ProjectConfig,
@@ -54,95 +56,6 @@ from sci_manuscript.workspace import (
     start_revision,
     temporary_run,
 )
-
-
-def test_dissimilar_labelled_equations_are_separated_before_latexdiff() -> None:
-    parent = r"""Before.
-\begin{equation}
-\frac{a+b}{c+d}=e\label{eq:changed}
-\end{equation}
-After.
-"""
-    current = r"""Before.
-\begin{equation}
-\sum_{i=1}^{n} x_i^2 = \mathcal{L}(\theta)\label{eq:changed}
-\end{equation}
-After.
-"""
-
-    old_aligned, new_aligned = _align_changed_display_equations(parent, current)
-
-    deleted = r"\SCIDeletedEquation{"
-    assert old_aligned.count(deleted) == 1
-    assert new_aligned.count(deleted) == 1
-    assert r"\frac{a+b}{c+d}=e" in old_aligned
-    assert r"\frac{a+b}{c+d}=e" in new_aligned
-    assert r"\sum_{i=1}^{n} x_i^2" in old_aligned
-    assert r"\sum_{i=1}^{n} x_i^2" in new_aligned
-    assert old_aligned.count(r"\SCIAddedEquation{") == 1
-    assert new_aligned.count(r"\SCIAddedEquation{") == 1
-    assert old_aligned == new_aligned
-
-
-def test_whole_equation_replacement_preserves_reviewer_provenance() -> None:
-    parent = r"\begin{equation}a=b\label{eq:review}\end{equation}"
-    current = (
-        r"\review{1-1}{\begin{equation}"
-        r"\sum_{i=1}^{n} x_i^2=0\label{eq:review}\end{equation}}"
-    )
-
-    old_aligned, new_aligned = _align_changed_display_equations(parent, current)
-
-    assert r"\SCIReviewerAddedEquation{" in old_aligned
-    assert r"\SCIReviewerAddedEquation{" in new_aligned
-
-
-def test_small_labelled_equation_change_is_still_atomic() -> None:
-    parent = r"\begin{equation}x+y=z\label{eq:fine}\end{equation}"
-    current = r"\begin{equation}x+y+w=z\label{eq:fine}\end{equation}"
-
-    old_aligned, new_aligned = _align_changed_display_equations(parent, current)
-
-    assert old_aligned == new_aligned
-    assert r"\SCIDeletedEquation{x+y=z}" in old_aligned
-    assert r"\SCIAddedEquation{x+y+w=z}{eq:fine}" in old_aligned
-
-
-def test_changed_align_environment_is_replaced_as_one_formula() -> None:
-    parent = (
-        r"\begin{align}"
-        "\n"
-        r"x &= y \\ y &= z\label{eq:aligned}"
-        "\n"
-        r"\end{align}"
-    )
-    current = (
-        r"\review{2-2}{\begin{align}"
-        "\n"
-        r"x &= y+w \\ y &= z\label{eq:aligned}"
-        "\n"
-        r"\end{align}}"
-    )
-
-    old_aligned, new_aligned = _align_changed_display_equations(parent, current)
-
-    assert old_aligned == extract_provenance(new_aligned).text
-    assert r"\SCIDeletedDisplay{align*}" in old_aligned
-    assert r"\SCIReviewerAddedDisplay{align}" in old_aligned
-    assert r"\SCIReviewSpan{2-2}{" in old_aligned
-    assert r"\DIFaddReview{+w}" not in old_aligned
-
-
-def test_review_location_span_is_lifted_outside_section_title() -> None:
-    source = (
-        r"\subsection{\SCIReviewSpan{1-1,2-2}"
-        r"{\DIFaddReview{Revised title}}}"
-    )
-
-    assert _lift_review_spans_from_moving_arguments(source) == (
-        r"\SCIReviewSpan{1-1,2-2}{"
-        r"\subsection{\DIFaddReview{Revised title}}}"
-    )
 
 
 def test_bibliography_comparison_uses_keys_and_ignores_numbering() -> None:
@@ -215,8 +128,6 @@ def test_current_bibliography_provenance_wraps_only_real_current_changes(
 
     responses = tmp_path / "responses.tex"
     responses.write_text(
-        r"\ResponseLetter{Dear Editor.}"
-        "\n"
         r"\ReviewReference{1-1}{stable-key}"
         "\n",
         encoding="utf-8",
@@ -228,7 +139,7 @@ def test_current_bibliography_provenance_wraps_only_real_current_changes(
     if old_content not in new_content:
         assert old_content not in visible
     assert new_content in visible
-    assert r"\SCIReviewSpan{1-1}{" in visible
+    assert r"\SCIReviewReferenceSpan{1-1}{" in visible
     assert notices == ()
 
 
@@ -253,8 +164,6 @@ def test_review_reference_deleted_and_unchanged_keys_have_no_fake_location(
     )
     responses = tmp_path / "responses.tex"
     responses.write_text(
-        r"\ResponseLetter{Dear Editor.}"
-        "\n"
         r"\ReviewReference{1-1}{stable,deleted}"
         "\n",
         encoding="utf-8",
@@ -284,8 +193,6 @@ def test_review_reference_unknown_key_reports_id_key_and_absolute_path(
     )
     responses = tmp_path / "responses.tex"
     responses.write_text(
-        r"\ResponseLetter{Dear Editor.}"
-        "\n"
         r"\ReviewReference{2-5}{unknownKey}"
         "\n",
         encoding="utf-8",
@@ -300,6 +207,146 @@ def test_review_reference_unknown_key_reports_id_key_and_absolute_path(
     assert "2-5" in message
     assert "unknownKey" in message
     assert str(responses.resolve()) in message
+
+
+def _single_bibliography(key: str, content: str) -> str:
+    return (
+        r"\begin{thebibliography}{1}"
+        "\n"
+        f"\\bibitem{{{key}}} {content}\n"
+        r"\end{thebibliography}"
+    )
+
+
+def test_new_author_citation_and_bibliography_entry_are_both_author_owned(
+    tmp_path: Path,
+) -> None:
+    parent = _single_bibliography("stable", "Stable.")
+    current = _single_bibliography("newKey", "New entry.")
+    responses = tmp_path / "responses.tex"
+    responses.write_text("", encoding="utf-8")
+
+    visible, _notices = _current_bibliography_with_reference_provenance(
+        parent,
+        current,
+        responses,
+        {"newKey": CitationProvenance(None, (12,))},
+    )
+
+    assert r"\bibitem{newKey} New entry." in visible
+    assert r"\DIFadd" not in visible
+    assert r"\SCIReviewReferenceSpan" not in visible
+
+
+def test_new_reviewer_citation_and_bibliography_entry_are_both_reviewer_owned(
+    tmp_path: Path,
+) -> None:
+    parent = _single_bibliography("stable", "Stable.")
+    current = _single_bibliography("newKey", "New entry.")
+    responses = tmp_path / "responses.tex"
+    responses.write_text("", encoding="utf-8")
+
+    visible, _notices = _current_bibliography_with_reference_provenance(
+        parent,
+        current,
+        responses,
+        {"newKey": CitationProvenance(("1-1",), (12,))},
+    )
+
+    assert r"\SCIReviewReferenceSpan{1-1}{ New entry." in visible
+    assert r"\DIFaddReview" not in visible
+
+
+def test_review_reference_agreement_and_reviewer_union_are_allowed(
+    tmp_path: Path,
+) -> None:
+    parent = _single_bibliography("stable", "Stable.")
+    current = _single_bibliography("newKey", "New entry.")
+    responses = tmp_path / "responses.tex"
+    responses.write_text(
+        r"\ReviewReference{1-1}{newKey}"
+        "\n"
+        r"\ReviewReference{2-2}{newKey}",
+        encoding="utf-8",
+    )
+
+    visible, _notices = _current_bibliography_with_reference_provenance(
+        parent,
+        current,
+        responses,
+        {"newKey": CitationProvenance(("1-1",), (12,))},
+    )
+
+    assert r"\SCIReviewReferenceSpan{1-1,2-2}" in visible
+
+
+def test_author_citation_and_review_reference_raise_provenance_conflict(
+    tmp_path: Path,
+) -> None:
+    parent = _single_bibliography("stable", "Stable.")
+    current = _single_bibliography("newKey", "New entry.")
+    responses = tmp_path / "responses.tex"
+    responses.write_text(
+        r"\ReviewReference{2-5}{newKey}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkflowError, match="REFERENCE_PROVENANCE_CONFLICT") as error:
+        _current_bibliography_with_reference_provenance(
+            parent,
+            current,
+            responses,
+            {"newKey": CitationProvenance(None, (172,))},
+        )
+
+    message = str(error.value)
+    assert "newKey" in message
+    assert "AUTHOR" in message and "REVIEWER" in message
+    assert "172" in message and str(responses.resolve()) in message
+
+
+def test_revision_output_cleanup_preserves_exact_three_pdfs(tmp_path: Path) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    expected = {
+        "manuscript_clean.pdf",
+        "manuscript_marked.pdf",
+        "response_letter.pdf",
+    }
+    for name in (*expected, "diff_audit.json", "highlight_audit.json"):
+        (output / name).write_bytes(b"artifact")
+
+    _remove_revision_output_diagnostics(output)
+
+    assert {path.name for path in output.iterdir()} == expected
+
+
+def test_highlight_audit_remains_in_run_workspace(tmp_path: Path) -> None:
+    output = tmp_path / "revision_01" / "output"
+    run = tmp_path / "tmp" / "run_123"
+    output.mkdir(parents=True)
+    run.mkdir(parents=True)
+    audit = run / "highlight_audit.json"
+    audit.write_text("{}\n", encoding="utf-8")
+
+    _remove_revision_output_diagnostics(output)
+
+    assert audit.is_file()
+    assert not (output / "highlight_audit.json").exists()
+
+
+def test_repeated_output_cleanup_never_republishes_legacy_audit(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    legacy = output / "diff_audit.json"
+    legacy.write_text("{}\n", encoding="utf-8")
+
+    _remove_revision_output_diagnostics(output)
+    _remove_revision_output_diagnostics(output)
+
+    assert not legacy.exists()
 
 
 def _metadata(publisher: str = "elsevier", language: str = "en") -> ManuscriptMetadata:
@@ -601,6 +648,28 @@ def test_revision_provenance_definition_lives_only_in_shared_preamble() -> None:
             assert definition not in text
 
 
+def test_response_automatic_signature_uses_frozen_locale_email_labels() -> None:
+    templates = resources_root() / "correspondence_templates" / "response"
+    chinese = (templates / "response_zh.tex").read_text(encoding="utf-8")
+    english = (templates / "response_en.tex").read_text(encoding="utf-8")
+
+    assert r"\CorrespondenceAuthorsZh" in chinese
+    assert r"\CorrespondenceAuthorsEn" in english
+    assert r"\CorrespondenceAuthorsEn" not in chinese
+    assert r"\CorrespondenceAuthorsZh" not in english
+
+
+def test_response_templates_require_times_new_roman_for_latin_text() -> None:
+    templates = resources_root() / "correspondence_templates" / "response"
+    chinese = (templates / "response_zh.tex").read_text(encoding="utf-8")
+    english = (templates / "response_en.tex").read_text(encoding="utf-8")
+
+    for template in (chinese, english):
+        assert r"\usepackage{fontspec}" in template
+        assert r"\setmainfont{Times New Roman}" in template
+        assert r"\usepackage{lmodern}" not in template
+
+
 def test_chinese_build_refuses_a_failed_real_preflight(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -608,7 +677,9 @@ def test_chinese_build_refuses_a_failed_real_preflight(
     config = _workspace(tmp_path, publisher="chinese")
     monkeypatch.setattr(
         "sci_manuscript.compile.probe_cjk_environment",
-        lambda _engine: CjkProbeResult(False, "anonymous CJK probe failure"),
+        lambda _engine, _telemetry=None: CjkProbeResult(
+            False, "anonymous CJK probe failure"
+        ),
     )
     with pytest.raises(WorkflowError, match="Chinese environment is blocked"):
         ManuscriptProject(config.project).build(engine="tectonic")
@@ -949,7 +1020,6 @@ def test_response_parser_supports_nested_latex(
     source = tmp_path / "responses.tex"
     source.write_text(
         "% editable response content\n"
-        "\\ResponseLetter{Dear Editor.}\n"
         "\\Response{E-1}{First {nested \\textbf{response}}.}\n"
         "\\Response{1-1}{Second response.}\n",
         encoding="utf-8",
@@ -980,7 +1050,7 @@ def test_responses_parser_rejects_invalid_contracts(
         parse_response_entries(source)
 
 
-def test_response_build_uses_current_package_template_without_editing_content(
+def test_response_build_uses_package_template_without_mutating_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -994,18 +1064,17 @@ def test_response_build_uses_current_package_template_without_editing_content(
     config = _revision(_workspace(tmp_path), reviews)
     responses = config.round_dir(1) / "response" / "responses.tex"
     responses.write_text(
-        "\\ResponseLetter{Dear Editor.}\n\\Response{E-1}{Stable user response.}\n",
+        "\\Response{E-1}{Stable user response.}\n",
         encoding="utf-8",
     )
-    original = responses.read_bytes()
+    original_source = responses.read_bytes()
     package_root = tmp_path / "upgraded_package"
     template_dir = package_root / "correspondence_templates" / "response"
     template_dir.mkdir(parents=True)
     (template_dir / "response_en.tex").write_text(
         "\\documentclass{article}\n"
         "\\begin{document}\n"
-        "UPGRADED TEMPLATE\n"
-        "%%RESPONSE_LETTER%%\n"
+        "UPGRADED FIXED OPENING\n"
         "%%RESPONSE_BODY%%\n"
         "\\end{document}\n",
         encoding="utf-8",
@@ -1018,7 +1087,7 @@ def test_response_build_uses_current_package_template_without_editing_content(
         _engine: str | None = None,
     ) -> CompileResult:
         assembled = source.read_text(encoding="utf-8")
-        assert "UPGRADED TEMPLATE" in assembled
+        assert "UPGRADED FIXED OPENING" in assembled
         assert "Stable user response." in assembled
         build_dir.mkdir(parents=True)
         pdf = build_dir / "response_letter.pdf"
@@ -1030,7 +1099,10 @@ def test_response_build_uses_current_package_template_without_editing_content(
     run_dir = tmp_path / "run"
     result = response_module.build_response(config, 1, {}, run_dir)
     assert result.is_file()
-    assert responses.read_bytes() == original
+    parsed = parse_response_source(responses)
+    assert parsed.responses == {"E-1": "Stable user response."}
+    assert responses.read_bytes() == original_source
+    assert tuple(config.archive_root().rglob("responses.tex")) == ()
     assert not (responses.parent / "response_letter.tex").exists()
     assert (run_dir / "response_source" / "response_letter.tex").is_file()
 
@@ -1050,7 +1122,7 @@ def test_response_build_accepts_empty_response_for_response_only_comment(
     config = _revision(_workspace(tmp_path), reviews)
     responses = config.round_dir(1) / "response" / "responses.tex"
     responses.write_text(
-        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{}\n",
+        "\\Response{1-1}{}\n",
         encoding="utf-8",
     )
 
@@ -1072,9 +1144,7 @@ def test_response_build_accepts_empty_response_for_response_only_comment(
     result = response_module.build_response(config, 1, {}, tmp_path / "run")
 
     assert result.is_file()
-    assert responses.read_text(encoding="utf-8") == (
-        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{}\n"
-    )
+    assert responses.read_text(encoding="utf-8") == "\\Response{1-1}{}\n"
 
 
 def test_response_build_omits_unavailable_marked_location(
@@ -1090,7 +1160,7 @@ def test_response_build_omits_unavailable_marked_location(
     config = _revision(_workspace(tmp_path), reviews)
     response_source = config.round_dir(1) / "response" / "responses.tex"
     response_source.write_text(
-        "\\ResponseLetter{Dear Editor.}\n\\Response{1-1}{Completed response.}\n",
+        "\\Response{1-1}{Completed response.}\n",
         encoding="utf-8",
     )
     section = config.round_dir(1) / "sections" / "01_introduction.tex"
@@ -1149,71 +1219,6 @@ def test_submission_requires_signer_for_multiple_corresponding_authors(
         ManuscriptProject(config.project).prepare_submission()
 
 
-def test_multi_id_review_location_registry(tmp_path: Path) -> None:
-    from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
-
-    (tmp_path / "manuscript_marked.reviewloc").write_text(
-        f"{REVIEW_REGISTRY_HEADER}\n1-1,2-3|1\nE-1|2\n", encoding="utf-8"
-    )
-    (tmp_path / "manuscript_marked.aux").write_text(
-        "\\newlabel{review:1:start}{{7}{1}}\n"
-        "\\newlabel{review:1:end}{{8}{1}}\n"
-        "\\newlabel{review:2:start}{{12}{1}}\n"
-        "\\newlabel{review:2:end}{{12}{1}}\n",
-        encoding="utf-8",
-    )
-    assert calculate_locations(tmp_path) == {
-        "1-1": "Lines 7--8",
-        "2-3": "Lines 7--8",
-        "E-1": "Line 12",
-    }
-
-
-@pytest.mark.parametrize(
-    ("language", "expected"),
-    (
-        ("en", "Lines 7--8, 12, and 19--21"),
-        ("zh", "第 7--8 行、第 12 行和第 19--21 行"),
-    ),
-)
-def test_review_locations_are_fully_localized(
-    tmp_path: Path,
-    language: str,
-    expected: str,
-) -> None:
-    from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
-
-    (tmp_path / "manuscript_marked.reviewloc").write_text(
-        f"{REVIEW_REGISTRY_HEADER}\n1-1|1\n1-1|2\n1-1|3\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "manuscript_marked.aux").write_text(
-        "\\newlabel{review:1:start}{{7}{1}}\n"
-        "\\newlabel{review:1:end}{{8}{1}}\n"
-        "\\newlabel{review:2:start}{{12}{1}}\n"
-        "\\newlabel{review:2:end}{{12}{1}}\n"
-        "\\newlabel{review:3:start}{{19}{1}}\n"
-        "\\newlabel{review:3:end}{{21}{1}}\n",
-        encoding="utf-8",
-    )
-    location = calculate_locations(tmp_path, language=language)["1-1"]
-    assert location == expected
-    if language == "zh":
-        assert all(token not in location for token in ("Line", "Lines", "and"))
-    else:
-        assert all(token not in location for token in ("第", "行", "修改位置"))
-
-
-def test_empty_versioned_review_location_registry_is_valid(tmp_path: Path) -> None:
-    from sci_manuscript.locations import REVIEW_REGISTRY_HEADER, calculate_locations
-
-    (tmp_path / "manuscript_marked.reviewloc").write_text(
-        f"{REVIEW_REGISTRY_HEADER}\n", encoding="utf-8"
-    )
-    (tmp_path / "manuscript_marked.aux").write_text("", encoding="utf-8")
-    assert calculate_locations(tmp_path) == {}
-
-
 def test_revision_layout_qa_rejects_marked_specific_overflow(
     tmp_path: Path,
 ) -> None:
@@ -1243,53 +1248,6 @@ def test_revision_layout_qa_accepts_only_clean_baseline_overflow(
     report = tmp_path / "revision_layout_qa.txt"
     assert validate_revision_layout(clean, marked, report) == report
     assert "Result: PASS" in report.read_text(encoding="utf-8")
-
-
-def test_diff_markup_separates_inline_math_from_line_decoration() -> None:
-    source = (
-        r"\DIFadd{中文 $A \longrightarrow B$ 文本} "
-        r"\DIFdel{old \(x+y\) text}"
-    )
-    rewritten = _separate_inline_math_from_diff_markup(source)
-    assert rewritten == (
-        r"\DIFadd{中文 }$\DIFaddMath{A \longrightarrow B}$\DIFadd{ 文本} "
-        r"\DIFdel{old }\(\DIFdelMath{x+y}\)\DIFdel{ text}"
-    )
-
-
-@pytest.mark.parametrize(
-    ("macro", "source", "expected"),
-    (
-        (
-            r"\DIFdel",
-            r"\DIFdel{old $\mathcal{O}_{\mathrm{P}}$ text}",
-            r"\DIFdel{old }$\DIFdelMath{\mathcal{O}_{\mathrm{P}}}$"
-            r"\DIFdel{ text}",
-        ),
-        (
-            r"\DIFadd",
-            r"\DIFadd{new $\mathcal{O}_{\mathrm{M}}^{2}$ text}",
-            r"\DIFadd{new }$\DIFaddMath{\mathcal{O}_{\mathrm{M}}^{2}}$"
-            r"\DIFadd{ text}",
-        ),
-        (
-            r"\DIFaddReview",
-            r"\DIFaddReview{new \(\mathcal{O}_{\mathrm{D},j}\) text}",
-            r"\DIFaddReview{new }\(\DIFaddReviewMath{\mathcal{O}_{\mathrm{D},j}}\)"
-            r"\DIFaddReview{ text}",
-        ),
-    ),
-)
-def test_math_diff_macros_never_own_inline_math_delimiters(
-    macro: str,
-    source: str,
-    expected: str,
-) -> None:
-    rewritten = _separate_inline_math_from_diff_markup(source)
-    assert rewritten == expected
-    for math_macro in (r"\DIFdelMath", r"\DIFaddMath", r"\DIFaddReviewMath"):
-        assert f"{math_macro}{{$" not in rewritten
-        assert f"{math_macro}{{\\(" not in rewritten
 
 
 @pytest.mark.integration

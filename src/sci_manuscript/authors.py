@@ -30,6 +30,7 @@ class AuthorRecord:
     affiliations: tuple[str, ...]
     bio_zh: str = ""
     bio_en: str = ""
+    correspondence_address: str = ""
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class AuthorLibrary:
 
     authors: dict[str, AuthorRecord]
     affiliations: dict[str, AffiliationRecord]
+    source: Path
 
 
 @dataclass(frozen=True)
@@ -223,6 +225,7 @@ def load_author_library(path: Path) -> AuthorLibrary:
             "affiliations",
             "bio_zh",
             "bio_en",
+            "correspondence_address",
         }
         if unexpected_author:
             raise MetadataError(
@@ -244,17 +247,28 @@ def load_author_library(path: Path) -> AuthorLibrary:
                 + ", ".join(sorted(missing))
             )
         authors[author_id] = AuthorRecord(
-            author_id,
-            _text(record.get("name_zh"), f"authors.{author_id}.name_zh"),
-            _text(record.get("name_en"), f"authors.{author_id}.name_en"),
-            _text(record.get("email"), f"authors.{author_id}.email", optional=True),
-            keys,
-            _text(record.get("bio_zh"), f"authors.{author_id}.bio_zh", optional=True),
-            _text(record.get("bio_en"), f"authors.{author_id}.bio_en", optional=True),
+            author_id=author_id,
+            name_zh=_text(record.get("name_zh"), f"authors.{author_id}.name_zh"),
+            name_en=_text(record.get("name_en"), f"authors.{author_id}.name_en"),
+            email=_text(
+                record.get("email"), f"authors.{author_id}.email", optional=True
+            ),
+            affiliations=keys,
+            bio_zh=_text(
+                record.get("bio_zh"), f"authors.{author_id}.bio_zh", optional=True
+            ),
+            bio_en=_text(
+                record.get("bio_en"), f"authors.{author_id}.bio_en", optional=True
+            ),
+            correspondence_address=_text(
+                record.get("correspondence_address"),
+                f"authors.{author_id}.correspondence_address",
+                optional=True,
+            ),
         )
     if not authors:
         raise MetadataError("authors must not be empty.")
-    return AuthorLibrary(authors, affiliations)
+    return AuthorLibrary(authors, affiliations, path.resolve())
 
 
 def resolve_authors(
@@ -272,16 +286,17 @@ def resolve_authors(
             "Selected author IDs are missing from the active author library: "
             + ", ".join(missing)
         )
-    corresponding = tuple(
-        library.authors[item] for item in metadata.corresponding_authors
-    )
-    missing_emails = [author.author_id for author in corresponding if not author.email]
-    if missing_emails:
-        raise MetadataError(
-            "Corresponding authors require email addresses: "
-            + ", ".join(missing_emails)
-        )
     selected = tuple(library.authors[item] for item in metadata.author_ids)
+    corresponding_ids = set(metadata.corresponding_authors)
+    corresponding = tuple(
+        author for author in selected if author.author_id in corresponding_ids
+    )
+    for author in corresponding:
+        if not author.email:
+            raise MetadataError(
+                f'Missing email for corresponding author "{author.name_en}". '
+                f"Source: author metadata ({library.source}). Missing field: email."
+            )
     used_affiliations = tuple(
         dict.fromkeys(key for author in selected for key in author.affiliations)
     )

@@ -11,7 +11,8 @@ affiliations:
 
 # Author keys are stable IDs referenced from each round's meta.yaml.
 # Corresponding-author roles are selected in meta.yaml; those records must
-# provide an email address here.
+# provide an email address here. An optional correspondence_address overrides
+# the first-affiliation fallback in response letters.
 authors:
   zhao_guangyao:
     name_en: Guangyao Zhao

@@ -195,8 +195,9 @@ correspondence: {}
         round_number: int,
         run_dir: Path,
         engine: str | None,
+        telemetry: object | None = None,
     ) -> Path:
-        del engine
+        del engine, telemetry
         source = config.round_dir(round_number) / "manuscript.tex"
         assert source.is_file()
         build_dir = run_dir / "clean_build"

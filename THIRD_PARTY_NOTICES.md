@@ -10,7 +10,6 @@ Files:
 
 - `src/sci_manuscript/resources/journal_templates/elsevier/elsarticle.cls`
 - `src/sci_manuscript/resources/journal_templates/elsevier/elsarticle-num.bst`
-- `src/sci_manuscript/resources/journal_templates/elsevier/template.tex`
 
 The class and bibliography style retain Elsevier copyright notices and the
 LaTeX Project Public License terms embedded in the upstream files. Provenance
@@ -22,7 +21,6 @@ Files:
 
 - `src/sci_manuscript/resources/journal_templates/nature/sn-jnl.cls`
 - `src/sci_manuscript/resources/journal_templates/nature/sn-nature.bst`
-- `src/sci_manuscript/resources/journal_templates/nature/template.tex`
 
 The class and bibliography style retain their upstream LaTeX Project Public
 License notices. Provenance and source links are recorded in the resource
@@ -34,7 +32,6 @@ Files:
 
 - `src/sci_manuscript/resources/journal_templates/acs/achemso.cls`
 - `src/sci_manuscript/resources/journal_templates/acs/achemso.dtx`
-- `src/sci_manuscript/resources/journal_templates/acs/template.tex`
 
 These files are distributed under the LaTeX Project Public License 1.3c or
 later. The bundled `src/sci_manuscript/resources/journal_templates/acs/LICENSE.md` preserves the

@@ -6,6 +6,7 @@ import contextlib
 import datetime as dt
 import hashlib
 import importlib.metadata
+import json
 import os
 import platform
 import re
@@ -52,6 +53,17 @@ GENERATED_SUBMISSION_PATHS = (
 )
 REVIEW_COMPLETENESS_LINE = re.compile(
     rb"(?m)^- Review completeness: \*\*(?:COMPLETE|INCOMPLETE)\*\*\.\r?\n?"
+)
+LEGACY_REVISION_COLORS = {
+    "RevisionAddedColor": r"\definecolor{RevisionAddedColor}{RGB}{0,92,153}",
+    "RevisionReviewColor": r"\definecolor{RevisionReviewColor}{RGB}{220,45,45}",
+}
+LEGACY_DELETION_COMMANDS = (
+    "RevisionDeletedColor",
+    "RevisionDeletionThickness",
+    "RevisionDeletedStrikeout",
+    "RevisionDeletedBackground",
+    "RevisionDeletedFont",
 )
 
 
@@ -142,6 +154,118 @@ class ProjectConfig:
         return self.project / "00_archive"
 
 
+def _remove_tex_command_lines(text: str, command_name: str) -> str:
+    """Remove one obsolete top-level command definition without parsing TeX."""
+    start_pattern = re.compile(
+        rf"(?m)^[ \t]*\\(?:definecolor|newcommand|renewcommand|providecommand)"
+        rf"\{{\\?{re.escape(command_name)}\}}"
+    )
+    while (match := start_pattern.search(text)) is not None:
+        cursor = match.start()
+        brace_depth = 0
+        saw_brace = False
+        end = match.end()
+        while end < len(text):
+            character = text[end]
+            escaped = end > 0 and text[end - 1] == "\\"
+            if not escaped and character == "{":
+                brace_depth += 1
+                saw_brace = True
+            elif not escaped and character == "}":
+                brace_depth -= 1
+            end += 1
+            if character == "\n" and saw_brace and brace_depth <= 0:
+                break
+        text = text[:cursor] + text[end:]
+    return text
+
+
+def migrate_revision_style_file(style: Path, archive_root: Path) -> Path | None:
+    """Migrate known legacy semantic colors while preserving unrelated edits."""
+    try:
+        original = style.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise WorkflowError(f"Cannot read revision style: {style}") from exc
+    legacy_tokens = (*LEGACY_REVISION_COLORS, *LEGACY_DELETION_COMMANDS)
+    if not any(token in original for token in legacy_tokens):
+        return None
+
+    migrated = original
+    for name, stock_definition in LEGACY_REVISION_COLORS.items():
+        if name not in migrated:
+            continue
+        if migrated.count(stock_definition) != 1:
+            raise WorkflowError(
+                "REVISION_STYLE_MIGRATION_UNSUPPORTED: "
+                f"{name} is customized in {style}. Remove the legacy semantic "
+                "color override or migrate it manually to the package-owned "
+                "RubineRed/ForestGreen/SciLinkBlue RGB(0,0,255) contract."
+            )
+        migrated = migrated.replace(stock_definition, "", 1)
+    for name in LEGACY_DELETION_COMMANDS:
+        migrated = _remove_tex_command_lines(migrated, name)
+
+    migrated = (
+        migrated.replace(
+            "%   ordinary latexdiff addition = blue text",
+            "%   ordinary author addition    = ForestGreen",
+        )
+        .replace(
+            "%   reviewer-linked addition    = red text",
+            "%   reviewer-linked addition    = RubineRed",
+        )
+        .replace(
+            "%   author ordinary addition    = blue text",
+            "%   author ordinary addition    = ForestGreen",
+        )
+    )
+    migrated = (
+        migrated.replace("%   deletion                    = light-gray strikeout\n", "")
+        .replace("% Deleted text\n", "")
+        .replace("% Deleted text color.\n", "")
+    )
+    if any(token in migrated for token in legacy_tokens):
+        remaining = ", ".join(token for token in legacy_tokens if token in migrated)
+        raise WorkflowError(
+            "REVISION_STYLE_MIGRATION_UNSUPPORTED: legacy semantic commands are "
+            f"still consumed by project customizations in {style}: {remaining}."
+        )
+    required_hooks = (
+        r"\RevisionAddedBackground",
+        r"\RevisionReviewBackground",
+        r"\RevisionAddedFont",
+        r"\RevisionReviewFont",
+    )
+    missing = [hook for hook in required_hooks if hook not in migrated]
+    if missing:
+        raise WorkflowError(
+            "REVISION_STYLE_MIGRATION_UNSUPPORTED: required presentation hooks "
+            f"are missing from {style}: {', '.join(missing)}."
+        )
+
+    source_digest = hashlib.sha256(original.encode("utf-8")).hexdigest()[:12]
+    archive = (
+        archive_root / f"resource_migration_{source_digest}" / "references" / style.name
+    )
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    if archive.is_file():
+        if archive.read_text(encoding="utf-8") != original:
+            raise WorkflowError(
+                "REVISION_STYLE_MIGRATION_ARCHIVE_CONFLICT: deterministic archive "
+                f"does not match the source resource: {archive}"
+            )
+    else:
+        shutil.copy2(style, archive)
+    temporary = style.with_suffix(style.suffix + ".new")
+    try:
+        temporary.write_text(migrated, encoding="utf-8")
+        os.replace(temporary, style)
+    finally:
+        if temporary.is_file():
+            temporary.unlink()
+    return archive
+
+
 def normalize_project(path: str | Path, *, initialize: bool = False) -> Path:
     """Resolve a project argument to its canonical ``manuscript/`` directory."""
     selected = Path(path).expanduser().resolve()
@@ -213,6 +337,11 @@ def _round_numbers(project: Path) -> tuple[int, ...]:
     return (0, *revisions)
 
 
+def available_rounds(path: str | Path) -> tuple[int, ...]:
+    """Return every existing round in deterministic lifecycle order."""
+    return _round_numbers(normalize_project(path))
+
+
 def is_initialized(path: str | Path) -> bool:
     """Return whether a project contains the canonical manuscript workspace."""
     project = normalize_project(path)
@@ -264,7 +393,13 @@ def load_project(
     numbers = _round_numbers(project)
     selected = numbers[-1] if round_number is None else round_number
     if selected not in numbers:
-        raise WorkflowError(f"Round {round_name(selected)} does not exist.")
+        available = "\n".join(
+            f"- {revision_directory_name(number)}" for number in numbers
+        )
+        raise WorkflowError(
+            f'Round "{revision_directory_name(selected)}" does not exist.\n'
+            f"Available rounds:\n{available}"
+        )
     for number in numbers:
         version = project / revision_directory_name(number)
         _validate_no_symlinks(version)
@@ -578,6 +713,197 @@ def _tool_version(name: str) -> str:
     return "unknown"
 
 
+def _build_input_fingerprints(
+    config: ProjectConfig,
+    round_number: int,
+) -> dict[str, object]:
+    """Return content hashes governing reusable build artifacts."""
+    from .authors import resolve_author_library_path
+    from .templates import publisher_resource
+
+    author_source = resolve_author_library_path()
+    bundled = resources_root() / "authors.yaml"
+    author_kind = (
+        "bundled" if author_source.resolve() == bundled.resolve() else "configured"
+    )
+    version = config.round_dir(round_number)
+    values: dict[str, object] = {
+        "scientific_source_sha256": source_digest(version, scientific_only=True),
+        "protected_user_source_sha256": source_digest(version),
+        "references_bib_sha256": _path_digest(
+            bibliography_source_for_round(config, round_number)
+        ),
+        "effective_authors_source": author_kind,
+        "effective_authors_sha256": _path_digest(author_source),
+        "publisher_resource_sha256": _path_digest(publisher_resource(config)),
+        "manuscript_preamble_sha256": _path_digest(
+            resources_root() / "manuscript_preamble"
+        ),
+        "revision_style_sha256": _path_digest(config.references / "revision_style.tex"),
+    }
+    if round_number > 0:
+        parent = config.round_dir(round_number - 1)
+        values.update(
+            {
+                "parent_scientific_source_sha256": source_digest(
+                    parent, scientific_only=True
+                ),
+                "parent_references_bib_sha256": _path_digest(
+                    bibliography_source_for_round(config, round_number - 1)
+                ),
+            }
+        )
+    return values
+
+
+def _mapping_digest(values: dict[str, object]) -> str:
+    encoded = json.dumps(
+        values, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _response_reference_digest(path: Path) -> str:
+    """Hash only ReviewReference declarations consumed by marked output."""
+    from .review import parse_response_source
+
+    if not path.is_file():
+        return hashlib.sha256(b"").hexdigest()
+    references = parse_response_source(path).references
+    return _mapping_digest(
+        {
+            "references": [
+                {
+                    "review_id": item.review_id,
+                    "citation_keys": list(item.citation_keys),
+                }
+                for item in references
+            ]
+        }
+    )
+
+
+def _artifact_input_fingerprints(
+    config: ProjectConfig,
+    round_number: int,
+    artifact: Path,
+) -> dict[str, object]:
+    """Return the exact dependency contract for one publication artifact."""
+    base = _build_input_fingerprints(config, round_number)
+    version = config.round_dir(round_number)
+    clean_keys = (
+        "scientific_source_sha256",
+        "references_bib_sha256",
+        "effective_authors_source",
+        "effective_authors_sha256",
+        "publisher_resource_sha256",
+        "manuscript_preamble_sha256",
+    )
+    values = {key: base[key] for key in clean_keys}
+    values["round_metadata_sha256"] = _path_digest(version / "meta.yaml")
+    if artifact.name in {"manuscript.pdf", "manuscript_clean.pdf"}:
+        return values
+    if round_number == 0:
+        return base
+    values.update(
+        {
+            "parent_scientific_source_sha256": base["parent_scientific_source_sha256"],
+            "parent_references_bib_sha256": base["parent_references_bib_sha256"],
+            "revision_style_sha256": base["revision_style_sha256"],
+            "review_reference_provenance_sha256": _response_reference_digest(
+                config.response_dir(round_number) / "responses.tex"
+            ),
+        }
+    )
+    if artifact.name == "manuscript_marked.pdf":
+        return values
+    if artifact.name == "response_letter.pdf":
+        response_dir = config.response_dir(round_number)
+        response_template = (
+            resources_root()
+            / "correspondence_templates"
+            / "response"
+            / f"response_{config.language}.tex"
+        )
+        location_inputs = dict(values)
+        values.update(
+            {
+                "responses_source_sha256": _path_digest(response_dir / "responses.tex"),
+                "reviewer_comments_sha256": _path_digest(
+                    response_dir / "reviewer_comments.md"
+                ),
+                "response_template_sha256": _path_digest(response_template),
+                "marked_location_inputs_sha256": _mapping_digest(location_inputs),
+                "reference_location_inputs_sha256": _mapping_digest(
+                    {
+                        "marked": location_inputs,
+                        "review_references": values[
+                            "review_reference_provenance_sha256"
+                        ],
+                    }
+                ),
+            }
+        )
+        return values
+    return base
+
+
+def artifact_input_digest(
+    config: ProjectConfig, round_number: int, artifact: Path
+) -> str:
+    """Return the stable manifest input digest for one artifact."""
+    return _mapping_digest(_artifact_input_fingerprints(config, round_number, artifact))
+
+
+def build_manifest_is_current(config: ProjectConfig, round_number: int) -> bool:
+    """Return whether the recorded build inputs equal current selected inputs."""
+    path = config.build_manifest_path(round_number)
+    if not path.is_file():
+        return False
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return False
+    return bool(
+        isinstance(data, dict)
+        and data.get("schema") == "sci-manuscript-build-manifest/v3"
+        and data.get("inputs") == _build_input_fingerprints(config, round_number)
+    )
+
+
+def build_artifact_is_current(
+    config: ProjectConfig,
+    round_number: int,
+    artifact: Path,
+) -> bool:
+    """Return whether one final artifact matches a current build manifest hash."""
+    if not artifact.is_file():
+        return False
+    try:
+        data = yaml.safe_load(
+            config.build_manifest_path(round_number).read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return False
+    if not isinstance(data, dict) or data.get("schema") != (
+        "sci-manuscript-build-manifest/v3"
+    ):
+        return False
+    try:
+        relative = artifact.resolve().relative_to(config.project.resolve()).as_posix()
+    except ValueError:
+        return False
+    outputs = data.get("outputs", {}) if isinstance(data, dict) else {}
+    artifact_inputs = data.get("artifact_inputs", {})
+    return bool(
+        isinstance(outputs, dict)
+        and isinstance(artifact_inputs, dict)
+        and outputs.get(relative) == _path_digest(artifact)
+        and artifact_inputs.get(relative)
+        == _artifact_input_fingerprints(config, round_number, artifact)
+    )
+
+
 def write_build_manifest(
     config: ProjectConfig,
     round_number: int,
@@ -585,9 +911,9 @@ def write_build_manifest(
     outputs: tuple[Path, ...],
     engine_override: str | None,
     run_dir: Path,
+    targets: tuple[str, ...] = (),
 ) -> Path:
     """Atomically record one successful build without private absolute paths."""
-    from .authors import resolve_author_library_path
     from .compile import _latex_driver, resolve_engine
     from .templates import publisher_resource
 
@@ -599,17 +925,11 @@ def write_build_manifest(
         skill_version = importlib.metadata.version("sci-manuscript-skill")
     except importlib.metadata.PackageNotFoundError:
         skill_version = "unknown"
-    author_source = resolve_author_library_path()
-    bundled = resources_root() / "authors.yaml"
-    author_kind = (
-        "bundled" if author_source.resolve() == bundled.resolve() else "configured"
-    )
     font_paths = sorted(
         {path.resolve() for path in run_dir.rglob("Fandol*.otf") if path.is_file()}
     )
     publisher = publisher_resource(config)
     preamble = resources_root() / "manuscript_preamble"
-    version = config.round_dir(round_number)
     output_files = {
         path.resolve()
         for path in outputs
@@ -626,9 +946,48 @@ def write_build_manifest(
             for relative in submission_outputs
             if (submission / relative).is_file()
         )
+    inputs = _build_input_fingerprints(config, round_number)
+    previous_outputs: dict[str, str] = {}
+    previous_artifact_inputs: dict[str, dict[str, object]] = {}
+    previous_path = config.build_manifest_path(round_number)
+    if previous_path.is_file():
+        try:
+            previous = yaml.safe_load(previous_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, yaml.YAMLError):
+            previous = None
+        if (
+            isinstance(previous, dict)
+            and previous.get("schema") == "sci-manuscript-build-manifest/v3"
+            and isinstance(previous.get("outputs"), dict)
+            and isinstance(previous.get("artifact_inputs"), dict)
+        ):
+            for relative, digest in previous["outputs"].items():
+                candidate = config.project / relative
+                current_inputs = _artifact_input_fingerprints(
+                    config, round_number, candidate
+                )
+                if (
+                    candidate.is_file()
+                    and _path_digest(candidate) == digest
+                    and previous["artifact_inputs"].get(relative) == current_inputs
+                ):
+                    previous_outputs[relative] = digest
+                    previous_artifact_inputs[relative] = current_inputs
+    current_outputs = {
+        path.relative_to(config.project.resolve()).as_posix(): _path_digest(path)
+        for path in sorted(output_files)
+    }
+    current_artifact_inputs = {
+        path.relative_to(config.project.resolve()).as_posix(): (
+            _artifact_input_fingerprints(config, round_number, path)
+        )
+        for path in sorted(output_files)
+    }
+    artifact_inputs = {**previous_artifact_inputs, **current_artifact_inputs}
     manifest = {
-        "schema": "sci-manuscript-build-manifest/v1",
+        "schema": "sci-manuscript-build-manifest/v3",
         "operation": operation,
+        "targets": list(targets),
         "round": round_name(round_number),
         "parent": None if round_number == 0 else round_name(round_number - 1),
         "skill_version": skill_version,
@@ -658,22 +1017,16 @@ def write_build_manifest(
                 config.references / "revision_style.tex"
             ),
         },
-        "inputs": {
-            "scientific_source_sha256": source_digest(version, scientific_only=True),
-            "protected_user_source_sha256": source_digest(version),
-            "references_bib_sha256": _path_digest(
-                bibliography_source_for_round(config, round_number)
-            ),
-            "effective_authors_source": author_kind,
-            "effective_authors_sha256": _path_digest(author_source),
+        "inputs": inputs,
+        "artifact_inputs": artifact_inputs,
+        "artifact_input_digests": {
+            relative: _mapping_digest(values)
+            for relative, values in artifact_inputs.items()
         },
         "fonts": [
             {"name": path.name, "sha256": _path_digest(path)} for path in font_paths
         ],
-        "outputs": {
-            path.relative_to(config.project.resolve()).as_posix(): _path_digest(path)
-            for path in sorted(output_files)
-        },
+        "outputs": {**previous_outputs, **current_outputs},
     }
     target = config.build_manifest_path(round_number)
     target.parent.mkdir(parents=True, exist_ok=True)

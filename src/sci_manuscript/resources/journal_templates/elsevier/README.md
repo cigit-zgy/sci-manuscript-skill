@@ -10,7 +10,7 @@
 - License: LaTeX Project Public License 1.2 or later for the class; the package README declares LPPL 1.3 or later.
 
 `elsarticle.cls` and `elsarticle-num.bst` are unmodified files from Elsevier's
-official assets. `template.tex` is the official numbered-reference example,
-renamed from `elsarticle-template-num.tex` for a stable resource name.
+official assets. The package-owned `workflow.tex` is the active manuscript
+composition resource.
 
 Check the target journal's current Guide for Authors before submission.

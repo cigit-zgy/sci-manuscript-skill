@@ -80,25 +80,37 @@ def test_revision_semantics_contract_is_documented() -> None:
     semantics = (ROOT / "references" / "revision_semantics.md").read_text(
         encoding="utf-8"
     )
-    for token in (
-        r"\definecolor{RevisionAddedColor}{RGB}{0,92,153}",
-        r"\definecolor{RevisionDeletedColor}{RGB}{160,160,160}",
-        r"\definecolor{RevisionReviewColor}{RGB}{220,45,45}",
-        r"\CJKsout",
-        r"\newcommand{\RevisionDeletionThickness}{0.8pt}",
-    ):
-        assert token in style
+    common = (
+        ROOT
+        / "src"
+        / "sci_manuscript"
+        / "resources"
+        / "manuscript_preamble"
+        / "common.tex"
+    ).read_text(encoding="utf-8")
+    assert r"\newcommand{\RevisionReviewerColor}{RubineRed}" in common
+    assert r"\definecolor{SciLinkBlue}{RGB}{0,0,255}" in common
+    assert "citecolor=SciLinkBlue" in common
+    assert "urlcolor=SciLinkBlue" in common
+    assert "ForestGreen" in runtime
+    assert "definecolor{SciRevision" not in common
+    assert "ProcessBlue" not in common + runtime
+    assert "RevisionDeleted" not in style
+    assert r"\CJKsout" not in style
     assert r"\SCIDeletedBibItem" not in runtime
     assert r"\CJKunderwave" not in style
     assert r"\CJKunderline" not in style
-    assert "blue text" in readme
-    assert "red text" in readme
-    assert "four-layer contract" in skill
-    assert "similarity(old, new) >= 0.70" in semantics
-    assert "max(len(old), len(new)) <= 2000" in semantics
-    assert "--math-markup=WHOLE" in semantics
-    assert "Rendering is mutually exclusive" in semantics
-    assert "current revision only" in semantics
+    assert "author-driven addition/replacement | ForestGreen" in readme
+    assert "reviewer-driven addition/replacement | RubineRed" in readme
+    assert "`latexdiff` detects current additions only" in skill
+    assert "current-addition evidence only" in semantics
+    assert "markup inserted into exact current source" in semantics
+    assert "`latexdiff` document is diagnostic evidence" in semantics.lower()
+    assert "Move handling is intentionally exact" in semantics
+    assert "similarity graph" in semantics
+    assert "Citation identity is the BibTeX key" in semantics
+    assert "Parent-only content never appears" in semantics
+    assert "Coverage at or above 0.60" in semantics
     assert r"\ReviewReference" in semantics
 
 
@@ -235,7 +247,11 @@ def test_review_workflow_has_one_public_interface() -> None:
 
     option_strings: set[str] = set()
     engine_choices: set[str] = set()
-    pending = [_parser()]
+    root_parser = _parser()
+    help_text = root_parser.format_help()
+    assert "Archive the active revision and restore its parent." in help_text
+    assert "Renumber existing revision directories contiguously." in help_text
+    pending = [root_parser]
     while pending:
         parser = pending.pop()
         for action in parser._actions:
@@ -261,9 +277,12 @@ def test_current_docs_have_one_revision_rendering_contract() -> None:
         ROOT / "references" / "workflow.md",
     )
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
-    assert "--math-markup=WHOLE" in text
-    assert "Reviewer-linked additions | Red text" in text
-    assert "Deleted content | Light-gray strikeout" in text
+    assert "`latexdiff` is an addition detector" in text
+    assert "current clean manuscript plus revision" in text
+    assert "`latexdiff` document is diagnostic evidence" in text.lower()
+    assert "reviewer-driven addition/replacement | RubineRed" in text
+    assert "author-driven addition/replacement | ForestGreen" in text
+    assert "unchanged text | black" in text
 
 
 def test_runtime_module_import_graph_has_no_cycles() -> None:

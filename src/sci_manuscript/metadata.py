@@ -686,6 +686,59 @@ def _affiliation_text(affiliation: author_data.AffiliationRecord, language: str)
     return ", ".join(part for part in (name, affiliation.address) if part)
 
 
+def _correspondence_address(
+    author: author_data.AuthorRecord,
+    affiliations: dict[str, author_data.AffiliationRecord],
+    language: str,
+) -> str:
+    """Resolve one correspondence address from explicit metadata or affiliation 1."""
+    if author.correspondence_address:
+        return author.correspondence_address
+    first_id = author.affiliations[0] if author.affiliations else ""
+    first_affiliation = affiliations.get(first_id)
+    if first_affiliation is not None:
+        address = _affiliation_text(first_affiliation, language)
+        if address:
+            return address
+    raise MetadataError(
+        f'Missing correspondence address for corresponding author "{author.name_en}".'
+    )
+
+
+def _render_correspondence_blocks(
+    selection: author_data.AuthorSelection,
+    language: str,
+) -> str:
+    """Render ordered response-letter blocks with component-local spacing."""
+    affiliations = {
+        affiliation.affiliation_id: affiliation
+        for affiliation in selection.affiliations
+    }
+    blocks: list[str] = []
+    for author in selection.corresponding_authors:
+        name = author.name_zh if language == "zh" else author.name_en
+        address = _correspondence_address(author, affiliations, language)
+        address_label = (
+            "通讯地址："  # noqa: RUF001 - required Chinese response label
+            if language == "zh"
+            else "Correspondence address: "
+        )
+        email_label = "邮箱：" if language == "zh" else "E-mail: "  # noqa: RUF001
+        email = _latex_escape(author.email)
+        blocks.append(
+            "\n".join(
+                (
+                    f"{_latex_escape(name)}\\par",
+                    r"\vspace{0.15\baselineskip}",
+                    f"{address_label}{_latex_escape(address)}\\par",
+                    r"\vspace{0.15\baselineskip}",
+                    f"{email_label}\\href{{mailto:{email}}}{{{email}}}",
+                )
+            )
+        )
+    return "\n\\par\\vspace{0.55\\baselineskip}\n".join(blocks)
+
+
 def render_author_metadata(
     metadata: ManuscriptMetadata,
     selection: author_data.AuthorSelection,
@@ -713,12 +766,14 @@ def render_author_metadata(
         for item in selection.affiliations
     ]
     signer = author_data.resolve_signing_author(metadata, selection)
+    affiliations_by_id = {
+        affiliation.affiliation_id: affiliation
+        for affiliation in selection.affiliations
+    }
+    correspondence_blocks_en = _render_correspondence_blocks(selection, "en")
+    correspondence_blocks_zh = _render_correspondence_blocks(selection, "zh")
     signer_affiliations = (
-        tuple(
-            affiliation
-            for affiliation in selection.affiliations
-            if signer is not None and affiliation.affiliation_id in signer.affiliations
-        )
+        tuple(affiliations_by_id[key] for key in signer.affiliations)
         if signer is not None
         else ()
     )
@@ -746,6 +801,12 @@ def render_author_metadata(
             f"\\newcommand{{\\CorrespondingAuthorName}}{{{corresponding_names}}}",
             f"\\newcommand{{\\CorrespondingAuthorNameZh}}{{{corresponding_names_zh}}}",
             f"\\newcommand{{\\CorrespondingAuthorEmail}}{{{emails}}}",
+            "\\newcommand{\\CorrespondenceAuthorsEn}{%",
+            correspondence_blocks_en,
+            "}",
+            "\\newcommand{\\CorrespondenceAuthorsZh}{%",
+            correspondence_blocks_zh,
+            "}",
             "\\newcommand{\\CorrespondenceAuthorName}{"
             + (_latex_escape(signer.name_en) if signer is not None else "")
             + "}",

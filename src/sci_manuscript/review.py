@@ -25,7 +25,7 @@ USER_SECTION_HEADING = re.compile(
 )
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 RESPONSE_COMMAND = r"\Response"
-RESPONSE_LETTER_COMMAND = r"\ResponseLetter"
+LEGACY_RESPONSE_LETTER_COMMAND = r"\ResponseLetter"
 REVIEW_REFERENCE_COMMAND = r"\ReviewReference"
 REVIEW_INDEX_NAME = "review_index.yaml"
 
@@ -59,13 +59,13 @@ class ReviewReference:
 
     review_id: str
     citation_keys: tuple[str, ...]
+    source_line: int
 
 
 @dataclass(frozen=True)
 class ResponseSource:
     """The complete active user content in ``responses.tex``."""
 
-    letter: str
     responses: dict[str, str]
     references: tuple[ReviewReference, ...]
 
@@ -267,28 +267,32 @@ def _extract_braced_response_field(text: str, start: int) -> tuple[str, int]:
 
 
 def parse_response_source(path: Path) -> ResponseSource:
-    r"""Parse the strict ``\ResponseLetter``/``\Response`` user interface."""
+    r"""Parse the strict ``\Response``/``\ReviewReference`` user interface."""
     if not path.is_file():
-        return ResponseSource("", {}, ())
+        return ResponseSource({}, ())
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise WorkflowError(f"Cannot read response content: {path}") from exc
-    letter: str | None = None
     responses: dict[str, str] = {}
     references: list[ReviewReference] = []
     cursor = skip_tex_space(text, 0)
     while cursor < len(text):
-        if text.startswith(RESPONSE_LETTER_COMMAND, cursor):
-            command = RESPONSE_LETTER_COMMAND
-        elif text.startswith(REVIEW_REFERENCE_COMMAND, cursor):
+        command_start = cursor
+        if text.startswith(LEGACY_RESPONSE_LETTER_COMMAND, cursor):
+            raise WorkflowError(
+                "LEGACY_RESPONSE_LETTER_UNSUPPORTED: remove the historical "
+                f"\\ResponseLetter{{...}} block from {path.resolve()}; the package "
+                "fixed template owns the response-letter opening."
+            )
+        if text.startswith(REVIEW_REFERENCE_COMMAND, cursor):
             command = REVIEW_REFERENCE_COMMAND
         elif text.startswith(RESPONSE_COMMAND, cursor):
             command = RESPONSE_COMMAND
         else:
             raise WorkflowError(
                 f"Unexpected content in {path} at character {cursor + 1}; "
-                "expected \\ResponseLetter, \\Response, or \\ReviewReference."
+                "expected \\Response or \\ReviewReference."
             )
         cursor += len(command)
         if cursor < len(text) and (text[cursor].isalnum() or text[cursor] == "@"):
@@ -296,13 +300,6 @@ def parse_response_source(path: Path) -> ResponseSource:
                 f"Unexpected command in {path} at character {cursor + 1}."
             )
         cursor = skip_tex_space(text, cursor)
-        if command == RESPONSE_LETTER_COMMAND:
-            if letter is not None:
-                raise WorkflowError(f"Duplicate ResponseLetter declaration: {path}")
-            letter, cursor = _extract_braced_response_field(text, cursor)
-            cursor = skip_tex_space(text, cursor)
-            continue
-
         raw_id, cursor = _extract_braced_response_field(text, cursor)
         review_id = raw_id.strip()
         if not is_review_id(review_id):
@@ -319,16 +316,20 @@ def parse_response_source(path: Path) -> ResponseSource:
                     f"ReviewReference {review_id} has invalid citation keys: "
                     f"{path.resolve()}"
                 )
-            references.append(ReviewReference(review_id, keys))
+            references.append(
+                ReviewReference(
+                    review_id,
+                    keys,
+                    text.count("\n", 0, command_start) + 1,
+                )
+            )
             cursor = skip_tex_space(text, cursor)
             continue
         if review_id in responses:
             raise WorkflowError(f"Duplicate response ID {review_id}: {path}")
         responses[review_id] = body.strip()
         cursor = skip_tex_space(text, cursor)
-    if letter is None:
-        raise WorkflowError(f"Missing \\ResponseLetter declaration: {path.resolve()}")
-    return ResponseSource(letter.strip(), responses, tuple(references))
+    return ResponseSource(responses, tuple(references))
 
 
 def parse_response_entries(path: Path) -> dict[str, str]:
@@ -343,9 +344,13 @@ def _review_ids_with_paths(version: Path) -> dict[str, set[Path]]:
         if not path.is_file():
             continue
         try:
-            provenance = extract_provenance(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, WorkflowError) as exc:
-            raise WorkflowError(f"Invalid active \\review command: {path}") from exc
+            provenance = extract_provenance(
+                path.read_text(encoding="utf-8"), source_path=path
+            )
+        except (OSError, UnicodeError) as exc:
+            raise WorkflowError(
+                f"Cannot read review provenance source: {path}"
+            ) from exc
         for span in provenance.review_spans:
             for review_id in span.review_ids:
                 result.setdefault(review_id, set()).add(path.resolve())
@@ -433,7 +438,7 @@ def audit_reviews(
         response_source = parse_response_source(response_path)
         responses = response_source.responses
     except WorkflowError as exc:
-        response_source = ResponseSource("", {}, ())
+        response_source = ResponseSource({}, ())
         responses = {}
         issues.append(
             ReviewAuditIssue(

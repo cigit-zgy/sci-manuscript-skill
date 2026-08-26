@@ -2,29 +2,29 @@
 
 ## Unreleased
 
-- Treat every changed formula atomically: render the complete old formula as a
-  deletion and the complete current formula as an addition, with changed
-  labelled displays separated to prevent revision-only horizontal overflow.
-
-- The Chinese `kxtbcas-numeric.bst` now renders non-empty DOI fields exactly
-  once and removes standard DOI resolver prefixes at rendering time without
-  rewriting user BibTeX data.
-- Generated bibliographies now participate in direct-parent marked comparison.
-  Parent/current `.bbl` files are materialized independently and aligned by
-  citation key, preserving current numbering while marking real metadata,
-  addition, and deletion changes.
-- Machine-owned per-round bibliography snapshots preserve visible history
-  across `sync-bib`, revision creation, rollback, reindex, build, and
-  submission transactions. Snapshots now retain only build-resolved citations
-  and recursive BibTeX dependencies; `rebuild-bib-state` provides an explicit
-  confirmed migration for existing round state, while local attachment paths
-  are excluded from machine-owned snapshots.
-- Marked builds encode current-source paragraph topology before `latexdiff`,
-  neutralize generated serialization whitespace, and emit a zero-tolerance
-  current/marked/missing/invented topology report.
-- Response letters use a single title/contact page break, exact editor/reviewer
-  section titles, compact location spacing, and visually distinct neutral-gray
-  general comments without generated ceremonial closings.
+- Highlighted manuscripts now render only current scientific content: reviewer
+  additions are RubineRed, author additions are ForestGreen, citation markers
+  and DOI/URL links are pure RGB blue (`#0000FF`), ordinary text is black, and parent-only
+  deletions are absent.
+- `latexdiff` is limited to current-addition evidence. Highlight markup is
+  inserted into the exact current source with hard source, paragraph, block
+  topology, numbering, and output-purity validation.
+- Adaptive 60% whole-block highlighting, exact-move suppression, atomic current
+  display equations, tiny unchanged-island coalescing, and causal reference
+  provenance are covered by regression tests.
+- Revision builds support target-aware marked-only, response, clean, and full
+  paths with deterministic bibliography caching and per-stage timing.
+- Response letters use package-owned Chinese and English openings, ordered
+  one-to-many correspondence metadata, one opening-page break, automatic
+  TeX-native current locations, frozen component-local spacing, and exact
+  system Times New Roman for Latin-script text.
+- Reviewer locations now come from package-owned `lineno`/`\linelabel` AUX
+  records; unsupported complex AMS environments fail closed instead of falling
+  back to PDF geometry.
+- Publisher-generated bibliography control keys are excluded from persistent
+  citation snapshots even when a later AUX pass omits their database name.
+- Unused demonstration documents were removed from publisher package data;
+  required classes, styles, source/license material, and provenance remain.
 
 ## 2.0.0
 
@@ -70,8 +70,8 @@ Reliability and audit changes:
 - Review audit detects changed/removed comments, drift, orphan provenance,
   duplicate IDs, malformed response source, and incomplete responses without
   blocking ordinary manuscript rendering.
-- Revision provenance, fine-grained mathematical comparison, automatic response
-  locations, and the red/blue/light-gray visual semantics are unchanged.
+- Revision provenance, automatic response locations, and output publication
+  remain deterministic and atomic.
 - Output and submission publication is staged and atomic. A failed operation
   preserves the previous complete final artifacts and successful manifest.
 - Each successful build/submission writes a private-path-free manifest of

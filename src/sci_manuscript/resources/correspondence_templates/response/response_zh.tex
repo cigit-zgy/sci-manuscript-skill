@@ -5,6 +5,7 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{fontspec}
 \usepackage{xeCJK}
+\setmainfont{Times New Roman}
 \usepackage{microtype}
 \usepackage{xcolor}
 \usepackage[most]{tcolorbox}
@@ -19,50 +20,55 @@
 
 \color{ink}
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{0.72\baselineskip}
+\setlength{\parskip}{0pt}
 \setlength{\emergencystretch}{2em}
 \pagestyle{plain}
 
-\newcommand{\ResponseSection}[1]{\section*{#1}}
+\newif\ifFirstResponseSection
+\FirstResponseSectiontrue
+\newcommand{\ResponseSection}[1]{%
+  \ifFirstResponseSection
+    \global\FirstResponseSectionfalse
+  \else
+    \par\vspace{1.20\baselineskip}%
+  \fi
+  \noindent{\Large\bfseries #1}\par
+  \vspace{0.65\baselineskip}}
 \newenvironment{generalcomment}[1][总体意见]
   {\begin{tcolorbox}[
     enhanced,breakable,frame hidden,colback=quotegray,
     borderline west={2pt}{0pt}{graytext!55},
     sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
-    before skip=10pt,after skip=12pt]
-   {\color{navy}\bfseries #1}\par\smallskip\normalfont}
+    before skip=0pt,after skip=0.90\baselineskip]
+   {\color{navy}\bfseries #1}\par\vspace{0.20\baselineskip}\normalfont}
   {\end{tcolorbox}}
 \newenvironment{reviewcomment}[1]
   {\begin{tcolorbox}[
     enhanced,breakable,frame hidden,colback=quotegray,
     borderline west={3pt}{0pt}{navy},
     sharp corners,left=11pt,right=11pt,top=9pt,bottom=9pt,
-    before skip=10pt,after skip=12pt]
-   {\color{navy}\bfseries 意见 #1}\par\smallskip\normalfont}
+    before skip=0pt,after skip=0.32\baselineskip]
+   {\color{navy}\bfseries 意见 #1}\par\vspace{0.20\baselineskip}\normalfont}
   {\end{tcolorbox}}
 \newenvironment{response}
-  {\par\noindent{\color{green}\bfseries 回复}\par\smallskip}
-  {\par\smallskip}
+  {\par\noindent{\color{green}\bfseries 回复}\par
+   \vspace{0.12\baselineskip}\setlength{\parskip}{0.36\baselineskip}}
+  {\par\setlength{\parskip}{0pt}}
 \newcommand{\reviewlocation}[1]{%
-  \par\noindent{\color{graytext}\bfseries 修改位置：#1。}\par
-  \addvspace{0.6\baselineskip}}
+  \par\vspace{0.25\baselineskip}%
+  \noindent{\color{graytext}\bfseries 修改位置：#1。}\par}
+\newcommand{\ResponseEntryEnd}{\par\vspace{1.35\baselineskip}}
 \newcommand{\ReviewLocation}[1]{#1}
-\newcommand{\ReviewerComment}[1]{#1\par\medskip}
+\newcommand{\ReviewerComment}[1]{#1\par}
 \begin{document}
 
-\begin{center}
-  {\Large\bfseries 回复信}\par
-\end{center}
-\textbf{稿件题目：}\ManuscriptTitle\par
-\textbf{期刊：}\JournalName\par
-\ifx\ManuscriptID\empty\else\textbf{稿件编号：}\ManuscriptID\par\fi
-\vspace{0.2in}
-
-%%RESPONSE_LETTER%%
-
-\vspace{0.25in}
-\CorrespondenceAuthorNameZh\par
-\href{mailto:\CorrespondenceAuthorEmail}{\CorrespondenceAuthorEmail}
+尊敬的编辑：\par
+\vspace{0.50\baselineskip}
+感谢您给予我们修改稿件《\ManuscriptTitle》的机会，并考虑将其发表于《\JournalName》。衷心感谢编辑和审稿人对本稿件的认真评阅以及富有建设性的意见和建议，这些意见帮助我们进一步完善了稿件。\par
+\vspace{0.62\baselineskip}
+我们已对所有审稿意见和问题进行了逐条回复，并根据相关意见对稿件进行了相应修改。为便于编辑和审稿人查阅，因审稿意见而新增或修改的正文内容以红色标示，作者在修订过程中主动新增或修改的正文内容以绿色标示。对于涉及正文修改的意见，我们同时在相应的逐条回复中注明了具体修改位置。\par
+\vspace{1.05\baselineskip}
+\CorrespondenceAuthorsZh
 
 \clearpage
 
