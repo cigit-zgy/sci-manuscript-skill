@@ -368,6 +368,44 @@ def test_historical_revision_build_rejects_tampered_parent_ancestry(
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    "tampered",
+    ("source", "metadata", "bibliography", "authors"),
+)
+def test_historical_submission_rejects_tampered_parent_before_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tampered: str,
+) -> None:
+    r02 = _revision(_revision(_workspace(tmp_path)))
+    if tampered == "source":
+        target = r02.round_dir(0) / "sections" / "01_introduction.tex"
+    elif tampered == "metadata":
+        target = r02.round_dir(0) / "meta.yaml"
+    elif tampered == "bibliography":
+        target = r02.bibliography_snapshot_path(0)
+    else:
+        target = r02.author_snapshot_path(0)
+    target.write_bytes(target.read_bytes() + b"\n# tampered parent\n")
+    monkeypatch.setattr(
+        api_module,
+        "ensure_manuscript_sources",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("historical source mutation was reached")
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "prepare_submission_artifacts",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("historical publication was reached")
+        ),
+    )
+
+    with pytest.raises(WorkflowError, match="HISTORICAL_ROUND_STATE_MISMATCH"):
+        ManuscriptProject(r02.project).prepare_submission(round="revision_01")
+
+
 def test_historical_round_freezes_only_effective_author_records(tmp_path: Path) -> None:
     r01 = _revision(_workspace(tmp_path))
 

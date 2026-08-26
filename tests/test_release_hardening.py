@@ -11,11 +11,17 @@ import pytest
 import yaml
 from test_core import _revision, _workspace
 
+import sci_manuscript.submission as submission_module
 import sci_manuscript.workspace as workspace_module
 from sci_manuscript.api import ManuscriptProject, doctor
-from sci_manuscript.compile import resolve_engine, select_engine
+from sci_manuscript.compile import CompileResult, resolve_engine, select_engine
+from sci_manuscript.diff import MarkedResult
 from sci_manuscript.errors import WorkflowError
-from sci_manuscript.metadata import SubmissionSettings
+from sci_manuscript.metadata import (
+    CorrespondenceSettings,
+    SubmissionSettings,
+    save_meta,
+)
 from sci_manuscript.provenance import extract_provenance
 from sci_manuscript.review import audit_reviews, parse_reviews
 from sci_manuscript.review_ids import validate_review_id_list
@@ -74,6 +80,7 @@ def _stub_submission_compilers(
         _config: ProjectConfig,
         run_dir: Path,
         _engine: str | None,
+        _author_library_path: Path,
     ) -> Path:
         target = run_dir / "package_stage" / f"{name}.pdf"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -85,9 +92,15 @@ def _stub_submission_compilers(
         _config: ProjectConfig,
         run_dir: Path,
         _engine: str | None,
+        _author_library_path: Path,
     ) -> Path:
         return fake_submission_source(
-            _source, "cover_letter", _config, run_dir, _engine
+            _source,
+            "cover_letter",
+            _config,
+            run_dir,
+            _engine,
+            _author_library_path,
         )
 
     monkeypatch.setattr(
@@ -337,6 +350,115 @@ def test_graphical_abstract_pending_disabled_final_pdf_and_edited_tex(
     assert (
         edited_dir / "graphical_abstract" / "graphical_abstract.pdf"
     ).read_bytes() == b"graphical_abstract"
+
+
+@pytest.mark.parametrize(
+    ("selected_round", "expected_name", "unexpected_name"),
+    (
+        (1, "First Author", "Changed External Author"),
+        (2, "Changed External Author", "First Author"),
+    ),
+)
+def test_submission_metadata_uses_frozen_authors_only_for_historical_rounds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selected_round: int,
+    expected_name: str,
+    unexpected_name: str,
+) -> None:
+    initial = _workspace(tmp_path)
+    save_meta(
+        initial.round_dir(0) / "meta.yaml",
+        replace(
+            initial.metadata,
+            correspondence=CorrespondenceSettings(signing_author="author_one"),
+        ),
+    )
+    r02 = _revision(_revision(load_project(initial.project)))
+    config = load_project(r02.project, selected_round)
+    external = workspace_module.author_library_source_for_round(r02, 2)
+    external_text = external.read_text(encoding="utf-8")
+    assert "First Author" in external_text
+    changed_external = yaml.safe_load(
+        external_text.replace("First Author", "Changed External Author", 1)
+    )
+    if selected_round == 1:
+        changed_external["authors"]["author_one"]["email"] = ""
+    external.write_text(
+        yaml.safe_dump(changed_external, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    submission = ensure_submission_workspace(config, selected_round)
+    (submission / "cover_letter_body.tex").write_text(
+        "Completed cover letter.\n", encoding="utf-8"
+    )
+    (submission / "highlights.tex").write_text(
+        "Completed highlights.\n", encoding="utf-8"
+    )
+    graphical = submission / "graphical_abstract" / "graphical_abstract.tex"
+    graphical.write_text("Completed graphical abstract.\n", encoding="utf-8")
+    captured_metadata: list[str] = []
+
+    def fake_clean(
+        selected: ProjectConfig,
+        round_number: int,
+        run_dir: Path,
+        _engine: str | None,
+    ) -> Path:
+        build = run_dir / "clean_build"
+        build.mkdir(parents=True, exist_ok=True)
+        (build / "manuscript.compiler.log").write_text("", encoding="utf-8")
+        output = selected.output_dir(round_number) / "manuscript_clean.pdf"
+        output.write_bytes(b"clean")
+        return output
+
+    def fake_marked(
+        selected: ProjectConfig,
+        round_number: int,
+        run_dir: Path,
+        _engine: str | None,
+    ) -> MarkedResult:
+        build = run_dir / "marked_build"
+        build.mkdir(parents=True, exist_ok=True)
+        (build / "manuscript_marked.compiler.log").write_text("", encoding="utf-8")
+        output = selected.output_dir(round_number) / "manuscript_marked.pdf"
+        output.write_bytes(b"marked")
+        return MarkedResult(output, {})
+
+    def fake_compile(
+        source: Path,
+        build_dir: Path,
+        _config: ProjectConfig,
+        _engine: str | None,
+    ) -> CompileResult:
+        captured_metadata.append(
+            (source.parent / "author_metadata.tex").read_text(encoding="utf-8")
+        )
+        build_dir.mkdir(parents=True, exist_ok=True)
+        pdf = build_dir / f"{source.stem}.pdf"
+        pdf.write_bytes(b"submission source")
+        return CompileResult(pdf, "")
+
+    monkeypatch.setattr(submission_module, "build_clean_manuscript", fake_clean)
+    monkeypatch.setattr(submission_module, "build_marked_manuscript", fake_marked)
+    monkeypatch.setattr(submission_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(
+        submission_module,
+        "validate_revision_layout",
+        lambda *_args: tmp_path / "layout.txt",
+    )
+
+    prepare_submission_artifacts(
+        config,
+        selected_round,
+        tmp_path / f"submission-run-{selected_round}",
+        None,
+        None,
+    )
+
+    assert len(captured_metadata) == 3
+    assert all(expected_name in text for text in captured_metadata)
+    assert all(unexpected_name not in text for text in captured_metadata)
 
 
 def test_associate_editor_ids_and_heading_are_canonical(tmp_path: Path) -> None:

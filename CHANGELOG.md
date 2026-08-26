@@ -16,8 +16,11 @@
   paths with deterministic bibliography caching and per-stage timing.
 - Historical rounds freeze source, metadata, selected author/affiliation
   snapshots, bibliography, and ancestry-bound parent state; verification is
-  ancestor-closed. Artifact freshness also includes the installed implementation,
-  package revision/location TeX runtimes, and selected toolchain identity.
+  ancestor-closed across build and formal submission. Historical submission
+  metadata and signer validation use the frozen author snapshot, while the active
+  round uses the live library. Artifact freshness also includes the installed
+  implementation, package revision/location TeX runtimes, and selected toolchain
+  identity.
 - Response letters use package-owned Chinese and English openings, ordered
   one-to-many correspondence metadata, one opening-page break, automatic
   TeX-native current locations, frozen component-local spacing, and exact

@@ -901,10 +901,17 @@ class ManuscriptProject:
         latest = load_project(self.root)
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
-        ensure_manuscript_sources(config, selected)
+        if selected == latest.current_round:
+            ensure_manuscript_sources(config, selected)
+        else:
+            ensure_historical_round_state(config, selected)
         if selected > 0:
             ensure_response_source(config, selected)
-            audit = audit_reviews(config, selected, record_index=True)
+            audit = audit_reviews(
+                config,
+                selected,
+                record_index=selected == latest.current_round,
+            )
             if not audit.is_complete:
                 unresolved = sorted(
                     {

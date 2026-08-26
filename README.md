@@ -33,8 +33,9 @@ python -m pip install .
 sci-manuscript doctor
 ```
 
-`doctor` reports missing LaTeX, `latexdiff`, PDF, and font dependencies for the
-selected publisher and build target.
+`doctor` reports missing LaTeX, `latexdiff`, and PDF-tool dependencies for the
+configured environment. Response builds separately fail closed unless Times New
+Roman is available through fontconfig.
 
 ## Quick start
 

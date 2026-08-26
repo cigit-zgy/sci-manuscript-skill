@@ -14,7 +14,6 @@ import yaml
 
 from .authors import (
     load_author_library,
-    resolve_author_library_path,
     resolve_authors,
     resolve_signing_author,
 )
@@ -34,6 +33,7 @@ from .workspace import (
     GENERATED_SUBMISSION_PATHS,
     ProjectConfig,
     _generated_submission_paths,
+    author_library_source_for_round,
     revision_directory_name,
 )
 
@@ -111,6 +111,7 @@ def _compile_submission_source(
     config: ProjectConfig,
     run_dir: Path,
     engine: str | None,
+    author_library_path: Path,
 ) -> Path:
     stage = run_dir / f"submission_source_{name}"
     stage.mkdir(parents=True)
@@ -125,7 +126,11 @@ def _compile_submission_source(
             and sibling.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf"}
         ):
             shutil.copy2(sibling, stage / sibling.name)
-    generate_metadata(config.round_dir(config.current_round), stage)
+    generate_metadata(
+        config.round_dir(config.current_round),
+        stage,
+        author_library_path,
+    )
     result = compile_tex(
         staged_source, run_dir / f"submission_build_{name}", config, engine
     )
@@ -140,6 +145,7 @@ def _compile_cover_letter(
     config: ProjectConfig,
     run_dir: Path,
     engine: str | None,
+    author_library_path: Path,
 ) -> Path:
     """Assemble the package cover template with user-owned body content."""
     stage = run_dir / "cover_source"
@@ -174,7 +180,11 @@ def _compile_cover_letter(
             ".pdf",
         }:
             shutil.copy2(sibling, stage / sibling.name)
-    generate_metadata(config.round_dir(config.current_round), stage)
+    generate_metadata(
+        config.round_dir(config.current_round),
+        stage,
+        author_library_path,
+    )
     result = compile_tex(staged_source, run_dir / "cover_build", config, engine)
     target = run_dir / "package_stage" / "cover_letter.pdf"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -207,9 +217,10 @@ def prepare_submission_artifacts(
 ) -> list[SubmissionArtifact]:
     """Build trusted submission artifacts and assemble the final package."""
     submission = ensure_submission_workspace(config, round_number)
+    author_library_path = author_library_source_for_round(config, round_number)
     selection = resolve_authors(
         config.metadata,
-        load_author_library(resolve_author_library_path()),
+        load_author_library(author_library_path),
     )
     needs_response = round_number > 0 and _review_comments_available(
         config, round_number
@@ -299,11 +310,20 @@ def prepare_submission_artifacts(
     stage.mkdir(parents=True, exist_ok=True)
     if settings.cover_letter:
         _compile_cover_letter(
-            submission / "cover_letter_body.tex", config, run_dir, engine
+            submission / "cover_letter_body.tex",
+            config,
+            run_dir,
+            engine,
+            author_library_path,
         )
     if settings.highlights:
         _compile_submission_source(
-            submission / "highlights.tex", "highlights", config, run_dir, engine
+            submission / "highlights.tex",
+            "highlights",
+            config,
+            run_dir,
+            engine,
+            author_library_path,
         )
     if settings.graphical_abstract:
         graphical_dir = submission / "graphical_abstract"
@@ -327,6 +347,7 @@ def prepare_submission_artifacts(
                 config,
                 run_dir,
                 engine,
+                author_library_path,
             )
             shutil.move(compiled_graphical, staged_graphical)
     shutil.copy2(clean, stage / "manuscript.pdf")
