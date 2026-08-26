@@ -812,6 +812,54 @@ def test_renderer_implementation_change_invalidates_all_artifacts(
     assert not any(build_artifact_is_current(config, 1, output) for output in outputs)
 
 
+@pytest.mark.parametrize(
+    "runtime_name",
+    ("marked_runtime.tex", "location_runtime.tex"),
+)
+def test_revision_runtime_resource_change_invalidates_marked_and_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_name: str,
+) -> None:
+    config = _revision(_workspace(tmp_path))
+    clean, marked, response = (
+        config.output_dir(1) / name
+        for name in (
+            "manuscript_clean.pdf",
+            "manuscript_marked.pdf",
+            "response_letter.pdf",
+        )
+    )
+    for output in (clean, marked, response):
+        output.write_bytes(output.name.encode())
+    package_root = tmp_path / "package"
+    revision = package_root / "revision"
+    revision.mkdir(parents=True)
+    for name in ("marked_runtime.tex", "location_runtime.tex"):
+        (revision / name).write_text(f"{name} v1\n", encoding="utf-8")
+    response_template = (
+        package_root / "correspondence_templates/response/response_en.tex"
+    )
+    response_template.parent.mkdir(parents=True)
+    response_template.write_text("response template\n", encoding="utf-8")
+    monkeypatch.setattr(workspace_module, "resources_root", lambda: package_root)
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    run = tmp_path / "manifest-run"
+    run.mkdir()
+    write_build_manifest(config, 1, "build", (clean, marked, response), "tectonic", run)
+    assert all(
+        build_artifact_is_current(config, 1, output)
+        for output in (clean, marked, response)
+    )
+
+    runtime = revision / runtime_name
+    runtime.write_text(f"{runtime_name} v2\n", encoding="utf-8")
+
+    assert build_artifact_is_current(config, 1, clean)
+    assert not build_artifact_is_current(config, 1, marked)
+    assert not build_artifact_is_current(config, 1, response)
+
+
 def test_toolchain_identity_change_invalidates_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -823,6 +871,9 @@ def test_toolchain_identity_change_invalidates_artifact(
     identity = {"engine": "tectonic", "engine_version": "v1"}
     monkeypatch.setattr(
         workspace_module, "_toolchain_identity", lambda *_args: dict(identity)
+    )
+    monkeypatch.setattr(
+        "sci_manuscript.compile.resolve_engine", lambda *_args: "tectonic"
     )
     write_build_manifest(config, 0, "build", (output,), "tectonic", run)
     assert build_artifact_is_current(config, 0, output, "tectonic")

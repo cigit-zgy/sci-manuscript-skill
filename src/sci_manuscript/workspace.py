@@ -145,6 +145,10 @@ class ProjectConfig:
         """Return the immutable scientific-state record for one round."""
         return self.state_dir(round_number) / "round_state.yaml"
 
+    def author_snapshot_path(self, round_number: int) -> Path:
+        """Return the frozen effective author library for one round."""
+        return self.state_dir(round_number) / "authors.yaml"
+
     def bibliography_snapshot_path(self, round_number: int) -> Path:
         """Return the machine-owned bibliography snapshot for one round."""
         return self.state_dir(round_number) / "bibliography.bib"
@@ -692,9 +696,87 @@ def bibliography_source_for_round(
     return snapshot
 
 
-def _round_state_values(config: ProjectConfig, round_number: int) -> dict[str, object]:
-    """Return the scientific identity that becomes immutable for history."""
+def author_library_source_for_round(
+    config: ProjectConfig,
+    round_number: int,
+) -> Path:
+    """Use live author metadata for the active round and its snapshot for history."""
     from .authors import resolve_author_library_path
+
+    rounds = _round_numbers(config.project)
+    if round_number == rounds[-1]:
+        return resolve_author_library_path()
+    snapshot = config.author_snapshot_path(round_number)
+    if not snapshot.is_file():
+        raise WorkflowError(
+            "HISTORICAL_ROUND_STATE_UNAVAILABLE: effective author snapshot is "
+            f"missing for {round_name(round_number)}: {snapshot}"
+        )
+    return snapshot
+
+
+def _effective_author_snapshot_data(
+    config: ProjectConfig,
+    round_number: int,
+    source: Path,
+) -> dict[str, object]:
+    """Return only author and affiliation records consumed by one round."""
+    from .authors import load_author_library, resolve_authors
+
+    metadata = load_meta(config.round_dir(round_number) / "meta.yaml")
+    selection = resolve_authors(metadata, load_author_library(source))
+    affiliations: dict[str, dict[str, str]] = {}
+    for affiliation in selection.affiliations:
+        affiliations[affiliation.affiliation_id] = {
+            "name_en": affiliation.name_en,
+            "name_zh": affiliation.name_zh,
+            "address": affiliation.address,
+        }
+    authors: dict[str, dict[str, object]] = {}
+    for author in selection.authors:
+        authors[author.author_id] = {
+            "name_en": author.name_en,
+            "name_zh": author.name_zh,
+            "email": author.email,
+            "affiliations": list(author.affiliations),
+            "bio_en": author.bio_en,
+            "bio_zh": author.bio_zh,
+            "correspondence_address": author.correspondence_address,
+        }
+    return {"affiliations": affiliations, "authors": authors}
+
+
+def _yaml_bytes(values: dict[str, object]) -> bytes:
+    return yaml.safe_dump(
+        values,
+        allow_unicode=True,
+        sort_keys=False,
+    ).encode("utf-8")
+
+
+def _write_bytes_atomically(path: Path, content: bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".new")
+    try:
+        temporary.write_bytes(content)
+        os.replace(temporary, path)
+    finally:
+        if temporary.is_file():
+            temporary.unlink()
+    return path
+
+
+def _snapshot_digest(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _round_state_values(
+    config: ProjectConfig,
+    round_number: int,
+    *,
+    author_snapshot_sha256: str | None = None,
+) -> dict[str, object]:
+    """Return the ancestry-bound identity that becomes immutable for history."""
 
     version = config.round_dir(round_number)
     metadata = load_meta(version / "meta.yaml")
@@ -704,64 +786,195 @@ def _round_state_values(config: ProjectConfig, round_number: int) -> dict[str, o
             "HISTORICAL_ROUND_STATE_UNAVAILABLE: bibliography snapshot is missing "
             f"for {round_name(round_number)}: {bibliography}"
         )
+    author_snapshot = config.author_snapshot_path(round_number)
+    if author_snapshot_sha256 is None:
+        if not author_snapshot.is_file():
+            raise WorkflowError(
+                "HISTORICAL_ROUND_STATE_UNAVAILABLE: effective author snapshot is "
+                f"missing for {round_name(round_number)}: {author_snapshot}"
+            )
+        author_snapshot_sha256 = _path_digest(author_snapshot)
+    parent_state_sha256: str | None = None
+    if metadata.parent_round is not None:
+        parent_state = config.round_state_path(metadata.parent_round)
+        if not parent_state.is_file():
+            raise WorkflowError(
+                "HISTORICAL_ROUND_STATE_UNAVAILABLE: parent round state is missing "
+                f"for {round_name(round_number)}: {parent_state}"
+            )
+        parent_state_sha256 = _path_digest(parent_state)
     return {
-        "schema": "sci-manuscript-round-state/v1",
+        "schema": "sci-manuscript-round-state/v2",
         "round": round_name(round_number),
         "parent": (
             None if metadata.parent_round is None else round_name(metadata.parent_round)
         ),
+        "parent_round_state_sha256": parent_state_sha256,
         "scientific_source_sha256": source_digest(version, scientific_only=True),
         "metadata_sha256": _path_digest(version / "meta.yaml"),
         "bibliography_snapshot_sha256": _path_digest(bibliography),
-        "effective_authors_sha256": _path_digest(resolve_author_library_path()),
+        "effective_authors_snapshot_sha256": author_snapshot_sha256,
     }
 
 
 def _write_round_state(path: Path, values: dict[str, object]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".yaml.new")
-    try:
-        temporary.write_text(
-            yaml.safe_dump(values, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
+    return _write_bytes_atomically(path, _yaml_bytes(values))
+
+
+def _validated_snapshot_bytes(config: ProjectConfig, round_number: int) -> bytes:
+    """Return an existing valid snapshot or derive one from the current library."""
+    from .authors import (
+        load_author_library,
+        resolve_author_library_path,
+        resolve_authors,
+    )
+
+    snapshot = config.author_snapshot_path(round_number)
+    metadata = load_meta(config.round_dir(round_number) / "meta.yaml")
+    if snapshot.is_file():
+        resolve_authors(metadata, load_author_library(snapshot))
+        return snapshot.read_bytes()
+    return _yaml_bytes(
+        _effective_author_snapshot_data(
+            config,
+            round_number,
+            resolve_author_library_path(),
         )
-        os.replace(temporary, path)
-    finally:
-        if temporary.is_file():
-            temporary.unlink()
-    return path
+    )
 
 
 def freeze_round_state(config: ProjectConfig, round_number: int) -> Path:
     """Create one immutable scientific-state record without replacing it."""
     target = config.round_state_path(round_number)
-    expected = _round_state_values(config, round_number)
     if target.is_file():
-        try:
-            observed = yaml.safe_load(target.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, yaml.YAMLError) as exc:
-            raise WorkflowError(f"HISTORICAL_ROUND_STATE_INVALID: {target}") from exc
-        if observed != expected:
-            raise WorkflowError(
-                "HISTORICAL_ROUND_STATE_MISMATCH: refusing to replace immutable "
-                f"scientific state for {round_name(round_number)}."
-            )
-        return target
-    return _write_round_state(target, expected)
+        return _ensure_one_historical_round_state(config, round_number)
+    metadata = load_meta(config.round_dir(round_number) / "meta.yaml")
+    if metadata.parent_round is not None:
+        ensure_historical_round_state(config, metadata.parent_round)
+    snapshot = config.author_snapshot_path(round_number)
+    snapshot_existed = snapshot.is_file()
+    content = _validated_snapshot_bytes(config, round_number)
+    try:
+        if not snapshot_existed:
+            _write_bytes_atomically(snapshot, content)
+        expected = _round_state_values(
+            config,
+            round_number,
+            author_snapshot_sha256=_snapshot_digest(content),
+        )
+        return _write_round_state(target, expected)
+    except Exception:
+        if not snapshot_existed and snapshot.is_file():
+            snapshot.unlink()
+        raise
 
 
 def replace_round_state_for_explicit_migration(
     config: ProjectConfig, round_number: int
 ) -> Path:
     """Replace frozen identity only for an explicitly confirmed state migration."""
+    from .authors import resolve_author_library_path
+
+    metadata = load_meta(config.round_dir(round_number) / "meta.yaml")
+    if metadata.parent_round is not None:
+        ensure_historical_round_state(config, metadata.parent_round)
+    snapshot = config.author_snapshot_path(round_number)
+    if not snapshot.is_file():
+        target = config.round_state_path(round_number)
+        try:
+            observed = yaml.safe_load(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
+            raise WorkflowError(f"HISTORICAL_ROUND_STATE_INVALID: {target}") from exc
+        v1_identity = {
+            "schema": "sci-manuscript-round-state/v1",
+            "round": round_name(round_number),
+            "parent": (
+                None
+                if metadata.parent_round is None
+                else round_name(metadata.parent_round)
+            ),
+            "scientific_source_sha256": source_digest(
+                config.round_dir(round_number), scientific_only=True
+            ),
+            "metadata_sha256": _path_digest(
+                config.round_dir(round_number) / "meta.yaml"
+            ),
+            "effective_authors_sha256": _path_digest(resolve_author_library_path()),
+        }
+        if not isinstance(observed, dict) or any(
+            observed.get(key) != value for key, value in v1_identity.items()
+        ):
+            raise WorkflowError(
+                "HISTORICAL_ROUND_STATE_MISMATCH: the explicit bibliography "
+                "migration cannot prove the non-bibliography frozen state."
+            )
+        _write_bytes_atomically(
+            snapshot,
+            _validated_snapshot_bytes(config, round_number),
+        )
+    else:
+        _validated_snapshot_bytes(config, round_number)
     return _write_round_state(
         config.round_state_path(round_number),
         _round_state_values(config, round_number),
     )
 
 
+def _migrate_v1_round_state(
+    config: ProjectConfig,
+    round_number: int,
+    observed: dict[str, object],
+) -> Path:
+    """Upgrade a v1 hash-only author contract when its live source still proves it."""
+    from .authors import resolve_author_library_path
+
+    metadata = load_meta(config.round_dir(round_number) / "meta.yaml")
+    expected_v1 = {
+        "schema": "sci-manuscript-round-state/v1",
+        "round": round_name(round_number),
+        "parent": (
+            None if metadata.parent_round is None else round_name(metadata.parent_round)
+        ),
+        "scientific_source_sha256": source_digest(
+            config.round_dir(round_number), scientific_only=True
+        ),
+        "metadata_sha256": _path_digest(config.round_dir(round_number) / "meta.yaml"),
+        "bibliography_snapshot_sha256": _path_digest(
+            config.bibliography_snapshot_path(round_number)
+        ),
+        "effective_authors_sha256": _path_digest(resolve_author_library_path()),
+    }
+    if observed != expected_v1:
+        raise WorkflowError(
+            "HISTORICAL_ROUND_STATE_MISMATCH: cannot migrate the v1 frozen state "
+            f"for {round_name(round_number)} because its live inputs differ."
+        )
+    if metadata.parent_round is not None:
+        ensure_historical_round_state(config, metadata.parent_round)
+    snapshot = config.author_snapshot_path(round_number)
+    snapshot_existed = snapshot.is_file()
+    content = _validated_snapshot_bytes(config, round_number)
+    try:
+        if not snapshot_existed:
+            _write_bytes_atomically(snapshot, content)
+        return _write_round_state(
+            config.round_state_path(round_number),
+            _round_state_values(
+                config,
+                round_number,
+                author_snapshot_sha256=_snapshot_digest(content),
+            ),
+        )
+    except Exception:
+        if not snapshot_existed and snapshot.is_file():
+            snapshot.unlink()
+        raise
+
+
 def _bootstrap_legacy_round_state(config: ProjectConfig, round_number: int) -> Path:
     """Migrate a legacy history only when its last manifest proves identity."""
+    from .authors import resolve_author_library_path
+
     manifest_path = config.build_manifest_path(round_number)
     try:
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
@@ -770,7 +983,17 @@ def _bootstrap_legacy_round_state(config: ProjectConfig, round_number: int) -> P
             "HISTORICAL_ROUND_STATE_UNAVAILABLE: no valid frozen state or legacy "
             f"build manifest exists for {round_name(round_number)}."
         ) from exc
-    expected = _round_state_values(config, round_number)
+    metadata = load_meta(config.round_dir(round_number) / "meta.yaml")
+    if metadata.parent_round is not None:
+        ensure_historical_round_state(config, metadata.parent_round)
+    snapshot = config.author_snapshot_path(round_number)
+    snapshot_existed = snapshot.is_file()
+    snapshot_content = _validated_snapshot_bytes(config, round_number)
+    expected = _round_state_values(
+        config,
+        round_number,
+        author_snapshot_sha256=_snapshot_digest(snapshot_content),
+    )
     inputs = manifest.get("inputs") if isinstance(manifest, dict) else None
     artifact_inputs = (
         manifest.get("artifact_inputs") if isinstance(manifest, dict) else None
@@ -815,11 +1038,11 @@ def _bootstrap_legacy_round_state(config: ProjectConfig, round_number: int) -> P
     authors_proven = bool(
         isinstance(inputs, dict)
         and inputs.get("effective_authors_sha256")
-        == expected["effective_authors_sha256"]
+        == _path_digest(resolve_author_library_path())
     ) or bool(
         isinstance(child_inputs, dict)
         and child_inputs.get("effective_authors_sha256")
-        == expected["effective_authors_sha256"]
+        == _path_digest(resolve_author_library_path())
     )
     proven = bool(
         isinstance(manifest, dict)
@@ -838,16 +1061,20 @@ def _bootstrap_legacy_round_state(config: ProjectConfig, round_number: int) -> P
             "Restore the audited historical source, metadata, author metadata, "
             "and bibliography snapshot before rebuilding."
         )
-    return _write_round_state(config.round_state_path(round_number), expected)
+    try:
+        if not snapshot_existed:
+            _write_bytes_atomically(snapshot, snapshot_content)
+        return _write_round_state(config.round_state_path(round_number), expected)
+    except Exception:
+        if not snapshot_existed and snapshot.is_file():
+            snapshot.unlink()
+        raise
 
 
-def ensure_historical_round_state(config: ProjectConfig, round_number: int) -> Path:
-    """Verify a historical round against its immutable scientific identity."""
-    rounds = _round_numbers(config.project)
-    if round_number == rounds[-1]:
-        raise WorkflowError(
-            "Historical round-state verification was requested for the active round."
-        )
+def _ensure_one_historical_round_state(
+    config: ProjectConfig,
+    round_number: int,
+) -> Path:
     target = config.round_state_path(round_number)
     if not target.is_file():
         _bootstrap_legacy_round_state(config, round_number)
@@ -855,9 +1082,19 @@ def ensure_historical_round_state(config: ProjectConfig, round_number: int) -> P
         observed = yaml.safe_load(target.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise WorkflowError(f"HISTORICAL_ROUND_STATE_INVALID: {target}") from exc
-    expected = _round_state_values(config, round_number)
     if not isinstance(observed, dict):
         raise WorkflowError(f"HISTORICAL_ROUND_STATE_INVALID: {target}")
+    if observed.get("schema") == "sci-manuscript-round-state/v1":
+        _migrate_v1_round_state(config, round_number, observed)
+        observed = yaml.safe_load(target.read_text(encoding="utf-8"))
+    if not isinstance(observed, dict) or observed.get("schema") != (
+        "sci-manuscript-round-state/v2"
+    ):
+        raise WorkflowError(
+            "HISTORICAL_ROUND_STATE_MISMATCH: unsupported frozen-state schema "
+            f"for {round_name(round_number)}: {target}"
+        )
+    expected = _round_state_values(config, round_number)
     mismatches = [key for key, value in expected.items() if observed.get(key) != value]
     if mismatches or set(observed) != set(expected):
         detail = ", ".join(mismatches or ("unexpected fields",))
@@ -866,7 +1103,21 @@ def ensure_historical_round_state(config: ProjectConfig, round_number: int) -> P
             f"{round_name(round_number)} differs from {target} ({detail}). "
             "Restore the frozen historical source/state before rebuilding."
         )
+    _validated_snapshot_bytes(config, round_number)
     return target
+
+
+def ensure_historical_round_state(config: ProjectConfig, round_number: int) -> Path:
+    """Verify one historical round and every ancestor it can consume."""
+    rounds = _round_numbers(config.project)
+    if round_number == rounds[-1]:
+        raise WorkflowError(
+            "Historical round-state verification was requested for the active round."
+        )
+    verified = config.round_state_path(round_number)
+    for ancestor in range(round_number + 1):
+        verified = _ensure_one_historical_round_state(config, ancestor)
+    return verified
 
 
 def _tool_version(name: str) -> str:
@@ -944,14 +1195,16 @@ def _build_input_fingerprints(
     engine_override: str | None = None,
 ) -> dict[str, object]:
     """Return content hashes governing reusable build artifacts."""
-    from .authors import resolve_author_library_path
     from .templates import publisher_resource
 
-    author_source = resolve_author_library_path()
+    author_source = author_library_source_for_round(config, round_number)
     bundled = resources_root() / "authors.yaml"
-    author_kind = (
-        "bundled" if author_source.resolve() == bundled.resolve() else "configured"
-    )
+    if author_source == config.author_snapshot_path(round_number):
+        author_kind = "frozen"
+    else:
+        author_kind = (
+            "bundled" if author_source.resolve() == bundled.resolve() else "configured"
+        )
     version = config.round_dir(round_number)
     values: dict[str, object] = {
         "scientific_source_sha256": source_digest(version, scientific_only=True),
@@ -966,6 +1219,7 @@ def _build_input_fingerprints(
             resources_root() / "manuscript_preamble"
         ),
         "revision_style_sha256": _path_digest(config.references / "revision_style.tex"),
+        "revision_runtime_sha256": _path_digest(resources_root() / "revision"),
         "implementation_sha256": _implementation_digest(),
         "toolchain": _toolchain_identity(config, engine_override),
     }
@@ -1041,6 +1295,7 @@ def _artifact_input_fingerprints(
             "parent_scientific_source_sha256": base["parent_scientific_source_sha256"],
             "parent_references_bib_sha256": base["parent_references_bib_sha256"],
             "revision_style_sha256": base["revision_style_sha256"],
+            "revision_runtime_sha256": base["revision_runtime_sha256"],
             "review_reference_provenance_sha256": _response_reference_digest(
                 config.response_dir(round_number) / "responses.tex"
             ),
@@ -1437,6 +1692,9 @@ def rollback_revision(config: ProjectConfig) -> tuple[Path, int]:
     previous_round_state = latest.round_state_path(previous_round)
     if previous_round_state.is_file():
         previous_round_state.unlink()
+    previous_authors = latest.author_snapshot_path(previous_round)
+    if previous_authors.is_file():
+        previous_authors.unlink()
     return archived, latest.current_round - 1
 
 

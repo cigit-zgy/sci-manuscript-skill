@@ -767,10 +767,11 @@ class ManuscriptProject:
         target_round = latest.current_round + 1
         target = latest.round_dir(target_round)
         parent_round_state = latest.round_state_path(latest.current_round)
+        parent_authors = latest.author_snapshot_path(latest.current_round)
         parent_bibliography = latest.bibliography_snapshot_path(latest.current_round)
         with temporary_run(self.root, keep_temp) as run_dir:
             parent_snapshot = _snapshot_files(
-                (parent_bibliography, parent_round_state),
+                (parent_bibliography, parent_round_state, parent_authors),
                 run_dir / "parent_state_rollback",
             )
             try:
@@ -854,13 +855,18 @@ class ManuscriptProject:
         latest = load_project(self.root)
         selected = parse_round(round, latest.current_round)
         config = load_project(self.root, selected)
+        if selected != latest.current_round:
+            ensure_historical_round_state(config, selected)
         target = config.bibliography_snapshot_path(selected)
+        round_state = config.round_state_path(selected)
+        authors = config.author_snapshot_path(selected)
         clean_output = config.output_dir(selected) / (
             "manuscript.pdf" if selected == 0 else "manuscript_clean.pdf"
         )
         with temporary_run(self.root, keep_temp) as run_dir:
             snapshot = _snapshot_files(
-                (target, clean_output), run_dir / "bibliography_state_rollback"
+                (target, round_state, authors, clean_output),
+                run_dir / "bibliography_state_rollback",
             )
             try:
                 clean = build_clean_manuscript(config, selected, run_dir, engine)

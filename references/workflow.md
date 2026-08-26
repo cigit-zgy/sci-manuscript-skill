@@ -367,11 +367,15 @@ bibliography and atomically restores the previous round's frozen bibliography
 as the editable shared latest state.
 
 Creating a child round also writes the parent's immutable
-`state/<round>/round_state.yaml`, which records source, metadata, effective
-author metadata, bibliography snapshot, and parent digests. A historical build
-verifies this record before compilation. Its separate `build_manifest.yaml` may
-be updated with derived artifact provenance, but the frozen round state and
-bibliography snapshot remain byte-identical.
+`state/<round>/authors.yaml` and `round_state.yaml`. The author snapshot contains
+only the selected authors and affiliations for that round. The round-state
+record binds source, metadata, bibliography, that effective-author snapshot,
+and the parent `round_state.yaml` digest. A historical build verifies every
+ancestor through the selected round before compilation and renders from the
+frozen author snapshot. Its separate `build_manifest.yaml` may be updated with
+derived artifact provenance, but the frozen scientific state remains
+byte-identical. A hash-proven v1 round state is upgraded once to this
+self-contained v2 representation.
 
 Each successful latest-round build or submission with a compiled manuscript
 freezes the AUX-resolved

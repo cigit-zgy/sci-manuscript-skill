@@ -86,8 +86,9 @@ when clean, marked, response, and full identity validation are required.
 - Ancestry is `initial_submission -> revision_01 -> revision_02 -> ...`.
 - `references/references.bib` is current editable bibliography state;
   `state/<round>/bibliography.bib` is immutable historical machine state.
-- `state/<round>/round_state.yaml` freezes historical source, metadata,
-  effective author metadata, bibliography, and parent identity.
+- `state/<round>/round_state.yaml` and `authors.yaml` freeze historical source,
+  selected author/affiliation metadata, bibliography, and the verified ancestry
+  chain.
 - `output/` contains canonical user-facing PDFs only. Selective builds remove
   stale PDFs and retain manifest-verified current PDFs.
 - Manifests live under `state/`; audits, timing, cache, TeX, AUX, and logs live

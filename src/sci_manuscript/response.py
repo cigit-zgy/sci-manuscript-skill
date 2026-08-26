@@ -23,7 +23,11 @@ from .metadata import (
 from .review_ids import is_review_id
 from .templates import resources_root
 from .timing import BuildTelemetry
-from .workspace import ProjectConfig, artifact_input_digest
+from .workspace import (
+    ProjectConfig,
+    artifact_input_digest,
+    author_library_source_for_round,
+)
 
 LOCATION_USE = re.compile(r"\\ReviewLocation\{([^}]+)\}")
 RESPONSE_LATIN_FONT = "Times New Roman"
@@ -451,7 +455,11 @@ def build_response(
         staged_source.write_text(
             LOCATION_USE.sub(replace_location, text), encoding="utf-8"
         )
-        selection = generate_metadata(config.round_dir(round_number), stage)
+        selection = generate_metadata(
+            config.round_dir(round_number),
+            stage,
+            author_library_source_for_round(config, round_number),
+        )
     compile_stage = (
         telemetry.measure("response_compile") if telemetry else contextlib.nullcontext()
     )

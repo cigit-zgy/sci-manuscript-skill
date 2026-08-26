@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 from test_core import _revision, _workspace
 
 import sci_manuscript.api as api_module
 import sci_manuscript.compile as compile_module
 from sci_manuscript.api import BuildTarget, ManuscriptProject
+from sci_manuscript.authors import resolve_author_library_path
 from sci_manuscript.compile import CompileResult
 from sci_manuscript.diff import MarkedResult
 from sci_manuscript.errors import WorkflowError
@@ -18,6 +21,7 @@ from sci_manuscript.workspace import (
     ProjectConfig,
     ensure_historical_round_state,
     load_project,
+    source_digest,
     write_build_manifest,
 )
 
@@ -258,25 +262,42 @@ def test_start_revision_freezes_parent_scientific_state(tmp_path: Path) -> None:
     frozen = config.state_dir(0) / "round_state.yaml"
     assert frozen.is_file()
     text = frozen.read_text(encoding="utf-8")
-    assert "sci-manuscript-round-state/v1" in text
+    assert "sci-manuscript-round-state/v2" in text
     assert "scientific_source_sha256" in text
     assert "metadata_sha256" in text
     assert "bibliography_snapshot_sha256" in text
-    assert "effective_authors_sha256" in text
+    assert "effective_authors_snapshot_sha256" in text
+    assert "parent_round_state_sha256" in text
 
 
-def test_historical_build_preserves_frozen_state_and_bibliography_bytes(
+def test_child_round_state_binds_parent_round_state_digest(tmp_path: Path) -> None:
+    r02 = _revision(_revision(_workspace(tmp_path)))
+    parent_state = r02.round_state_path(0)
+    child_state = yaml.safe_load(r02.round_state_path(1).read_text(encoding="utf-8"))
+
+    assert (
+        child_state["parent_round_state_sha256"]
+        == hashlib.sha256(parent_state.read_bytes()).hexdigest()
+    )
+
+
+def test_historical_build_preserves_all_frozen_state_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     r01 = _revision(_workspace(tmp_path))
     _stub_build_pipeline(monkeypatch)
     frozen = r01.state_dir(0) / "round_state.yaml"
     bibliography = r01.bibliography_snapshot_path(0)
-    before = (frozen.read_bytes(), bibliography.read_bytes())
+    authors = r01.author_snapshot_path(0)
+    before = (frozen.read_bytes(), bibliography.read_bytes(), authors.read_bytes())
 
     ManuscriptProject(r01.project).build(round="initial_submission")
 
-    assert (frozen.read_bytes(), bibliography.read_bytes()) == before
+    assert (
+        frozen.read_bytes(),
+        bibliography.read_bytes(),
+        authors.read_bytes(),
+    ) == before
 
 
 def test_historical_source_edit_is_rejected_before_build(
@@ -312,6 +333,81 @@ def test_historical_bibliography_snapshot_edit_is_rejected_before_build(
     assert calls == []
 
 
+@pytest.mark.parametrize("tampered", ("source", "bibliography", "metadata"))
+def test_historical_revision_build_rejects_tampered_parent_ancestry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tampered: str,
+) -> None:
+    r02 = _revision(_revision(_workspace(tmp_path)))
+    calls = _stub_build_pipeline(monkeypatch)
+    if tampered == "source":
+        target = r02.round_dir(0) / "sections" / "01_introduction.tex"
+        target.write_text(
+            target.read_text(encoding="utf-8") + "\ntampered parent\n",
+            encoding="utf-8",
+        )
+    elif tampered == "bibliography":
+        target = r02.bibliography_snapshot_path(0)
+        target.write_text(
+            target.read_text(encoding="utf-8") + "\n% tampered parent\n",
+            encoding="utf-8",
+        )
+    else:
+        target = r02.round_dir(0) / "meta.yaml"
+        original = target.read_text(encoding="utf-8")
+        assert "Example Journal" in original
+        target.write_text(
+            original.replace("Example Journal", "Tampered Historical Journal", 1),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(WorkflowError, match="HISTORICAL_ROUND_STATE_MISMATCH"):
+        ManuscriptProject(r02.project).build(round="revision_01", target="marked")
+
+    assert calls == []
+
+
+def test_historical_round_freezes_only_effective_author_records(tmp_path: Path) -> None:
+    r01 = _revision(_workspace(tmp_path))
+
+    snapshot = r01.state_dir(0) / "authors.yaml"
+
+    assert snapshot.is_file()
+    text = snapshot.read_text(encoding="utf-8")
+    assert "author_one:" in text
+    assert "author_two:" in text
+    assert "author_three:" in text
+    assert "zhao_guangyao:" not in text
+    assert "liu_hong:" not in text
+
+
+def test_historical_runtime_uses_frozen_effective_author_snapshot(
+    tmp_path: Path,
+) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    author_source = resolve_author_library_path()
+    updated = author_source.read_text(encoding="utf-8")
+    assert "First Author" in updated
+    author_source.write_text(
+        updated.replace("First Author", "Changed External Author", 1),
+        encoding="utf-8",
+    )
+    stage = tmp_path / "historical-stage"
+
+    ensure_historical_round_state(r01, 0)
+    compile_module.stage_runtime_resources(
+        r01,
+        0,
+        stage,
+        include_manuscript=True,
+    )
+
+    generated = (stage / "author_metadata.tex").read_text(encoding="utf-8")
+    assert "First Author" in generated
+    assert "Changed External Author" not in generated
+
+
 def test_active_round_remains_editable_with_frozen_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -327,7 +423,11 @@ def test_active_round_remains_editable_with_frozen_parent(
     assert [name for name, _kwargs in calls] == ["clean"]
 
 
-def test_legacy_manifest_bootstraps_historical_round_state(tmp_path: Path) -> None:
+def test_legacy_manifest_bootstraps_historical_round_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(compile_module.shutil, "which", lambda name: f"/usr/bin/{name}")
     r00 = _workspace(tmp_path)
     output = r00.output_dir(0) / "manuscript.pdf"
     output.write_bytes(b"legacy pdf")
@@ -344,7 +444,42 @@ def test_legacy_manifest_bootstraps_historical_round_state(tmp_path: Path) -> No
     migrated = ensure_historical_round_state(r01, 0)
 
     assert migrated == frozen
-    assert "sci-manuscript-round-state/v1" in migrated.read_text(encoding="utf-8")
+    assert "sci-manuscript-round-state/v2" in migrated.read_text(encoding="utf-8")
+
+
+def test_v1_round_state_migrates_to_effective_author_snapshot(tmp_path: Path) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    state = r01.round_state_path(0)
+    snapshot = r01.author_snapshot_path(0)
+    snapshot.unlink()
+
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    state.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "sci-manuscript-round-state/v1",
+                "round": "r00",
+                "parent": None,
+                "scientific_source_sha256": source_digest(
+                    r01.round_dir(0), scientific_only=True
+                ),
+                "metadata_sha256": digest(r01.round_dir(0) / "meta.yaml"),
+                "bibliography_snapshot_sha256": digest(
+                    r01.bibliography_snapshot_path(0)
+                ),
+                "effective_authors_sha256": digest(resolve_author_library_path()),
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = ensure_historical_round_state(r01, 0)
+
+    assert snapshot.is_file()
+    assert "sci-manuscript-round-state/v2" in migrated.read_text(encoding="utf-8")
 
 
 def test_missing_round_lists_available_rounds(tmp_path: Path) -> None:
@@ -438,6 +573,7 @@ def test_bibliography_cache_is_content_keyed_and_invalidates_on_input_change(
         return CompileResult(pdf, "")
 
     monkeypatch.setattr(compile_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(compile_module, "resolve_engine", lambda *_args: "tectonic")
     first = compile_module.materialize_bibliography(
         source, flattened, tmp_path / "build-1", config, "tectonic", None, cache
     )

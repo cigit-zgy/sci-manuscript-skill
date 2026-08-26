@@ -257,10 +257,13 @@ cross-PDF validation because no clean PDF is compiled.
 
 Build manifests use content digests to identify CURRENT, STALE, and MISSING
 artifacts. Artifact fingerprints include the installed production Python
-implementation plus the selected engine and renderer-tool identities. When a
-round becomes historical, `state/<round>/round_state.yaml` freezes its source,
-metadata, effective author metadata, bibliography snapshot, and parent identity;
-historical builds verify that record before compilation without rewriting it.
+implementation, package-owned revision/location TeX runtimes, and the selected
+engine and renderer-tool identities. When a round becomes historical,
+`state/<round>/authors.yaml` stores only its selected author and affiliation
+records; `round_state.yaml` binds that snapshot to source, metadata,
+bibliography, and the parent round-state digest. Historical builds verify the
+complete ancestor chain before compilation and render from the frozen author
+snapshot instead of the current external author library.
 
 ## Zotero / Better BibTeX
 

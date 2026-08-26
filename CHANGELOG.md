@@ -14,9 +14,10 @@
   provenance are covered by regression tests.
 - Revision builds support target-aware marked-only, response, clean, and full
   paths with deterministic bibliography caching and per-stage timing.
-- Historical rounds freeze source, metadata, effective author metadata,
-  bibliography, and parent identity; artifact freshness also includes the
-  installed implementation and selected toolchain identity.
+- Historical rounds freeze source, metadata, selected author/affiliation
+  snapshots, bibliography, and ancestry-bound parent state; verification is
+  ancestor-closed. Artifact freshness also includes the installed implementation,
+  package revision/location TeX runtimes, and selected toolchain identity.
 - Response letters use package-owned Chinese and English openings, ordered
   one-to-many correspondence metadata, one opening-page break, automatic
   TeX-native current locations, frozen component-local spacing, and exact

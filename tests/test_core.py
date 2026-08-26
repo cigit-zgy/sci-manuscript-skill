@@ -801,6 +801,7 @@ def test_failed_revision_creation_removes_partial_round_state_and_tmp(
     assert source_digest(config.round_dir(0), scientific_only=True) == parent_before
     assert parent_snapshot.read_bytes() == snapshot_before
     assert not config.round_state_path(0).exists()
+    assert not config.author_snapshot_path(0).exists()
 
 
 def test_sync_bib_uses_only_the_explicit_export(tmp_path: Path) -> None:
@@ -1139,6 +1140,8 @@ def test_response_build_uses_package_template_without_mutating_source(
 
     monkeypatch.setattr(response_module, "resources_root", lambda: package_root)
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
+    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     monkeypatch.setattr(
         response_module,
         "_response_pdf_consistency",
@@ -1184,6 +1187,7 @@ def test_response_build_rejects_pdf_missing_visible_response_body(
 
     monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     monkeypatch.setattr(
         response_module,
         "_extract_pdf_text",
@@ -1228,6 +1232,8 @@ def test_response_build_accepts_empty_response_for_response_only_comment(
         return CompileResult(pdf, "")
 
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
+    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     monkeypatch.setattr(
         response_module,
         "_response_pdf_consistency",
@@ -1276,6 +1282,8 @@ def test_response_build_omits_unavailable_marked_location(
         return CompileResult(pdf, "")
 
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
+    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     monkeypatch.setattr(
         response_module,
         "_response_pdf_consistency",

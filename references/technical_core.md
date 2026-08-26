@@ -243,8 +243,9 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 ### Hard invariants
 
 - historical scientific state immutable；round ancestry 必须 adjacent。
-- historical build 前必须校验 frozen source、metadata、effective author metadata、
-  bibliography snapshot 和 parent identity；不匹配时 fail closed。
+- historical build 前必须逐轮校验全部 ancestor 的 frozen source、metadata、
+  effective author snapshot、bibliography snapshot 和 parent-state digest；不匹配时
+  fail closed。
 - historical build 不改变 active round、不刷新 frozen snapshot、不重新编号、不迁移 scientific content。
 - failed lifecycle/build 不污染 last successful state。
 - successful state 更新通过 staging、archive 和 atomic replace 完成。
@@ -253,7 +254,7 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 
 **Approach A — mutable current directories only.** 只保留一个可编辑目录，由用户手工复制历史版本。
 
-**Approach B — immutable per-round state snapshots + manifest/hash.** 每轮保留 source directory、creation state、bibliography snapshot、immutable `round_state.yaml` 和独立的 mutable artifact manifest。
+**Approach B — immutable per-round state snapshots + manifest/hash.** 每轮保留 source directory、creation state、bibliography snapshot、仅含实际 selected records 的 `authors.yaml`、immutable `round_state.yaml` 和独立的 mutable artifact manifest。
 
 **Approach C — 完全依赖 Git commit.** 用 Git tree/commit 作为唯一 scientific state 和 ancestry。
 
@@ -279,6 +280,10 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 - synthetic active `revision_02` 项目显式 build `revision_01` 后，active round 仍为 2，且未调用 source initialization/mutation。
 - historical build 保持 `round_state.yaml` 和 bibliography snapshot bytes 不变；
   source 或 snapshot 人工修改均在 compilation 前被拒绝，active round 仍可编辑。
+- active `revision_02` 下显式重建 historical `revision_01` 时，若其 `r00`
+  ancestor 的 source、metadata 或 bibliography 被修改，均在 compilation 前拒绝。
+- 修改 external author library 后，historical build 继续使用 per-round selected
+  author/affiliation snapshot；无关 author record 不进入 snapshot identity。
 - failed revision creation 删除 partial round/state/tmp，parent scientific digest 不变。
 - rollback/reindex 使用 archive，并验证 scientific bytes 与 editable submission sources 保留。
 
@@ -301,7 +306,10 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 
 ### Known limitations
 
-round 必须是连续 fixed-width 目录；删除中间 round 后必须显式 reindex。历史 source 可重建，但外部字体和 TeX bundle 仍需由 manifest/toolchain 信息辅助复现。
+round 必须是连续 fixed-width 目录；删除中间 round 后必须显式 reindex。历史
+scientific/author state 是 self-contained；外部字体和 TeX engine/toolchain 仍需由
+manifest identity 辅助复现。旧 v1 hash-only author state 只有在原 external author
+library 仍与已冻结 hash 相符时才能安全升级。
 
 ### Future optimization triggers
 
@@ -433,6 +441,8 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 - 修改 response template 只使 response stale。
 - 修改 production implementation identity 或 selected toolchain identity 会使
   artifact stale；当前采用保守的全 artifact invalidation。
+- 修改 package-owned `revision/marked_runtime.tex` 或 `location_runtime.tex` 会使
+  marked/response stale，clean artifact 保持 current。
 - stale selective build 删除旧 PDF；manifest-verified current PDF 保留。
 - response target 可复用 current marked PDF；缺失/陈旧 marked 会重建。
 - response PDF projection 验证 localized fixed opening/signature、ordered comment
@@ -441,7 +451,7 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 
 ### Decision
 
-选择 Approach C。mtime 不具内容语义；always rebuild 可作为诊断基线，但不是默认策略。正式状态语义为：文件不存在是 `MISSING`；文件存在且 manifest/output/input 全匹配是 `CURRENT`；其余是 `STALE`。implementation identity 使用安装包内全部 production `.py` 的确定性 digest；toolchain identity 使用实际选中的 engine/driver 及 renderer tools 版本，优先正确性而非 cache hit rate。
+选择 Approach C。mtime 不具内容语义；always rebuild 可作为诊断基线，但不是默认策略。正式状态语义为：文件不存在是 `MISSING`；文件存在且 manifest/output/input 全匹配是 `CURRENT`；其余是 `STALE`。implementation identity 使用安装包内全部 production `.py` 的确定性 digest；marked/response 另绑定整个 package-owned `resources/revision/` runtime；toolchain identity 使用实际选中的 engine/driver 及 renderer tools 版本，优先正确性而非 cache hit rate。
 
 ### Current implementation
 
@@ -458,9 +468,9 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 
 ### Known limitations
 
-dependency graph 必须由维护者显式更新；production Python 采用保守整体 digest，
-避免 renderer function 漏登记。新增非 Python package resource 仍需进入对应
-artifact fingerprint。当前不提供跨项目共享 cache。
+dependency graph 必须由维护者显式更新；production Python 与 revision/location
+runtime 均采用保守整体 digest，避免 renderer consumer 漏登记。新增其他类别的
+非 Python package resource 仍需进入对应 artifact fingerprint。当前不提供跨项目共享 cache。
 
 ### Future optimization triggers
 

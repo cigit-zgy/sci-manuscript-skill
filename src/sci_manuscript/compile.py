@@ -20,7 +20,11 @@ from .metadata import generate_metadata
 from .templates import publisher_resource, resources_root
 from .tex import scan_tex_commands
 from .timing import BuildTelemetry
-from .workspace import ProjectConfig, bibliography_source_for_round
+from .workspace import (
+    ProjectConfig,
+    author_library_source_for_round,
+    bibliography_source_for_round,
+)
 
 SUPPORTED_ENGINES = ("auto", "tectonic", "latex")
 
@@ -580,7 +584,11 @@ def stage_runtime_resources(
     (target / "preamble.tex").write_text(
         f"\\input{{preamble/{config.language}}}\n", encoding="utf-8"
     )
-    generate_metadata(version, target)
+    generate_metadata(
+        version,
+        target,
+        author_library_source_for_round(config, round_number),
+    )
     return target / "manuscript.tex"
 
 

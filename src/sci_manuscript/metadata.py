@@ -955,13 +955,16 @@ def render_publisher_metadata(
 def generate_metadata(
     round_dir: Path,
     target_dir: Path,
+    author_library_path: Path | None = None,
 ) -> author_data.AuthorSelection:
     """Generate ephemeral LaTeX metadata inside an isolated build directory."""
     metadata = _metadata_with_frontmatter_title(
         load_meta(round_dir / "meta.yaml"),
         round_dir,
     )
-    library = author_data.load_author_library(author_data.resolve_author_library_path())
+    library = author_data.load_author_library(
+        author_library_path or author_data.resolve_author_library_path()
+    )
     selection = author_data.resolve_authors(metadata, library)
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "author_metadata.tex").write_text(
