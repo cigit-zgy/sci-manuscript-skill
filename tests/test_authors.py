@@ -154,7 +154,7 @@ def test_response_correspondence_supports_one_to_three_authors(
         expected_ids
     )
     assert rendered.count(r"\vspace{0.55\baselineskip}") == 2 * (count - 1)
-    assert rendered.count(r"\vspace{0.15\baselineskip}") == 2 * count * 2
+    assert rendered.count(r"\vspace{0.25\baselineskip}") == 2 * count * 2
 
 
 def test_corresponding_authors_follow_manuscript_order_and_skip_other_authors(

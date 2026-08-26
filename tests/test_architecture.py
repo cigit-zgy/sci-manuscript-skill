@@ -89,12 +89,13 @@ def test_revision_semantics_contract_is_documented() -> None:
         / "common.tex"
     ).read_text(encoding="utf-8")
     assert r"\newcommand{\RevisionReviewerColor}{RubineRed}" in common
-    assert r"\definecolor{SciLinkBlue}{RGB}{0,0,255}" in common
-    assert "citecolor=SciLinkBlue" in common
-    assert "urlcolor=SciLinkBlue" in common
+    assert r"\definecolor{SciLinkBlue}{RGB}{0,0,255}" not in common
+    assert "citecolor=ProcessBlue" in common
+    assert "urlcolor=ProcessBlue" in common
     assert "ForestGreen" in runtime
     assert "definecolor{SciRevision" not in common
-    assert "ProcessBlue" not in common + runtime
+    assert "SciLinkBlue" not in common + runtime
+    assert "ProcessBlue" in common + runtime
     assert "RevisionDeleted" not in style
     assert r"\CJKsout" not in style
     assert r"\SCIDeletedBibItem" not in runtime

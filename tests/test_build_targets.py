@@ -14,7 +14,12 @@ from sci_manuscript.compile import CompileResult
 from sci_manuscript.diff import MarkedResult
 from sci_manuscript.errors import WorkflowError
 from sci_manuscript.timing import BuildTelemetry
-from sci_manuscript.workspace import ProjectConfig, load_project
+from sci_manuscript.workspace import (
+    ProjectConfig,
+    ensure_historical_round_state,
+    load_project,
+    write_build_manifest,
+)
 
 
 def _reviewed_revision(tmp_path: Path) -> ProjectConfig:
@@ -243,6 +248,103 @@ def test_explicit_initial_submission_builds_historical_manuscript(
     assert result.version == "initial_submission"
     assert [name for name, _kwargs in calls] == ["clean"]
     assert load_project(r01.project).current_round == 1
+
+
+def test_start_revision_freezes_parent_scientific_state(tmp_path: Path) -> None:
+    config = _workspace(tmp_path)
+
+    ManuscriptProject(config.project).start_revision(confirmed=True)
+
+    frozen = config.state_dir(0) / "round_state.yaml"
+    assert frozen.is_file()
+    text = frozen.read_text(encoding="utf-8")
+    assert "sci-manuscript-round-state/v1" in text
+    assert "scientific_source_sha256" in text
+    assert "metadata_sha256" in text
+    assert "bibliography_snapshot_sha256" in text
+    assert "effective_authors_sha256" in text
+
+
+def test_historical_build_preserves_frozen_state_and_bibliography_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    _stub_build_pipeline(monkeypatch)
+    frozen = r01.state_dir(0) / "round_state.yaml"
+    bibliography = r01.bibliography_snapshot_path(0)
+    before = (frozen.read_bytes(), bibliography.read_bytes())
+
+    ManuscriptProject(r01.project).build(round="initial_submission")
+
+    assert (frozen.read_bytes(), bibliography.read_bytes()) == before
+
+
+def test_historical_source_edit_is_rejected_before_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    calls = _stub_build_pipeline(monkeypatch)
+    source = r01.round_dir(0) / "sections" / "01_introduction.tex"
+    source.write_text(
+        source.read_text(encoding="utf-8") + "\nchanged\n", encoding="utf-8"
+    )
+
+    with pytest.raises(WorkflowError, match="HISTORICAL_ROUND_STATE_MISMATCH"):
+        ManuscriptProject(r01.project).build(round="initial_submission")
+
+    assert calls == []
+
+
+def test_historical_bibliography_snapshot_edit_is_rejected_before_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    calls = _stub_build_pipeline(monkeypatch)
+    bibliography = r01.bibliography_snapshot_path(0)
+    bibliography.write_text(
+        bibliography.read_text(encoding="utf-8") + "\n% changed\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkflowError, match="HISTORICAL_ROUND_STATE_MISMATCH"):
+        ManuscriptProject(r01.project).build(round="initial_submission")
+
+    assert calls == []
+
+
+def test_active_round_remains_editable_with_frozen_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    calls = _stub_build_pipeline(monkeypatch)
+    source = r01.round_dir(1) / "sections" / "01_introduction.tex"
+    source.write_text(
+        source.read_text(encoding="utf-8") + "\nactive edit\n", encoding="utf-8"
+    )
+
+    ManuscriptProject(r01.project).build(target="clean")
+
+    assert [name for name, _kwargs in calls] == ["clean"]
+
+
+def test_legacy_manifest_bootstraps_historical_round_state(tmp_path: Path) -> None:
+    r00 = _workspace(tmp_path)
+    output = r00.output_dir(0) / "manuscript.pdf"
+    output.write_bytes(b"legacy pdf")
+    run = tmp_path / "legacy-manifest"
+    run.mkdir()
+    write_build_manifest(r00, 0, "build", (output,), "tectonic", run)
+    r01 = _revision(r00)
+    child_output = r01.output_dir(1) / "manuscript_marked.pdf"
+    child_output.write_bytes(b"legacy child pdf")
+    write_build_manifest(r01, 1, "build", (child_output,), "tectonic", run)
+    frozen = r01.round_state_path(0)
+    frozen.unlink()
+
+    migrated = ensure_historical_round_state(r01, 0)
+
+    assert migrated == frozen
+    assert "sci-manuscript-round-state/v1" in migrated.read_text(encoding="utf-8")
 
 
 def test_missing_round_lists_available_rounds(tmp_path: Path) -> None:

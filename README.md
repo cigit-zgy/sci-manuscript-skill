@@ -122,7 +122,7 @@ marked manuscript. Parent-only deletions never appear.
 | reviewer-driven addition/replacement | RubineRed |
 | author-driven addition/replacement | ForestGreen |
 | unchanged text | black |
-| citation markers and DOI/URL links | pure RGB blue (`#0000FF`) |
+| citation markers and DOI/URL links | xcolor `ProcessBlue` (`dvipsnames`) |
 
 Fine addition spans are preferred. At 60% or greater visible addition coverage,
 one current paragraph, heading, or caption may be highlighted as a whole only
@@ -134,7 +134,7 @@ tables, or lists. Changed display equations may be highlighted atomically.
 
 Citation identity is the BibTeX key, not its rendered number. Current citation
 markers and reference-related DOI/URL links retain the manuscript's normal link
-styling, which is pure RGB blue (`#0000FF`) in the default package contract. Bibliography prose
+styling, which is xcolor `ProcessBlue` from `dvipsnames`. Bibliography prose
 remains black. Provenance is retained for audit and reviewer-location purposes;
 removed references are absent because only the current bibliography renders.
 
@@ -162,6 +162,10 @@ never bundled. If the exact font is unavailable through fontconfig, the build
 fails with `RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN` instead of silently
 substituting a Times-like family.
 
+After compilation, the response build uses Poppler text extraction to verify
+the localized opening and correspondence fields, ordered comment IDs, visible
+response-body projections, and resolved locations against the real PDF.
+
 Multiple corresponding authors are supported. The response letter lists them
 in manuscript author order, filtering the selected author list without sorting
 by name, affiliation, or metadata declaration order. Each localized block
@@ -172,7 +176,7 @@ resolvable address fails the build with an author-specific metadata error.
 
 Block labels are `通讯地址：` and `邮箱：` in Chinese, and
 `Correspondence address:` and `E-mail:` in English. Name-to-address and
-address-to-email gaps are each `0.15\baselineskip`; adjacent author blocks are
+address-to-email gaps are each `0.25\baselineskip`; adjacent author blocks are
 separated by `0.55\baselineskip`, with no trailing block gap.
 
 Reviewer locations come from a layout-equivalent compilation of the final
@@ -252,8 +256,11 @@ Marked-only builds run source-level current-content and topology checks but skip
 cross-PDF validation because no clean PDF is compiled.
 
 Build manifests use content digests to identify CURRENT, STALE, and MISSING
-artifacts. The bibliography cache is content-keyed and includes relevant TeX,
-BibTeX, engine, and tool identity.
+artifacts. Artifact fingerprints include the installed production Python
+implementation plus the selected engine and renderer-tool identities. When a
+round becomes historical, `state/<round>/round_state.yaml` freezes its source,
+metadata, effective author metadata, bibliography snapshot, and parent identity;
+historical builds verify that record before compilation without rewriting it.
 
 ## Zotero / Better BibTeX
 

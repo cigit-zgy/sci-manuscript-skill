@@ -729,9 +729,9 @@ def _render_correspondence_blocks(
             "\n".join(
                 (
                     f"{_latex_escape(name)}\\par",
-                    r"\vspace{0.15\baselineskip}",
+                    r"\vspace{0.25\baselineskip}",
                     f"{address_label}{_latex_escape(address)}\\par",
-                    r"\vspace{0.15\baselineskip}",
+                    r"\vspace{0.25\baselineskip}",
                     f"{email_label}\\href{{mailto:{email}}}{{{email}}}",
                 )
             )

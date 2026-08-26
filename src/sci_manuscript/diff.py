@@ -110,24 +110,23 @@ def _revision_runtime(language: str) -> str:
 
 
 def _validate_reference_style_contract() -> None:
-    """Require one shared pure-RGB blue contract for clean and marked output."""
+    """Require one shared xcolor ProcessBlue contract for clean and marked output."""
     common = _COMMON_PREAMBLE.read_text(encoding="utf-8")
     required = (
         r"\newcommand{\RevisionReviewerColor}{RubineRed}",
-        r"\definecolor{SciLinkBlue}{RGB}{0,0,255}",
-        "citecolor=SciLinkBlue",
-        "urlcolor=SciLinkBlue",
+        "citecolor=ProcessBlue",
+        "urlcolor=ProcessBlue",
     )
     forbidden = (
         "definecolor{SciRevision",
-        "ProcessBlue",
+        "SciLinkBlue",
         "citecolor=black",
         "urlcolor=black",
     )
     if (
         any(token not in common for token in required)
         or "ForestGreen" not in REVISION_RUNTIME
-        or "SciLinkBlue" not in REVISION_RUNTIME
+        or "ProcessBlue" not in REVISION_RUNTIME
         or any(token in common + REVISION_RUNTIME for token in forbidden)
     ):
         raise WorkflowError("CLEAN_MARKED_REFERENCE_STYLE_MISMATCH")
@@ -1066,7 +1065,7 @@ def build_marked_manuscript(
         "equation_identity_ambiguous": equation_audit.ambiguous,
         "citation_groups_highlighted": 0,
         "bibliography_entries_highlighted": 0,
-        "reference_visual_policy": "SciLinkBlue RGB(0,0,255)",
+        "reference_visual_policy": "xcolor ProcessBlue",
         "clean_marked_reference_style_identity": True,
         "citation_changes_tracked": len(citations),
         "bibliography_changes_tracked": bibliography_changes,

@@ -106,7 +106,7 @@ publishes final PDFs. User rounds therefore do not contain `preamble/`,
 `references/revision_style.tex`, initialized from the packaged
 `revision_style.template.tex` for optional font/background hooks. Semantic
 colors are package-owned and frozen: reviewer RubineRed, author ForestGreen,
-and citation/DOI/URL pure RGB blue (`#0000FF`).
+and citation/DOI/URL xcolor `ProcessBlue` from `dvipsnames`.
 
 For a custom publisher, initialize with `publisher: custom` and
 `--custom-template /absolute/path/to/template`. Its `sections.yaml` declares
@@ -309,7 +309,7 @@ Visible states are mutually exclusive:
 - ordinary author addition: ForestGreen text in prose and mathematics;
 - reviewer/editor-linked addition: RubineRed text in prose and mathematics;
 - unchanged content: normal rendering;
-- every citation marker and DOI/URL link: pure RGB blue (`#0000FF`), independent of ownership;
+- every citation marker and DOI/URL link: xcolor `ProcessBlue`, independent of ownership;
 - bibliography prose: black.
 
 Parent-only deletions are absent. Stripping color/provenance markup from marked
@@ -366,6 +366,13 @@ round. Rollback archives the removed round together with its current
 bibliography and atomically restores the previous round's frozen bibliography
 as the editable shared latest state.
 
+Creating a child round also writes the parent's immutable
+`state/<round>/round_state.yaml`, which records source, metadata, effective
+author metadata, bibliography snapshot, and parent digests. A historical build
+verifies this record before compilation. Its separate `build_manifest.yaml` may
+be updated with derived artifact provenance, but the frozen round state and
+bibliography snapshot remain byte-identical.
+
 Each successful latest-round build or submission with a compiled manuscript
 freezes the AUX-resolved
 cited entries, recursive `crossref`/`xdata` dependencies, and required BibTeX
@@ -373,7 +380,8 @@ declarations in `state/<round>/bibliography.bib`. Uncited export entries are not
 copied into round state. Each successful build or
 submission atomically updates
 `state/<round>/build_manifest.yaml`. The manifest records the round and parent,
-package/Python/engine/tool identities, effective author source, fonts,
+package/Python/engine/tool identities, production implementation digest,
+effective author source, fonts,
 publisher-resource hashes, scientific input hashes, and final output hashes.
 It contains no private absolute project or temporary path, is not a scientific
 source, and never enters the submission directory.

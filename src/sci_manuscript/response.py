@@ -8,12 +8,18 @@ import json
 import re
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 from . import review
+from .authors import AuthorSelection
 from .compile import compile_tex, publish_file_atomically, stage_cjk_fonts
 from .errors import WorkflowError
-from .metadata import generate_metadata
+from .metadata import (
+    _correspondence_address,
+    _metadata_with_frontmatter_title,
+    generate_metadata,
+)
 from .review_ids import is_review_id
 from .templates import resources_root
 from .timing import BuildTelemetry
@@ -50,6 +56,149 @@ def ensure_response_latin_font() -> None:
             "RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN: install Times New Roman "
             "as a system font and ensure fontconfig can see it."
         )
+
+
+def _extract_pdf_text(path: Path) -> str:
+    """Extract response PDF text through the required Poppler executable."""
+    executable = shutil.which("pdftotext")
+    if executable is None:
+        raise WorkflowError(
+            "RESPONSE_PDF_TEXT_EXTRACTION_UNAVAILABLE: pdftotext is required."
+        )
+    try:
+        result = subprocess.run(
+            [executable, str(path), "-"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise WorkflowError(f"RESPONSE_PDF_TEXT_EXTRACTION_FAILED: {path}") from exc
+    if result.returncode != 0 or not result.stdout.strip():
+        detail = result.stderr.strip() or "no extractable text"
+        raise WorkflowError(f"RESPONSE_PDF_TEXT_EXTRACTION_FAILED: {path}: {detail}")
+    return result.stdout
+
+
+def _normalized_visible_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalized.replace(chr(0x2013), "-").replace(chr(0x2014), "-")
+    normalized = normalized.replace("--", "-")
+    return "".join(normalized.split())
+
+
+def _visible_response_tokens(source: str) -> tuple[str, ...]:
+    """Return ordered visible prose tokens without pretending to render TeX."""
+    text = re.sub(r"(?<!\\)%[^\n]*", " ", source)
+    text = re.sub(r"\$[^$]*\$", " ", text, flags=re.DOTALL)
+    text = re.sub(r"\\\([^)]*\\\)", " ", text, flags=re.DOTALL)
+    text = re.sub(r"\\\[[^]]*\\\]", " ", text, flags=re.DOTALL)
+    text = re.sub(
+        r"\\(?:cite\w*|ref|pageref|label|url|href)\s*(?:\[[^]]*\]\s*)*"
+        r"\{[^{}]*\}(?:\{[^{}]*\})?",
+        " ",
+        text,
+    )
+    for escaped, visible in ((r"\%", "%"), (r"\&", "&"), (r"\_", "_")):
+        text = text.replace(escaped, visible)
+    text = re.sub(r"\\[A-Za-z@]+\*?", " ", text)
+    text = re.sub(r"[{}~]", " ", text)
+    return tuple(
+        token
+        for token in re.findall(r"[^\W_]+(?:[-'][^\W_]+)*", text, flags=re.UNICODE)
+        if token
+    )
+
+
+def _contains_tokens_in_order(text: str, tokens: tuple[str, ...]) -> bool:
+    cursor = 0
+    for token in tokens:
+        normalized = _normalized_visible_text(token)
+        position = text.find(normalized, cursor)
+        if position < 0:
+            return False
+        cursor = position + len(normalized)
+    return True
+
+
+def _response_pdf_consistency(
+    config: ProjectConfig,
+    round_number: int,
+    selection: AuthorSelection,
+    expected_ids: tuple[str, ...],
+    responses: dict[str, str],
+    locations: dict[str, str],
+    pdf: Path,
+) -> tuple[bool, tuple[str, ...]]:
+    """Validate visible response structure against real extracted PDF text."""
+    extracted = _normalized_visible_text(_extract_pdf_text(pdf))
+    metadata = _metadata_with_frontmatter_title(
+        config.metadata, config.round_dir(round_number)
+    )
+    if config.language == "zh":
+        anchors = (
+            "尊敬的编辑：",  # noqa: RUF001 - fixed response contract
+            metadata.localized_title("zh"),
+            metadata.journal_name,
+            "我们已对所有审稿意见和问题进行了逐条回复",
+        )
+        label = "意见"
+    else:
+        anchors = (
+            "Dear Editor,",
+            metadata.localized_title("en"),
+            metadata.journal_name,
+            "We have provided point-by-point responses",
+        )
+        label = "Comment"
+    issues = [
+        f"missing fixed anchor: {anchor}"
+        for anchor in anchors
+        if _normalized_visible_text(anchor) not in extracted
+    ]
+    affiliations = {item.affiliation_id: item for item in selection.affiliations}
+    for author in selection.corresponding_authors:
+        name = author.name_zh if config.language == "zh" else author.name_en
+        signature_fields = (
+            name,
+            _correspondence_address(author, affiliations, config.language),
+            author.email,
+        )
+        issues.extend(
+            f"missing correspondence field for {author.author_id}: {field}"
+            for field in signature_fields
+            if _normalized_visible_text(field) not in extracted
+        )
+
+    positions: list[int] = []
+    cursor = 0
+    for review_id in expected_ids:
+        marker = _normalized_visible_text(f"{label} {review_id}")
+        position = extracted.find(marker, cursor)
+        if position < 0:
+            issues.append(f"missing or out-of-order comment ID: {review_id}")
+            positions.append(len(extracted))
+            continue
+        positions.append(position)
+        cursor = position + len(marker)
+    for index, review_id in enumerate(expected_ids):
+        start = positions[index]
+        stop = positions[index + 1] if index + 1 < len(positions) else len(extracted)
+        segment = extracted[start:stop]
+        body = responses.get(review_id, "")
+        if body.strip():
+            tokens = _visible_response_tokens(body)
+            if not tokens:
+                issues.append(f"empty visible response projection: {review_id}")
+            elif not _contains_tokens_in_order(segment, tokens):
+                issues.append(f"missing visible response projection: {review_id}")
+        if (
+            review_id in locations
+            and _normalized_visible_text(locations[review_id]) not in segment
+        ):
+            issues.append(f"missing resolved location text: {review_id}")
+    return not issues, tuple(issues)
 
 
 def _escape_latex(value: str) -> str:
@@ -302,7 +451,7 @@ def build_response(
         staged_source.write_text(
             LOCATION_USE.sub(replace_location, text), encoding="utf-8"
         )
-        generate_metadata(config.round_dir(round_number), stage)
+        selection = generate_metadata(config.round_dir(round_number), stage)
     compile_stage = (
         telemetry.measure("response_compile") if telemetry else contextlib.nullcontext()
     )
@@ -322,14 +471,8 @@ def build_response(
                 engine_override,
                 telemetry=telemetry,
             )
-    output = config.output_dir(round_number) / "response_letter.pdf"
-    publish_stage = (
-        telemetry.measure("artifact_publish") if telemetry else contextlib.nullcontext()
-    )
-    with publish_stage:
-        published = publish_file_atomically(compiled.pdf, output)
     staged_text = staged_source.read_text(encoding="utf-8")
-    response_consistency = bool(
+    tex_projection_consistency = bool(
         all(body in staged_text for body in responses.values() if body)
         and not LOCATION_USE.search(staged_text)
         and [
@@ -340,8 +483,22 @@ def build_response(
         ]
         == list(expected_ids)
     )
+    pdf_projection_consistency, pdf_consistency_issues = _response_pdf_consistency(
+        config,
+        round_number,
+        selection,
+        expected_ids,
+        responses,
+        {key: value for key, value in locations.items() if key in revised_ids},
+        compiled.pdf,
+    )
+    response_consistency = tex_projection_consistency and pdf_projection_consistency
+    output = config.output_dir(round_number) / "response_letter.pdf"
     audit = {
         "response_source_pdf_consistency": response_consistency,
+        "response_tex_projection_consistency": tex_projection_consistency,
+        "response_pdf_projection_consistency": pdf_projection_consistency,
+        "response_pdf_consistency_issues": list(pdf_consistency_issues),
         "responses_source_sha256": hashlib.sha256(
             (response_dir / "responses.tex").read_bytes()
         ).hexdigest(),
@@ -355,15 +512,21 @@ def build_response(
             staged_source.read_bytes()
         ).hexdigest(),
         "response_build_input_digest": artifact_input_digest(
-            config, round_number, published
+            config, round_number, output, engine_override
         ),
         "response_letter_pdf_sha256": hashlib.sha256(
-            published.read_bytes()
+            compiled.pdf.read_bytes()
         ).hexdigest(),
     }
     (run_dir / "response_audit.json").write_text(
         json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     if not response_consistency:
-        raise WorkflowError("RESPONSE_SOURCE_PDF_CONSISTENCY_FAILED")
+        detail = "; ".join(pdf_consistency_issues) or "staged TeX projection mismatch"
+        raise WorkflowError(f"RESPONSE_SOURCE_PDF_CONSISTENCY_FAILED: {detail}")
+    publish_stage = (
+        telemetry.measure("artifact_publish") if telemetry else contextlib.nullcontext()
+    )
+    with publish_stage:
+        published = publish_file_atomically(compiled.pdf, output)
     return published

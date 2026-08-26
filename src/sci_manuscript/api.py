@@ -47,6 +47,7 @@ from .workspace import (
     ProjectConfig,
     bibliography_source_for_round,
     build_artifact_is_current,
+    ensure_historical_round_state,
     finalize_revision_creation,
     initialize_draft_project,
     initialize_project,
@@ -55,6 +56,7 @@ from .workspace import (
     normalize_project,
     parse_round,
     reindex_revisions,
+    replace_round_state_for_explicit_migration,
     revision_directory_name,
     rollback_revision,
     round_name,
@@ -570,6 +572,8 @@ class ManuscriptProject:
         with telemetry.measure("preflight"):
             if selected == latest.current_round:
                 ensure_manuscript_sources(config, selected)
+            else:
+                ensure_historical_round_state(config, selected)
             _preflight_build_target(config, selected, selected_target)
             if selected_target in {"marked", "response"}:
                 ensure_cjk_environment(config, engine, telemetry)
@@ -634,7 +638,9 @@ class ManuscriptProject:
                     reuse_marked = (
                         marked_output
                         if selected_target == "response"
-                        and build_artifact_is_current(config, selected, marked_output)
+                        and build_artifact_is_current(
+                            config, selected, marked_output, engine
+                        )
                         else None
                     )
                     marked = build_marked_manuscript(
@@ -720,7 +726,7 @@ class ManuscriptProject:
                             )
                         existing_pdfs = tuple(output.glob("*.pdf"))
                         highlight_audit["artifact_freshness"] = all(
-                            build_artifact_is_current(config, selected, path)
+                            build_artifact_is_current(config, selected, path, engine)
                             for path in existing_pdfs
                         )
                         highlight_audit["output_purity"] = all(
@@ -760,7 +766,13 @@ class ManuscriptProject:
         latest = load_project(self.root)
         target_round = latest.current_round + 1
         target = latest.round_dir(target_round)
+        parent_round_state = latest.round_state_path(latest.current_round)
+        parent_bibliography = latest.bibliography_snapshot_path(latest.current_round)
         with temporary_run(self.root, keep_temp) as run_dir:
+            parent_snapshot = _snapshot_files(
+                (parent_bibliography, parent_round_state),
+                run_dir / "parent_state_rollback",
+            )
             try:
                 child = start_revision(latest, target_round, run_dir, reviews_path)
                 comment_path = target / "response" / "reviewer_comments.md"
@@ -772,6 +784,7 @@ class ManuscriptProject:
                 state = latest.state_dir(target_round)
                 if state.exists():
                     shutil.rmtree(state)
+                _restore_files(parent_snapshot)
                 if run_dir.exists():
                     shutil.rmtree(run_dir)
                 tmp_root = latest.tmp_root()
@@ -857,6 +870,8 @@ class ManuscriptProject:
                     run_dir / "clean_build" / "manuscript.aux",
                     rebuild_historical=True,
                 )
+                if selected != latest.current_round:
+                    replace_round_state_for_explicit_migration(config, selected)
             except Exception:
                 _restore_files(snapshot)
                 raise

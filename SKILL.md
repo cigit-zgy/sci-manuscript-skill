@@ -65,7 +65,7 @@ when clean, marked, response, and full identity validation are required.
 - Marked = current clean scientific content + revision highlighting.
 - Reviewer-owned current additions/replacements are RubineRed; author-owned are
   ForestGreen; unchanged text is black.
-- Citation markers and DOI/URL links use the manuscript's pure RGB blue (`#0000FF`) link style;
+- Citation markers and DOI/URL links use xcolor `ProcessBlue` from `dvipsnames`;
   bibliography prose remains black.
 - Parent-only deleted content is absent.
 - `latexdiff` detects current additions only; it is not the final renderer.
@@ -86,6 +86,8 @@ when clean, marked, response, and full identity validation are required.
 - Ancestry is `initial_submission -> revision_01 -> revision_02 -> ...`.
 - `references/references.bib` is current editable bibliography state;
   `state/<round>/bibliography.bib` is immutable historical machine state.
+- `state/<round>/round_state.yaml` freezes historical source, metadata,
+  effective author metadata, bibliography, and parent identity.
 - `output/` contains canonical user-facing PDFs only. Selective builds remove
   stale PDFs and retain manifest-verified current PDFs.
 - Manifests live under `state/`; audits, timing, cache, TeX, AUX, and logs live

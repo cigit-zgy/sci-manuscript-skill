@@ -44,12 +44,11 @@ def test_author_color_uses_dvips_named_forest_green() -> None:
     assert "definecolor{SciRevisionAuthor" not in common
 
 
-def test_reference_link_color_uses_canonical_rgb_blue() -> None:
+def test_reference_link_color_uses_xcolor_process_blue_directly() -> None:
     common = COMMON.read_text(encoding="utf-8")
-    assert r"\definecolor{SciLinkBlue}{RGB}{0,0,255}" in common
-    assert "citecolor=SciLinkBlue" in common
-    assert "urlcolor=SciLinkBlue" in common
-    assert "ProcessBlue" not in common
+    assert "citecolor=ProcessBlue" in common
+    assert "urlcolor=ProcessBlue" in common
+    assert "definecolor{SciLinkBlue" not in common
 
 
 def test_staged_manuscript_enables_dvipsnames_before_documentclass() -> None:
@@ -71,11 +70,10 @@ def test_dvips_named_colors_compile_with_tectonic(tmp_path: Path) -> None:
         r"""\PassOptionsToPackage{dvipsnames}{xcolor}
 \documentclass{article}
 \usepackage{xcolor}
-\definecolor{SciLinkBlue}{RGB}{0,0,255}
 \begin{document}
 \textcolor{RubineRed}{Reviewer}
 \textcolor{ForestGreen}{Author}
-\textcolor{SciLinkBlue}{Citation}
+\textcolor{ProcessBlue}{Citation}
 \end{document}
 """,
         encoding="utf-8",
@@ -120,8 +118,8 @@ def test_runtime_uses_addition_only_color() -> None:
 
 
 def test_runtime_keeps_every_citation_link_blue_without_ownership_colors() -> None:
-    assert r"\SCISetCitationColor{SciLinkBlue}\color{SciLinkBlue}#1" in REVISION_RUNTIME
-    assert "ProcessBlue" not in REVISION_RUNTIME
+    assert r"\SCISetCitationColor{ProcessBlue}\color{ProcessBlue}#1" in REVISION_RUNTIME
+    assert "SciLinkBlue" not in REVISION_RUNTIME
     assert r"\SCIAuthorCitation" not in REVISION_RUNTIME
     assert r"\SCIReviewCitation" not in REVISION_RUNTIME
 
@@ -130,8 +128,8 @@ def test_clean_contract_sets_citation_and_url_blue_without_internal_link_overrid
     None
 ):
     common = COMMON.read_text(encoding="utf-8")
-    assert "citecolor=SciLinkBlue" in common
-    assert "urlcolor=SciLinkBlue" in common
+    assert "citecolor=ProcessBlue" in common
+    assert "urlcolor=ProcessBlue" in common
     assert "linkcolor=" not in common
 
 

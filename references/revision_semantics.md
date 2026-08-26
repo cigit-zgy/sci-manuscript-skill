@@ -48,7 +48,7 @@ remains black; additions outside review provenance are author-owned.
 | author-owned addition or replacement | ForestGreen |
 
 There is no deletion appearance. Citation markers and reference-related DOI/URL
-links use pure RGB blue (`#0000FF`) in clean and marked output. Bibliography prose
+links use xcolor `ProcessBlue` from `dvipsnames` in clean and marked output. Bibliography prose
 and unchanged manuscript text remain black; publisher-specific internal-link
 behavior is not overridden.
 
@@ -99,7 +99,7 @@ execute, so marked cannot introduce `[?]` through deleted citations.
 The current bibliography is the sole visible authority for entries, order,
 numbering, and content. Removed entries are absent; bibliography prose for every
 retained, new, and same-key corrected entry remains black, while DOI/URL links
-remain pure RGB blue. Citation provenance is preferred;
+remain xcolor `ProcessBlue`. Citation provenance is preferred;
 `\ReviewReference{ID}{key[,keys...]}` remains the explicit reviewer ownership
 mechanism for reference audit and response locations, never bibliography color.
 For a newly added key, citation ownership is canonical. `\ReviewReference` may

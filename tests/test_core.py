@@ -772,6 +772,14 @@ def test_failed_revision_creation_removes_partial_round_state_and_tmp(
 ) -> None:
     config = _workspace(tmp_path)
     parent_before = source_digest(config.round_dir(0), scientific_only=True)
+    from sci_manuscript.workspace import snapshot_bibliography
+
+    parent_snapshot = snapshot_bibliography(config, 0)
+    snapshot_before = parent_snapshot.read_bytes()
+    (config.references / "references.bib").write_text(
+        "@article{replace_me, title={Changed before failed revision}}\n",
+        encoding="utf-8",
+    )
 
     def fail_after_state(child: ProjectConfig) -> Path:
         path = child.creation_record_path(child.current_round)
@@ -791,6 +799,8 @@ def test_failed_revision_creation_removes_partial_round_state_and_tmp(
     assert not config.state_dir(1).exists()
     assert not config.tmp_root().exists()
     assert source_digest(config.round_dir(0), scientific_only=True) == parent_before
+    assert parent_snapshot.read_bytes() == snapshot_before
+    assert not config.round_state_path(0).exists()
 
 
 def test_sync_bib_uses_only_the_explicit_export(tmp_path: Path) -> None:
@@ -840,6 +850,39 @@ def test_round_bibliography_snapshots_preserve_visible_history(tmp_path: Path) -
     r02.bibliography_snapshot_path(1).unlink()
     with pytest.raises(WorkflowError, match="Historical bibliography snapshot"):
         bibliography_source_for_round(r02, 1)
+
+
+def test_revision_creation_refreshes_active_bibliography_before_freezing(
+    tmp_path: Path,
+) -> None:
+    r00 = _workspace(tmp_path)
+    shared = r00.references / "references.bib"
+    from sci_manuscript.workspace import snapshot_bibliography
+
+    snapshot_bibliography(r00, 0)
+    updated = b"@article{replace_me, title={Updated before revision}}\n"
+    shared.write_bytes(updated)
+
+    r01 = _revision(r00)
+
+    assert r01.bibliography_snapshot_path(0).read_bytes() == updated
+
+
+def test_revision_creation_refuses_conflicting_parent_round_state_atomically(
+    tmp_path: Path,
+) -> None:
+    r00 = _workspace(tmp_path)
+    from sci_manuscript.workspace import snapshot_bibliography
+
+    snapshot_bibliography(r00, 0)
+    frozen = r00.round_state_path(0)
+    frozen.parent.mkdir(parents=True, exist_ok=True)
+    frozen.write_text("schema: conflicting\n", encoding="utf-8")
+
+    with pytest.raises(WorkflowError, match="HISTORICAL_ROUND_STATE_MISMATCH"):
+        _revision(r00)
+
+    assert not r00.round_dir(1).exists()
 
 
 def test_rollback_success_and_refusal(tmp_path: Path) -> None:
@@ -1096,6 +1139,11 @@ def test_response_build_uses_package_template_without_mutating_source(
 
     monkeypatch.setattr(response_module, "resources_root", lambda: package_root)
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(
+        response_module,
+        "_response_pdf_consistency",
+        lambda *_args, **_kwargs: (True, ()),
+    )
     run_dir = tmp_path / "run"
     result = response_module.build_response(config, 1, {}, run_dir)
     assert result.is_file()
@@ -1105,6 +1153,46 @@ def test_response_build_uses_package_template_without_mutating_source(
     assert tuple(config.archive_root().rglob("responses.tex")) == ()
     assert not (responses.parent / "response_letter.tex").exists()
     assert (run_dir / "response_source" / "response_letter.tex").is_file()
+
+
+def test_response_build_rejects_pdf_missing_visible_response_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sci_manuscript.response as response_module
+
+    reviews = tmp_path / "pdf_consistency.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Clarify scope.\n",
+        encoding="utf-8",
+    )
+    config = _revision(_workspace(tmp_path), reviews)
+    responses = config.response_dir(1) / "responses.tex"
+    responses.write_text("\\Response{1-1}{VisibleResponseSentinel}\n", encoding="utf-8")
+
+    def fake_compile(
+        _source: Path,
+        build_dir: Path,
+        _config: ProjectConfig,
+        _engine: str | None = None,
+    ) -> CompileResult:
+        build_dir.mkdir(parents=True)
+        pdf = build_dir / "response_letter.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        return CompileResult(pdf, "")
+
+    monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
+    monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(
+        response_module,
+        "_extract_pdf_text",
+        lambda _path: "Dear Editor, Comment 1-1",
+        raising=False,
+    )
+
+    with pytest.raises(WorkflowError, match="RESPONSE_SOURCE_PDF_CONSISTENCY_FAILED"):
+        response_module.build_response(config, 1, {}, tmp_path / "run")
 
 
 def test_response_build_accepts_empty_response_for_response_only_comment(
@@ -1140,6 +1228,11 @@ def test_response_build_accepts_empty_response_for_response_only_comment(
         return CompileResult(pdf, "")
 
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(
+        response_module,
+        "_response_pdf_consistency",
+        lambda *_args, **_kwargs: (True, ()),
+    )
 
     result = response_module.build_response(config, 1, {}, tmp_path / "run")
 
@@ -1183,6 +1276,11 @@ def test_response_build_omits_unavailable_marked_location(
         return CompileResult(pdf, "")
 
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(
+        response_module,
+        "_response_pdf_consistency",
+        lambda *_args, **_kwargs: (True, ()),
+    )
     assert response_module.build_response(config, 1, {}, tmp_path / "run").is_file()
 
 

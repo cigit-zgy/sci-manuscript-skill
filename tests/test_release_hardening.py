@@ -11,6 +11,7 @@ import pytest
 import yaml
 from test_core import _revision, _workspace
 
+import sci_manuscript.workspace as workspace_module
 from sci_manuscript.api import ManuscriptProject, doctor
 from sci_manuscript.compile import resolve_engine, select_engine
 from sci_manuscript.errors import WorkflowError
@@ -783,6 +784,52 @@ def test_build_manifest_records_explicit_response_dependencies(
     assert "round_metadata_sha256" in manifest
     assert "marked_location_inputs_sha256" in manifest
     assert "artifact_input_digests" in manifest
+
+
+def test_renderer_implementation_change_invalidates_all_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _revision(_workspace(tmp_path))
+    outputs = tuple(
+        config.output_dir(1) / name
+        for name in (
+            "manuscript_clean.pdf",
+            "manuscript_marked.pdf",
+            "response_letter.pdf",
+        )
+    )
+    for output in outputs:
+        output.write_bytes(output.name.encode())
+    run = tmp_path / "manifest-run"
+    run.mkdir()
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(workspace_module, "_implementation_digest", lambda: "v1")
+    write_build_manifest(config, 1, "build", outputs, "tectonic", run)
+    assert all(build_artifact_is_current(config, 1, output) for output in outputs)
+
+    monkeypatch.setattr(workspace_module, "_implementation_digest", lambda: "v2")
+
+    assert not any(build_artifact_is_current(config, 1, output) for output in outputs)
+
+
+def test_toolchain_identity_change_invalidates_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _workspace(tmp_path)
+    output = config.output_dir(0) / "manuscript.pdf"
+    output.write_bytes(b"pdf")
+    run = tmp_path / "manifest-run"
+    run.mkdir()
+    identity = {"engine": "tectonic", "engine_version": "v1"}
+    monkeypatch.setattr(
+        workspace_module, "_toolchain_identity", lambda *_args: dict(identity)
+    )
+    write_build_manifest(config, 0, "build", (output,), "tectonic", run)
+    assert build_artifact_is_current(config, 0, output, "tectonic")
+
+    identity["engine_version"] = "v2"
+
+    assert not build_artifact_is_current(config, 0, output, "tectonic")
 
 
 def test_failed_manifest_update_preserves_previous_success(

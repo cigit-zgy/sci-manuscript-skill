@@ -13,6 +13,7 @@ import pytest
 
 from sci_manuscript import ManuscriptProject, doctor, initialize_manuscript
 from sci_manuscript.api import LifecycleResult
+from sci_manuscript.authors import resolve_author_library_path
 from sci_manuscript.diff import REVISION_RUNTIME
 from sci_manuscript.errors import WorkflowError
 from sci_manuscript.locations import TEX_LOCATION_REGISTRY_HEADER
@@ -30,6 +31,7 @@ REQUIRED_TOOLS = (
     "pdftocairo",
     "pdftotext",
     "pdftoppm",
+    "pdffonts",
     "pdfinfo",
 )
 SVG_COLOR = re.compile(r'(fill|stroke)="rgb\(([\d.]+)%,\s*([\d.]+)%,\s*([\d.]+)%\)"')
@@ -217,6 +219,17 @@ def _pdf_urls(path: Path) -> str:
         check=True,
     )
     return result.stdout
+
+
+def _pdf_fonts(path: Path) -> str:
+    result = subprocess.run(
+        [shutil.which("pdffonts") or "pdffonts", str(path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return result.stdout.replace(" ", "").lower()
 
 
 def _marked_words(text: str) -> str:
@@ -1132,7 +1145,7 @@ def test_chinese_bibliography_doi_and_visible_revision_semantics(
     assert "修改位置：第" in response_text and "行。" in response_text
     assert "相关内容已删除" not in response_text
     audit = json.loads((run / "highlight_audit.json").read_text(encoding="utf-8"))
-    assert audit["reference_visual_policy"] == "SciLinkBlue RGB(0,0,255)"
+    assert audit["reference_visual_policy"] == "xcolor ProcessBlue"
     assert audit["clean_marked_reference_style_identity"] is True
     assert audit["clean_marked_source_projection_identity"] is True
     assert audit["whitespace_seam_identity"] is True
@@ -1389,6 +1402,106 @@ def test_frontmatter_visible_field_addition_is_marked(
         assert visible in extracted
 
 
+def test_three_corresponding_authors_reach_real_chinese_response_pdf(
+    tmp_path: Path,
+) -> None:
+    _require_toolchain()
+    resolve_author_library_path().write_text(
+        """affiliations:
+  first:
+    name_en: First Institute, City 100001, Country
+    name_zh: 第一研究院，城市 100001
+  second:
+    name_en: Second Institute, City 100002, Country
+    name_zh: 第二研究院，城市 100002
+  third:
+    name_en: Third Institute, City 100003, Country
+    name_zh: 第三研究院，城市 100003
+authors:
+  author_one:
+    name_en: Author One
+    name_zh: 作者甲
+    email: one@example.invalid
+    affiliations: [first, second]
+  author_two:
+    name_en: Author Two
+    name_zh: 作者乙
+    email: two@example.invalid
+    correspondence_address: Explicit Correspondence Address 200002
+    affiliations: [second]
+  author_three:
+    name_en: Author Three
+    name_zh: 作者丙
+    email: three@example.invalid
+    affiliations: [third]
+""",
+        encoding="utf-8",
+    )
+    project_dir = tmp_path / "Three Corresponding Authors"
+    initialize_manuscript(
+        project_dir,
+        title="三通讯作者回复信验证",
+        journal="科学通报",
+        publisher="chinese",
+        language="zh",
+        article_type="观点",
+        first_authors=("author_one",),
+        corresponding_authors=("author_three", "author_one", "author_two"),
+        other_authors=("author_two", "author_three"),
+        engine="tectonic",
+    )
+    reviews = tmp_path / "three_corresponding_reviews.md"
+    reviews.write_text(
+        "# Reviewer #1\n\n## Main comment\n\n## Specific comments\n\n"
+        "1. Please revise the manuscript.\n",
+        encoding="utf-8",
+    )
+    manuscript = project_dir / "manuscript"
+    project = ManuscriptProject(manuscript)
+    project.start_revision(reviews=reviews, confirmed=True)
+    revision = manuscript / "revision_01"
+    _replace_once(
+        revision / "sections" / "01_manuscript.tex",
+        "Replace this placeholder with the manuscript body.",
+        r"\review{1-1}{ThreeAuthorRevisionSentinel}",
+    )
+    (revision / "response" / "responses.tex").write_text(
+        r"\Response{1-1}{ThreeAuthorResponseSentinel}" + "\n",
+        encoding="utf-8",
+    )
+
+    project.build(target="response", engine="tectonic", keep_temp=True)
+
+    response_pdf = revision / "output" / "response_letter.pdf"
+    visible = "".join(_pdf_text(response_pdf).split())
+    blocks = (
+        ("作者甲", "通讯地址：第一研究院，城市100001", "邮箱：one@example.invalid"),
+        (
+            "作者乙",
+            "通讯地址：ExplicitCorrespondenceAddress200002",
+            "邮箱：two@example.invalid",
+        ),
+        ("作者丙", "通讯地址：第三研究院，城市100003", "邮箱：three@example.invalid"),
+    )
+    cursor = 0
+    for block in blocks:
+        for field in block:
+            position = visible.find(field, cursor)
+            assert position >= 0, field
+            assert visible.count(field) == 1
+            cursor = position + len(field)
+    run = next((manuscript / "tmp").glob("run_*"))
+    assembled = (run / "response_source" / "author_metadata.tex").read_text(
+        encoding="utf-8"
+    )
+    zh = assembled.split(r"\newcommand{\CorrespondenceAuthorsZh}{%", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert zh.count(r"\vspace{0.25\baselineskip}") == 6
+    assert zh.count(r"\vspace{0.55\baselineskip}") == 2
+    assert not zh.rstrip().endswith(r"\vspace{0.55\baselineskip}")
+
+
 def test_response_body_reaches_response_letter_during_build(tmp_path: Path) -> None:
     _require_toolchain()
     project_dir = tmp_path / "Build Response Revision Project"
@@ -1440,9 +1553,16 @@ def test_response_body_reaches_response_letter_during_build(tmp_path: Path) -> N
     assert "第" in response_text and "行" in response_text
     assert "Location unavailable" not in response_text
     assert "位置不可用" not in response_text
+    assert "timesnewroman" in _pdf_fonts(response_pdf)
     assert any(artifact.path == response_pdf for artifact in result.artifacts)
     assert response_source.read_bytes() == original_source
     run = next((manuscript / "tmp").glob("run_*"))
+    response_audit = json.loads(
+        (run / "response_audit.json").read_text(encoding="utf-8")
+    )
+    assert response_audit["response_tex_projection_consistency"] is True
+    assert response_audit["response_pdf_projection_consistency"] is True
+    assert response_audit["response_source_pdf_consistency"] is True
     assembled = (run / "response_source" / "response_letter.tex").read_text(
         encoding="utf-8"
     )

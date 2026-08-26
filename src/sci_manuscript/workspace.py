@@ -141,6 +141,10 @@ class ProjectConfig:
         """Return the reproducibility manifest for one round."""
         return self.state_dir(round_number) / "build_manifest.yaml"
 
+    def round_state_path(self, round_number: int) -> Path:
+        """Return the immutable scientific-state record for one round."""
+        return self.state_dir(round_number) / "round_state.yaml"
+
     def bibliography_snapshot_path(self, round_number: int) -> Path:
         """Return the machine-owned bibliography snapshot for one round."""
         return self.state_dir(round_number) / "bibliography.bib"
@@ -199,7 +203,7 @@ def migrate_revision_style_file(style: Path, archive_root: Path) -> Path | None:
                 "REVISION_STYLE_MIGRATION_UNSUPPORTED: "
                 f"{name} is customized in {style}. Remove the legacy semantic "
                 "color override or migrate it manually to the package-owned "
-                "RubineRed/ForestGreen/SciLinkBlue RGB(0,0,255) contract."
+                "RubineRed/ForestGreen/xcolor ProcessBlue contract."
             )
         migrated = migrated.replace(stock_definition, "", 1)
     for name in LEGACY_DELETION_COMMANDS:
@@ -621,7 +625,12 @@ def snapshot_bibliography(
     target = config.bibliography_snapshot_path(round_number)
     rounds = _round_numbers(config.project)
     latest = rounds[-1]
-    if target.is_file() and aux_path is None and not rebuild_historical:
+    if (
+        target.is_file()
+        and aux_path is None
+        and not rebuild_historical
+        and round_number != latest
+    ):
         return target
     if round_number != latest and not rebuild_historical:
         if target.is_file():
@@ -683,6 +692,183 @@ def bibliography_source_for_round(
     return snapshot
 
 
+def _round_state_values(config: ProjectConfig, round_number: int) -> dict[str, object]:
+    """Return the scientific identity that becomes immutable for history."""
+    from .authors import resolve_author_library_path
+
+    version = config.round_dir(round_number)
+    metadata = load_meta(version / "meta.yaml")
+    bibliography = config.bibliography_snapshot_path(round_number)
+    if not bibliography.is_file():
+        raise WorkflowError(
+            "HISTORICAL_ROUND_STATE_UNAVAILABLE: bibliography snapshot is missing "
+            f"for {round_name(round_number)}: {bibliography}"
+        )
+    return {
+        "schema": "sci-manuscript-round-state/v1",
+        "round": round_name(round_number),
+        "parent": (
+            None if metadata.parent_round is None else round_name(metadata.parent_round)
+        ),
+        "scientific_source_sha256": source_digest(version, scientific_only=True),
+        "metadata_sha256": _path_digest(version / "meta.yaml"),
+        "bibliography_snapshot_sha256": _path_digest(bibliography),
+        "effective_authors_sha256": _path_digest(resolve_author_library_path()),
+    }
+
+
+def _write_round_state(path: Path, values: dict[str, object]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".yaml.new")
+    try:
+        temporary.write_text(
+            yaml.safe_dump(values, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        if temporary.is_file():
+            temporary.unlink()
+    return path
+
+
+def freeze_round_state(config: ProjectConfig, round_number: int) -> Path:
+    """Create one immutable scientific-state record without replacing it."""
+    target = config.round_state_path(round_number)
+    expected = _round_state_values(config, round_number)
+    if target.is_file():
+        try:
+            observed = yaml.safe_load(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
+            raise WorkflowError(f"HISTORICAL_ROUND_STATE_INVALID: {target}") from exc
+        if observed != expected:
+            raise WorkflowError(
+                "HISTORICAL_ROUND_STATE_MISMATCH: refusing to replace immutable "
+                f"scientific state for {round_name(round_number)}."
+            )
+        return target
+    return _write_round_state(target, expected)
+
+
+def replace_round_state_for_explicit_migration(
+    config: ProjectConfig, round_number: int
+) -> Path:
+    """Replace frozen identity only for an explicitly confirmed state migration."""
+    return _write_round_state(
+        config.round_state_path(round_number),
+        _round_state_values(config, round_number),
+    )
+
+
+def _bootstrap_legacy_round_state(config: ProjectConfig, round_number: int) -> Path:
+    """Migrate a legacy history only when its last manifest proves identity."""
+    manifest_path = config.build_manifest_path(round_number)
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise WorkflowError(
+            "HISTORICAL_ROUND_STATE_UNAVAILABLE: no valid frozen state or legacy "
+            f"build manifest exists for {round_name(round_number)}."
+        ) from exc
+    expected = _round_state_values(config, round_number)
+    inputs = manifest.get("inputs") if isinstance(manifest, dict) else None
+    artifact_inputs = (
+        manifest.get("artifact_inputs") if isinstance(manifest, dict) else None
+    )
+    metadata_digests = (
+        {
+            value.get("round_metadata_sha256")
+            for value in artifact_inputs.values()
+            if isinstance(value, dict)
+        }
+        if isinstance(artifact_inputs, dict)
+        else set()
+    )
+    child_manifest: object = None
+    child_path = config.build_manifest_path(round_number + 1)
+    if child_path.is_file():
+        try:
+            child_manifest = yaml.safe_load(child_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, yaml.YAMLError):
+            child_manifest = None
+    child_inputs = (
+        child_manifest.get("inputs") if isinstance(child_manifest, dict) else None
+    )
+    source_proven = bool(
+        isinstance(inputs, dict)
+        and inputs.get("scientific_source_sha256")
+        == expected["scientific_source_sha256"]
+    ) or bool(
+        isinstance(child_inputs, dict)
+        and child_inputs.get("parent_scientific_source_sha256")
+        == expected["scientific_source_sha256"]
+    )
+    bibliography_proven = bool(
+        isinstance(inputs, dict)
+        and inputs.get("references_bib_sha256")
+        == expected["bibliography_snapshot_sha256"]
+    ) or bool(
+        isinstance(child_inputs, dict)
+        and child_inputs.get("parent_references_bib_sha256")
+        == expected["bibliography_snapshot_sha256"]
+    )
+    authors_proven = bool(
+        isinstance(inputs, dict)
+        and inputs.get("effective_authors_sha256")
+        == expected["effective_authors_sha256"]
+    ) or bool(
+        isinstance(child_inputs, dict)
+        and child_inputs.get("effective_authors_sha256")
+        == expected["effective_authors_sha256"]
+    )
+    proven = bool(
+        isinstance(manifest, dict)
+        and manifest.get("schema") == "sci-manuscript-build-manifest/v3"
+        and manifest.get("round") == expected["round"]
+        and manifest.get("parent") == expected["parent"]
+        and source_proven
+        and bibliography_proven
+        and authors_proven
+        and expected["metadata_sha256"] in metadata_digests
+    )
+    if not proven:
+        raise WorkflowError(
+            "HISTORICAL_ROUND_STATE_UNAVAILABLE: the legacy build manifest cannot "
+            f"prove the current scientific state of {round_name(round_number)}. "
+            "Restore the audited historical source, metadata, author metadata, "
+            "and bibliography snapshot before rebuilding."
+        )
+    return _write_round_state(config.round_state_path(round_number), expected)
+
+
+def ensure_historical_round_state(config: ProjectConfig, round_number: int) -> Path:
+    """Verify a historical round against its immutable scientific identity."""
+    rounds = _round_numbers(config.project)
+    if round_number == rounds[-1]:
+        raise WorkflowError(
+            "Historical round-state verification was requested for the active round."
+        )
+    target = config.round_state_path(round_number)
+    if not target.is_file():
+        _bootstrap_legacy_round_state(config, round_number)
+    try:
+        observed = yaml.safe_load(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise WorkflowError(f"HISTORICAL_ROUND_STATE_INVALID: {target}") from exc
+    expected = _round_state_values(config, round_number)
+    if not isinstance(observed, dict):
+        raise WorkflowError(f"HISTORICAL_ROUND_STATE_INVALID: {target}")
+    mismatches = [key for key, value in expected.items() if observed.get(key) != value]
+    if mismatches or set(observed) != set(expected):
+        detail = ", ".join(mismatches or ("unexpected fields",))
+        raise WorkflowError(
+            "HISTORICAL_ROUND_STATE_MISMATCH: "
+            f"{round_name(round_number)} differs from {target} ({detail}). "
+            "Restore the frozen historical source/state before rebuilding."
+        )
+    return target
+
+
 def _tool_version(name: str) -> str:
     executable = shutil.which(name)
     if executable is None:
@@ -713,9 +899,49 @@ def _tool_version(name: str) -> str:
     return "unknown"
 
 
+def _implementation_digest() -> str:
+    """Hash the installed production Python implementation deterministically."""
+    package = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted(package.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        digest.update(path.relative_to(package).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _toolchain_identity(
+    config: ProjectConfig, engine_override: str | None
+) -> dict[str, str]:
+    """Return the selected compiler and renderer-tool identity."""
+    from .compile import _latex_driver, resolve_engine
+
+    selected_engine = resolve_engine(config, engine_override)
+    driver = selected_engine
+    if selected_engine == "latex":
+        _flag, driver = _latex_driver(config)
+    bibliography_tool = "bibtex" if shutil.which("bibtex") else "biber"
+    return {
+        "engine": selected_engine,
+        "engine_version": _tool_version(
+            "tectonic" if selected_engine == "tectonic" else "latexmk"
+        ),
+        "driver": driver,
+        "latexdiff": _tool_version("latexdiff"),
+        "pdftotext": _tool_version("pdftotext"),
+        "pdftoppm": _tool_version("pdftoppm"),
+        "bibliography_tool": bibliography_tool,
+        "bibliography_tool_version": _tool_version(bibliography_tool),
+    }
+
+
 def _build_input_fingerprints(
     config: ProjectConfig,
     round_number: int,
+    engine_override: str | None = None,
 ) -> dict[str, object]:
     """Return content hashes governing reusable build artifacts."""
     from .authors import resolve_author_library_path
@@ -740,6 +966,8 @@ def _build_input_fingerprints(
             resources_root() / "manuscript_preamble"
         ),
         "revision_style_sha256": _path_digest(config.references / "revision_style.tex"),
+        "implementation_sha256": _implementation_digest(),
+        "toolchain": _toolchain_identity(config, engine_override),
     }
     if round_number > 0:
         parent = config.round_dir(round_number - 1)
@@ -787,9 +1015,10 @@ def _artifact_input_fingerprints(
     config: ProjectConfig,
     round_number: int,
     artifact: Path,
+    engine_override: str | None = None,
 ) -> dict[str, object]:
     """Return the exact dependency contract for one publication artifact."""
-    base = _build_input_fingerprints(config, round_number)
+    base = _build_input_fingerprints(config, round_number, engine_override)
     version = config.round_dir(round_number)
     clean_keys = (
         "scientific_source_sha256",
@@ -798,6 +1027,8 @@ def _artifact_input_fingerprints(
         "effective_authors_sha256",
         "publisher_resource_sha256",
         "manuscript_preamble_sha256",
+        "implementation_sha256",
+        "toolchain",
     )
     values = {key: base[key] for key in clean_keys}
     values["round_metadata_sha256"] = _path_digest(version / "meta.yaml")
@@ -849,13 +1080,22 @@ def _artifact_input_fingerprints(
 
 
 def artifact_input_digest(
-    config: ProjectConfig, round_number: int, artifact: Path
+    config: ProjectConfig,
+    round_number: int,
+    artifact: Path,
+    engine_override: str | None = None,
 ) -> str:
     """Return the stable manifest input digest for one artifact."""
-    return _mapping_digest(_artifact_input_fingerprints(config, round_number, artifact))
+    return _mapping_digest(
+        _artifact_input_fingerprints(config, round_number, artifact, engine_override)
+    )
 
 
-def build_manifest_is_current(config: ProjectConfig, round_number: int) -> bool:
+def build_manifest_is_current(
+    config: ProjectConfig,
+    round_number: int,
+    engine_override: str | None = None,
+) -> bool:
     """Return whether the recorded build inputs equal current selected inputs."""
     path = config.build_manifest_path(round_number)
     if not path.is_file():
@@ -867,7 +1107,8 @@ def build_manifest_is_current(config: ProjectConfig, round_number: int) -> bool:
     return bool(
         isinstance(data, dict)
         and data.get("schema") == "sci-manuscript-build-manifest/v3"
-        and data.get("inputs") == _build_input_fingerprints(config, round_number)
+        and data.get("inputs")
+        == _build_input_fingerprints(config, round_number, engine_override)
     )
 
 
@@ -875,6 +1116,7 @@ def build_artifact_is_current(
     config: ProjectConfig,
     round_number: int,
     artifact: Path,
+    engine_override: str | None = None,
 ) -> bool:
     """Return whether one final artifact matches a current build manifest hash."""
     if not artifact.is_file():
@@ -900,7 +1142,7 @@ def build_artifact_is_current(
         and isinstance(artifact_inputs, dict)
         and outputs.get(relative) == _path_digest(artifact)
         and artifact_inputs.get(relative)
-        == _artifact_input_fingerprints(config, round_number, artifact)
+        == _artifact_input_fingerprints(config, round_number, artifact, engine_override)
     )
 
 
@@ -946,7 +1188,7 @@ def write_build_manifest(
             for relative in submission_outputs
             if (submission / relative).is_file()
         )
-    inputs = _build_input_fingerprints(config, round_number)
+    inputs = _build_input_fingerprints(config, round_number, engine_override)
     previous_outputs: dict[str, str] = {}
     previous_artifact_inputs: dict[str, dict[str, object]] = {}
     previous_path = config.build_manifest_path(round_number)
@@ -964,7 +1206,7 @@ def write_build_manifest(
             for relative, digest in previous["outputs"].items():
                 candidate = config.project / relative
                 current_inputs = _artifact_input_fingerprints(
-                    config, round_number, candidate
+                    config, round_number, candidate, engine_override
                 )
                 if (
                     candidate.is_file()
@@ -979,7 +1221,7 @@ def write_build_manifest(
     }
     current_artifact_inputs = {
         path.relative_to(config.project.resolve()).as_posix(): (
-            _artifact_input_fingerprints(config, round_number, path)
+            _artifact_input_fingerprints(config, round_number, path, engine_override)
         )
         for path in sorted(output_files)
     }
@@ -1098,6 +1340,12 @@ def start_revision(
     shutil.copy2(source / "meta.yaml", staged / "meta.yaml")
     save_meta(staged / "meta.yaml", child)
     os.replace(staged, target)
+    try:
+        freeze_round_state(config, config.current_round)
+    except Exception:
+        if target.is_dir():
+            shutil.rmtree(target)
+        raise
     return ProjectConfig(config.project, child, config.engine)
 
 
@@ -1186,6 +1434,9 @@ def rollback_revision(config: ProjectConfig) -> tuple[Path, int]:
         elif current_snapshot.is_file():
             current_snapshot.unlink()
         raise
+    previous_round_state = latest.round_state_path(previous_round)
+    if previous_round_state.is_file():
+        previous_round_state.unlink()
     return archived, latest.current_round - 1
 
 
@@ -1283,6 +1534,9 @@ def reindex_revisions(
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
+        canonical_round_state = state_target / "round_state.yaml"
+        if canonical_round_state.is_file():
+            canonical_round_state.unlink()
         if source_digest(target, scientific_only=True) != scientific_before[new_number]:
             raise WorkflowError("Reindex staging changed scientific source bytes.")
     moved: list[tuple[Path, Path]] = []
@@ -1306,6 +1560,8 @@ def reindex_revisions(
         os.replace(state_stage, state_root)
         installed.append(state_root)
         load_project(root)
+        for number in range(1, len(revisions)):
+            freeze_round_state(load_project(root, number), number)
     except Exception:
         for target in installed:
             if target.exists():

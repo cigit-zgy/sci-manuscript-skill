@@ -4,7 +4,7 @@
 
 - Highlighted manuscripts now render only current scientific content: reviewer
   additions are RubineRed, author additions are ForestGreen, citation markers
-  and DOI/URL links are pure RGB blue (`#0000FF`), ordinary text is black, and parent-only
+  and DOI/URL links use xcolor `ProcessBlue`, ordinary text is black, and parent-only
   deletions are absent.
 - `latexdiff` is limited to current-addition evidence. Highlight markup is
   inserted into the exact current source with hard source, paragraph, block
@@ -14,10 +14,16 @@
   provenance are covered by regression tests.
 - Revision builds support target-aware marked-only, response, clean, and full
   paths with deterministic bibliography caching and per-stage timing.
+- Historical rounds freeze source, metadata, effective author metadata,
+  bibliography, and parent identity; artifact freshness also includes the
+  installed implementation and selected toolchain identity.
 - Response letters use package-owned Chinese and English openings, ordered
   one-to-many correspondence metadata, one opening-page break, automatic
   TeX-native current locations, frozen component-local spacing, and exact
   system Times New Roman for Latin-script text.
+- Response validation separately checks staged TeX and real Poppler-extracted
+  PDF projections, including the opening/signature, ordered comment IDs,
+  visible response bodies, and resolved locations.
 - Reviewer locations now come from package-owned `lineno`/`\linelabel` AUX
   records; unsupported complex AMS environments fail closed instead of falling
   back to PDF geometry.

@@ -243,6 +243,8 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 ### Hard invariants
 
 - historical scientific state immutable；round ancestry 必须 adjacent。
+- historical build 前必须校验 frozen source、metadata、effective author metadata、
+  bibliography snapshot 和 parent identity；不匹配时 fail closed。
 - historical build 不改变 active round、不刷新 frozen snapshot、不重新编号、不迁移 scientific content。
 - failed lifecycle/build 不污染 last successful state。
 - successful state 更新通过 staging、archive 和 atomic replace 完成。
@@ -251,7 +253,7 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 
 **Approach A — mutable current directories only.** 只保留一个可编辑目录，由用户手工复制历史版本。
 
-**Approach B — immutable per-round state snapshots + manifest/hash.** 每轮保留 source directory、creation state、bibliography snapshot 和 build manifest。
+**Approach B — immutable per-round state snapshots + manifest/hash.** 每轮保留 source directory、creation state、bibliography snapshot、immutable `round_state.yaml` 和独立的 mutable artifact manifest。
 
 **Approach C — 完全依赖 Git commit.** 用 Git tree/commit 作为唯一 scientific state 和 ancestry。
 
@@ -275,6 +277,8 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 ### Experiments / evidence
 
 - synthetic active `revision_02` 项目显式 build `revision_01` 后，active round 仍为 2，且未调用 source initialization/mutation。
+- historical build 保持 `round_state.yaml` 和 bibliography snapshot bytes 不变；
+  source 或 snapshot 人工修改均在 compilation 前被拒绝，active round 仍可编辑。
 - failed revision creation 删除 partial round/state/tmp，parent scientific digest 不变。
 - rollback/reindex 使用 archive，并验证 scientific bytes 与 editable submission sources 保留。
 
@@ -285,7 +289,7 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 ### Current implementation
 
 - Module: `src/sci_manuscript/workspace.py`
-- Types/functions: `ProjectConfig`, `load_project`, `start_revision`, `rollback_revision`, `reindex_revisions`, `temporary_run`, `write_build_manifest`
+- Types/functions: `ProjectConfig`, `load_project`, `start_revision`, `ensure_historical_round_state`, `rollback_revision`, `reindex_revisions`, `temporary_run`, `write_build_manifest`
 - Lifecycle orchestration: `src/sci_manuscript/api.py::ManuscriptProject`
 
 ### Regression coverage
@@ -389,9 +393,13 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 ### Hard invariants
 
 - `CURRENT` 同时要求 artifact bytes hash 和 artifact-specific input fingerprints 匹配 manifest。
+- fingerprints 必须包含 production Python implementation digest 和 selected
+  compiler/renderer-tool identity；实现或工具版本变化必须使旧 artifact stale。
 - source 或 dependency 改变后，旧 PDF 不得继续留在 `output/` 并被视为 current。
 - marked 至少依赖 parent/current source、bibliography、provenance、revision style 和 renderer resources。
 - response 至少依赖 `responses.tex`、`reviewer_comments.md`、response template、metadata、marked/reference location inputs。
+- response success 必须同时通过 staged-TeX projection 和 post-compile
+  Poppler PDF projection；最终 consistency 状态不能仅由 source 推断。
 - failed manifest update 保留上一次 successful manifest；successful write 使用 atomic replace。
 
 ### Candidate approaches
@@ -423,20 +431,24 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 
 - 修改 `responses.tex` 只使 response stale；clean/marked 仍 current。
 - 修改 response template 只使 response stale。
+- 修改 production implementation identity 或 selected toolchain identity 会使
+  artifact stale；当前采用保守的全 artifact invalidation。
 - stale selective build 删除旧 PDF；manifest-verified current PDF 保留。
 - response target 可复用 current marked PDF；缺失/陈旧 marked 会重建。
+- response PDF projection 验证 localized fixed opening/signature、ordered comment
+  IDs、non-empty visible response bodies 和 resolved location text。
 - manifest atomic replace 注入失败后，previous successful manifest bytes 不变。
 
 ### Decision
 
-选择 Approach C。mtime 不具内容语义；always rebuild 可作为诊断基线，但不是默认策略。正式状态语义为：文件不存在是 `MISSING`；文件存在且 manifest/output/input 全匹配是 `CURRENT`；其余是 `STALE`。
+选择 Approach C。mtime 不具内容语义；always rebuild 可作为诊断基线，但不是默认策略。正式状态语义为：文件不存在是 `MISSING`；文件存在且 manifest/output/input 全匹配是 `CURRENT`；其余是 `STALE`。implementation identity 使用安装包内全部 production `.py` 的确定性 digest；toolchain identity 使用实际选中的 engine/driver 及 renderer tools 版本，优先正确性而非 cache hit rate。
 
 ### Current implementation
 
-- Fingerprints/state: `src/sci_manuscript/workspace.py::_build_input_fingerprints`, `_artifact_input_fingerprints`, `artifact_input_digest`, `build_artifact_is_current`
+- Fingerprints/state: `src/sci_manuscript/workspace.py::_implementation_digest`, `_toolchain_identity`, `_build_input_fingerprints`, `_artifact_input_fingerprints`, `artifact_input_digest`, `build_artifact_is_current`
 - Manifest: `src/sci_manuscript/workspace.py::write_build_manifest`
 - Target orchestration and stale cleanup: `src/sci_manuscript/api.py::ManuscriptProject.build`, `_remove_stale_output_pdfs`
-- Response consistency audit: `src/sci_manuscript/response.py::build_response`
+- Response consistency audit: `src/sci_manuscript/response.py::_response_pdf_consistency`, `build_response`
 
 ### Regression coverage
 
@@ -446,7 +458,9 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 
 ### Known limitations
 
-dependency graph 必须由维护者显式更新；新增 package resource 若未进入 fingerprint，可能形成漏依赖。当前不提供跨项目共享 cache。
+dependency graph 必须由维护者显式更新；production Python 采用保守整体 digest，
+避免 renderer function 漏登记。新增非 Python package resource 仍需进入对应
+artifact fingerprint。当前不提供跨项目共享 cache。
 
 ### Future optimization triggers
 
@@ -500,6 +514,8 @@ package 升级后，旧项目可能保留过时 resource；迁移必须升级已
 - latest resource 为 no-op；unknown customized legacy color 返回 `REVISION_STYLE_MIGRATION_UNSUPPORTED`，原文件和 archive state 不变。
 - archive directory 使用 source content digest，不使用时间戳/随机值；重复相同 migration 复用一致 archive，冲突 fail closed。
 - package-owned response templates 仅在 run staging 中使用，不复制进 round；response body 始终来自 user-owned `responses.tex`。
+- real response integration 通过 `pdffonts` 验证最终 response artifact 的
+  Times New Roman font metadata，而非只编译独立 font probe。
 
 ### Decision
 
