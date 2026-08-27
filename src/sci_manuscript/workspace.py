@@ -345,11 +345,6 @@ def _round_numbers(project: Path) -> tuple[int, ...]:
     return (0, *revisions)
 
 
-def available_rounds(path: str | Path) -> tuple[int, ...]:
-    """Return every existing round in deterministic lifecycle order."""
-    return _round_numbers(normalize_project(path))
-
-
 def is_initialized(path: str | Path) -> bool:
     """Return whether a project contains the canonical manuscript workspace."""
     project = normalize_project(path)
@@ -1343,27 +1338,6 @@ def artifact_input_digest(
     """Return the stable manifest input digest for one artifact."""
     return _mapping_digest(
         _artifact_input_fingerprints(config, round_number, artifact, engine_override)
-    )
-
-
-def build_manifest_is_current(
-    config: ProjectConfig,
-    round_number: int,
-    engine_override: str | None = None,
-) -> bool:
-    """Return whether the recorded build inputs equal current selected inputs."""
-    path = config.build_manifest_path(round_number)
-    if not path.is_file():
-        return False
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError):
-        return False
-    return bool(
-        isinstance(data, dict)
-        and data.get("schema") == "sci-manuscript-build-manifest/v3"
-        and data.get("inputs")
-        == _build_input_fingerprints(config, round_number, engine_override)
     )
 
 

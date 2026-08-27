@@ -1,4 +1,4 @@
-"""Final canonical review, response, and location workflow contracts."""
+"""Canonical review, response, and location workflow contracts."""
 
 # ruff: noqa: RUF001 -- exact frozen Chinese response-letter punctuation.
 

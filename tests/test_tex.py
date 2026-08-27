@@ -9,6 +9,7 @@ from sci_manuscript.tex import (
     extract_braced,
     is_commented,
     is_escaped,
+    scan_tex_commands,
     skip_tex_space,
 )
 
@@ -52,3 +53,15 @@ def test_is_commented_respects_escaped_percent() -> None:
     assert not is_commented(text, text.index("text"))
     assert is_commented(text, text.index(r"\review"))
     assert not is_commented(text, text.index("next"))
+
+
+def test_tex_scanner_ignores_comments_and_parses_nested_fields() -> None:
+    text = (
+        "% \\review{1-1}{disabled}\n"
+        "\\review{AE-1}{active {nested} body}\n"
+        "% \\input{disabled}\n\\input{sections/active}\n"
+    )
+    reviews = scan_tex_commands(text, ("review",), field_count=2)
+    inputs = scan_tex_commands(text, ("input", "include"), field_count=1)
+    assert reviews[0].fields == ("AE-1", "active {nested} body")
+    assert inputs[0].fields == ("sections/active",)

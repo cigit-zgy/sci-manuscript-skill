@@ -222,7 +222,7 @@
 - `tests/test_provenance.py`
 - `tests/test_review_audit.py`
 - `tests/test_highlight_renderer.py`
-- `tests/test_review_workflow_final.py`
+- `tests/test_response_workflow.py`
 
 ### Known limitations
 
@@ -301,7 +301,8 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 
 - `tests/test_core.py`
 - `tests/test_build_targets.py`
-- `tests/test_release_hardening.py`
+- `tests/test_submission_contract.py`
+- `tests/test_artifact_freshness.py`
 - `tests/test_release_integration.py`
 
 ### Known limitations
@@ -379,7 +380,7 @@ library 仍与已冻结 hash 相符时才能安全升级。
 
 - `tests/test_bibliography_state.py`
 - `tests/test_core.py`
-- `tests/test_release_hardening.py`
+- `tests/test_artifact_freshness.py`
 - `tests/test_release_integration.py`
 
 ### Known limitations
@@ -463,7 +464,7 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 ### Regression coverage
 
 - `tests/test_build_targets.py`
-- `tests/test_release_hardening.py`
+- `tests/test_artifact_freshness.py`
 - `tests/test_release_integration.py`
 
 ### Known limitations
@@ -542,7 +543,7 @@ package 升级后，旧项目可能保留过时 resource；迁移必须升级已
 
 - `tests/test_revision_style.py`
 - `tests/test_architecture_contract.py`
-- `tests/test_release_hardening.py`
+- `tests/test_submission_contract.py`
 - `tests/test_release_integration.py`
 
 ### Known limitations

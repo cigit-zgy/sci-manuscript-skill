@@ -8,9 +8,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 
 from sci_manuscript import ManuscriptProject, initialize_manuscript
-from sci_manuscript.api import LifecycleResult
+from sci_manuscript.api import LifecycleResult, doctor
 from sci_manuscript.authors import load_author_library, resolve_authors
 from sci_manuscript.compile import (
     CjkProbeResult,
@@ -18,6 +19,7 @@ from sci_manuscript.compile import (
     parse_overfull_boxes,
     relocate_pre_document_section_inputs,
     resolve_engine,
+    select_engine,
     validate_revision_layout,
 )
 from sci_manuscript.diff import (
@@ -1378,3 +1380,174 @@ def test_init_api_returns_structured_result(tmp_path: Path) -> None:
         manuscript / "initial_submission", scientific_only=True
     )
     assert not (manuscript / "tmp").exists()
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tree_hashes(root: Path) -> dict[Path, str]:
+    return {
+        path.relative_to(root): _sha256(path)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_reindex_preserves_submission_sources_and_user_graphical_pdf(
+    tmp_path: Path,
+) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    r02 = _revision(r01)
+    r03 = _revision(r02)
+    source_hashes: dict[int, dict[Path, str]] = {}
+    response_hashes: dict[int, dict[Path, str]] = {}
+    scientific_hashes: dict[int, str] = {}
+    for config, label in ((r02, b"r02"), (r03, b"r03")):
+        number = config.current_round
+        submission = config.submission_dir(number)
+        graphical = submission / "graphical_abstract"
+        graphical.mkdir(parents=True, exist_ok=True)
+        sources = {
+            submission / "cover_letter_body.tex": label + b" cover body\n",
+            submission / "highlights.tex": label + b" highlights\n",
+            submission / "checklist.md": b"# checklist\n\n" + label + b" user note\n",
+            graphical / "graphical_abstract.tex": label + b" graphical TeX\n",
+            graphical / "source.png": label + b" user png",
+            graphical / "source.jpg": label + b" user jpg",
+            graphical / "source.jpeg": label + b" user jpeg",
+            graphical / "graphical_abstract.pdf": label + b" user final pdf",
+        }
+        for path, content in sources.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        comments = config.response_dir(number) / "reviewer_comments.md"
+        responses = config.response_dir(number) / "responses.tex"
+        comments.write_bytes(label + b" reviewer comments\n")
+        responses.write_bytes(b"\\Response{1-1}{Stable response " + label + b"}\n")
+        source_hashes[number] = {
+            path.relative_to(submission): _sha256(path) for path in sources
+        }
+        response_hashes[number] = _tree_hashes(config.response_dir(number))
+        scientific_hashes[number] = source_digest(
+            config.round_dir(number), scientific_only=True
+        )
+        for name in (
+            "manuscript.pdf",
+            "marked_manuscript.pdf",
+            "response_letter.pdf",
+            "cover_letter.pdf",
+            "highlights.pdf",
+        ):
+            (submission / name).write_bytes(b"generated")
+    shutil.rmtree(r03.round_dir(1))
+
+    with temporary_run(r03.project) as run_dir:
+        reindex_revisions(r03.project, run_dir)
+
+    for old_number, new_number in ((2, 1), (3, 2)):
+        migrated = r03.submission_dir(new_number)
+        assert {
+            relative: _sha256(migrated / relative)
+            for relative in source_hashes[old_number]
+        } == source_hashes[old_number]
+        assert _tree_hashes(r03.response_dir(new_number)) == response_hashes[old_number]
+        assert (
+            source_digest(r03.round_dir(new_number), scientific_only=True)
+            == scientific_hashes[old_number]
+        )
+        for name in (
+            "manuscript.pdf",
+            "marked_manuscript.pdf",
+            "response_letter.pdf",
+            "cover_letter.pdf",
+            "highlights.pdf",
+        ):
+            assert not (migrated / name).exists()
+        assert r03.creation_record_path(new_number).is_file()
+    archive = max((r03.project / "00_archive").glob("reindex_*"))
+    archived_hashes = _tree_hashes(archive / "revision_02" / "submission")
+    assert {
+        relative: archived_hashes[relative] for relative in source_hashes[2]
+    } == source_hashes[2]
+    assert not r03.tmp_root().exists()
+
+
+def test_rollback_digest_protects_submission_sources(tmp_path: Path) -> None:
+    revision = _revision(_workspace(tmp_path))
+    cover = revision.submission_dir(1) / "cover_letter_body.tex"
+    cover.write_text("user cover\n", encoding="utf-8")
+
+    assert (
+        source_digest(revision.round_dir(1))
+        != yaml.safe_load(revision.creation_record_path(1).read_text(encoding="utf-8"))[
+            "protected_source_digest"
+        ]
+    )
+    archive = revision.archive_root()
+    before = tuple(archive.iterdir()) if archive.is_dir() else ()
+    with pytest.raises(WorkflowError, match="protected user or scientific source"):
+        ManuscriptProject(revision.project).rollback(confirmed=True)
+    assert (tuple(archive.iterdir()) if archive.is_dir() else ()) == before
+    assert cover.read_text(encoding="utf-8") == "user cover\n"
+    assert revision.round_dir(1).is_dir()
+
+
+def test_reindex_failure_restores_round_state_and_submission_sources(
+    tmp_path: Path,
+) -> None:
+    r01 = _revision(_workspace(tmp_path))
+    r02 = _revision(r01)
+    r03 = _revision(r02)
+    for config, marker in ((r02, "r02"), (r03, "r03")):
+        cover = config.submission_dir(config.current_round) / "cover_letter_body.tex"
+        cover.write_text(marker, encoding="utf-8")
+    shutil.rmtree(r03.round_dir(1))
+    before_rounds = {number: _tree_hashes(r03.round_dir(number)) for number in (2, 3)}
+    before_states = {number: _tree_hashes(r03.state_dir(number)) for number in (2, 3)}
+
+    with pytest.raises(WorkflowError, match="Injected"):
+        with temporary_run(r03.project, keep=True) as run_dir:
+            reindex_revisions(r03.project, run_dir, fail_after_swap=True)
+
+    assert not r03.round_dir(1).exists()
+    for number in (2, 3):
+        assert _tree_hashes(r03.round_dir(number)) == before_rounds[number]
+        assert _tree_hashes(r03.state_dir(number)) == before_states[number]
+    assert list(r03.tmp_root().glob("run_*"))
+
+
+def test_engine_contract_includes_traditional_latex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = ProjectConfig(tmp_path / "manuscript", _workspace(tmp_path).metadata)
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert resolve_engine(config, "latex") == "latex"
+    result = doctor(engine="latex")
+    assert result.ready
+
+
+def test_doctor_auto_uses_the_runtime_engine_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: None if name == "tectonic" else f"/usr/bin/{name}",
+    )
+    assert select_engine("auto") == "latex"
+    result = doctor(engine="auto")
+    assert result.ready
+    assert any(check.name == "latexmk and driver" for check in result.checks)
+
+
+def test_creation_digest_is_stable_for_generated_checklist_line(tmp_path: Path) -> None:
+    revision = _revision(_workspace(tmp_path))
+    checklist = revision.submission_dir(1) / "checklist.md"
+    checklist.write_text("user note\n", encoding="utf-8")
+    finalize_revision_creation(revision)
+    before = source_digest(revision.round_dir(1))
+    checklist.write_text(
+        "user note\n\n- Review completeness: **COMPLETE**.\n", encoding="utf-8"
+    )
+    assert source_digest(revision.round_dir(1)) == before

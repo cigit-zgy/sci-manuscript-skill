@@ -84,3 +84,10 @@ def test_invalid_review_reports_file_line_id_reason_and_context(tmp_path: Path) 
     assert "ID: bad-id" in message
     assert "Reason: Invalid review ID list" in message
     assert r"Context: \review{bad-id}{Changed context.}" in message
+
+
+def test_escaped_review_control_word_is_not_provenance() -> None:
+    text = r"\\review{1-1}{literal documentation text}"
+    provenance = extract_provenance(text)
+    assert provenance.text == text
+    assert provenance.review_spans == ()

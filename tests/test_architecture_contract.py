@@ -6,7 +6,9 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from test_core import _workspace
 
+from sci_manuscript.errors import WorkflowError
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
     SubmissionSettings,
@@ -130,3 +132,53 @@ def test_submission_is_flat_and_output_contains_only_pdfs(
     ) == 1
     assert all(path.suffix == ".pdf" for path in config.output_dir(0).iterdir())
     assert any(item.path == submission for item in artifacts)
+
+
+def _custom_template(root: Path, *, malicious: bool = False) -> Path:
+    root.mkdir()
+    (root / "nested").mkdir()
+    (root / "nested" / "style.tex").write_text("% nested\n", encoding="utf-8")
+    (root / "workflow.tex").write_text(
+        "\\documentclass{article}\n%%FRONTMATTER_INPUT%%\n"
+        "\\begin{document}\n%%SECTION_INPUTS%%\n"
+        "\\bibliographystyle{%%BIBLIOGRAPHY_STYLE%%}\n"
+        "\\bibliography{%%BIBLIOGRAPHY_PATH%%}\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    source = "../escape.tex" if malicious else "body.tex"
+    (root / "sections.yaml").write_text(
+        "languages: [en]\n"
+        "bibliography:\n  package: '% custom'\n  style: plain\n"
+        "frontmatter:\n  file: 00_frontmatter.tex\n  source: frontmatter.tex\n"
+        f"sections:\n  - file: 01_body.tex\n    source: {source}\n    title: Body\n",
+        encoding="utf-8",
+    )
+    (root / "frontmatter.tex").write_text("\\title{%%TITLE_EN%%}\n", encoding="utf-8")
+    (root / "body.tex").write_text(
+        "\\section{%%SECTION_TITLE%%}\nBody.\n", encoding="utf-8"
+    )
+    return root
+
+
+def test_custom_template_is_copied_once_and_rejects_path_traversal(
+    tmp_path: Path,
+) -> None:
+    from sci_manuscript.workspace import initialize_project
+
+    base = _workspace(tmp_path / "base")
+    metadata = replace(base.metadata, publisher="custom", language="en")
+    target = tmp_path / "custom-project" / "manuscript"
+    template = _custom_template(tmp_path / "custom-template")
+    config = initialize_project(
+        ProjectConfig(target, metadata), custom_template=template
+    )
+    copied = config.references / "journal_template"
+    assert (copied / "nested" / "style.tex").is_file()
+    assert (config.round_dir(0) / "sections" / "01_body.tex").is_file()
+
+    malicious_target = tmp_path / "malicious-project" / "manuscript"
+    malicious = _custom_template(tmp_path / "malicious-template", malicious=True)
+    with pytest.raises(WorkflowError, match=r"relative \.tex path"):
+        initialize_project(
+            ProjectConfig(malicious_target, metadata), custom_template=malicious
+        )

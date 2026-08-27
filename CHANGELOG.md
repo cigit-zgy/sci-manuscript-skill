@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Removed unused `uv` and pre-commit state, retired two unconsumed workspace
+  wrappers, reorganized release-era regressions under permanent domain names,
+  and streamlined the public README without changing manuscript behavior.
 - Highlighted manuscripts now render only current scientific content: reviewer
   additions are RubineRed, author additions are ForestGreen, citation markers
   and DOI/URL links use xcolor `ProcessBlue`, ordinary text is black, and parent-only

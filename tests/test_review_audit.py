@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from test_core import _revision, _workspace
 
 from sci_manuscript import ManuscriptProject
 from sci_manuscript.api import LifecycleResult
@@ -18,6 +19,7 @@ from sci_manuscript.metadata import (
     save_meta,
 )
 from sci_manuscript.review import audit_reviews, parse_reviews
+from sci_manuscript.review_ids import validate_review_id_list
 from sci_manuscript.workspace import ProjectConfig, initialize_project
 
 
@@ -473,3 +475,35 @@ def test_cli_init_output_is_minimal_and_action_oriented(
         token not in output
         for token in ("tmp/", "reviewloc", "latexdiff", "Tectonic", "sidecar")
     )
+
+
+def test_associate_editor_ids_and_heading_are_canonical(tmp_path: Path) -> None:
+    path = tmp_path / "reviews.md"
+    path.write_text(
+        "# Associate Editor\n## Main comment\n## Specific comments\n1. AE item\n",
+        encoding="utf-8",
+    )
+    blocks = parse_reviews(path)
+    assert blocks[0].comments[0].review_id == "AE-1"
+    assert validate_review_id_list("AE-1,1-1") == ("AE-1", "1-1")
+
+
+def test_review_index_distinguishes_changed_and_removed_comments(
+    tmp_path: Path,
+) -> None:
+    revision = _revision(_workspace(tmp_path))
+    comments = revision.response_dir(1) / "reviewer_comments.md"
+    comments.write_text(
+        "# Reviewer #1\n## Main comment\n## Specific comments\n"
+        "1. First text.\n2. Second text.\n",
+        encoding="utf-8",
+    )
+    audit_reviews(revision, 1, record_index=True)
+    comments.write_text(
+        "# Reviewer #1\n## Main comment\n## Specific comments\n1. Changed text.\n",
+        encoding="utf-8",
+    )
+    audit = audit_reviews(revision, 1)
+    codes = {issue.code for issue in audit.issues}
+    assert "REVIEW_COMMENT_CHANGED" in codes
+    assert "REVIEW_COMMENT_REMOVED" in codes

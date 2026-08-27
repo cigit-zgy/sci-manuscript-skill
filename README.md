@@ -56,10 +56,8 @@ initialize -> build initial submission -> create revision
            -> mark current additions -> build responses -> prepare submission
 ```
 
-The CLI resolves a project, selects an existing round, selects the requested
-artifact target, stages package resources in a temporary run directory, builds
-the minimum dependency set, validates the result, and atomically publishes only
-the requested current artifacts.
+The CLI builds the minimum dependency set for the selected round and target,
+validates the result, and atomically publishes only current artifacts.
 
 ## Project lifecycle
 
@@ -125,26 +123,15 @@ marked manuscript. Parent-only deletions never appear.
 | unchanged text | black |
 | citation markers and DOI/URL links | xcolor `ProcessBlue` (`dvipsnames`) |
 
-Fine addition spans are preferred. At 60% or greater visible addition coverage,
-one current paragraph, heading, or caption may be highlighted as a whole only
-when all additions have identical provenance. Structural seams are immutable,
-so highlight spans cannot merge paragraphs or cross headings, displays, floats,
-tables, or lists. Changed display equations may be highlighted atomically.
+Fine addition spans are preferred. Unchanged display equations stay black, and
+highlight spans cannot merge structural blocks. The complete identity,
+whole-block, move, equation, and citation rules are maintained in
+[revision semantics](references/revision_semantics.md).
 
-## Reference link styling
-
-Citation identity is the BibTeX key, not its rendered number. Current citation
-markers and reference-related DOI/URL links retain the manuscript's normal link
-styling, which is xcolor `ProcessBlue` from `dvipsnames`. Bibliography prose
-remains black. Provenance is retained for audit and reviewer-location purposes;
-removed references are absent because only the current bibliography renders.
-
-## Deleted content policy
-
-Deleted prose, equations, headings, citations, bibliography entries, labels,
-and other parent-only structures are not shown. A deletion-only reviewer reply
-uses a locale-aware note stating that no corresponding highlighted text remains
-instead of inventing a line number.
+Citation identity is the BibTeX key, not its rendered number. Citation markers
+and DOI/URL links use xcolor `ProcessBlue`; bibliography prose remains black.
+Parent-only content is absent from the marked manuscript. A deletion-only reply
+uses a locale-aware note rather than inventing a line number.
 
 ## Response workflow
 
@@ -163,10 +150,6 @@ never bundled. If the exact font is unavailable through fontconfig, the build
 fails with `RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN` instead of silently
 substituting a Times-like family.
 
-After compilation, the response build uses Poppler text extraction to verify
-the localized opening and correspondence fields, ordered comment IDs, visible
-response-body projections, and resolved locations against the real PDF.
-
 Multiple corresponding authors are supported. The response letter lists them
 in manuscript author order, filtering the selected author list without sorting
 by name, affiliation, or metadata declaration order. Each localized block
@@ -176,49 +159,29 @@ it uses only the first affiliation. A corresponding author without an email or
 resolvable address fails the build with an author-specific metadata error.
 
 Block labels are `通讯地址：` and `邮箱：` in Chinese, and
-`Correspondence address:` and `E-mail:` in English. Name-to-address and
-address-to-email gaps are each `0.25\baselineskip`; adjacent author blocks are
-separated by `0.55\baselineskip`, with no trailing block gap.
+`Correspondence address:` and `E-mail:` in English.
 
 Reviewer locations come from a layout-equivalent compilation of the final
-marked source. They never alter the visible marked PDF.
+marked source and never alter the visible marked PDF. Response builds verify
+the opening, correspondence data, responses, locations, and exact Latin font
+against the compiled PDF.
 
 ## Build commands
 
-Initial submission:
-
 ```bash
 sci-manuscript build --project .
-```
-
-Active revision, default marked-only fast path:
-
-```bash
-sci-manuscript build --project .
-```
-
-Historical revision:
-
-```bash
 sci-manuscript build --project . --round revision_01
-```
-
-Explicit target and full verification:
-
-```bash
 sci-manuscript build --project . --round revision_01 --target clean
 sci-manuscript build --project . --round revision_01 --target all
 ```
 
+The default target is `clean` for the initial submission and `marked` for a
+revision. Use `--round` to select an existing historical round without changing
+the active round. Missing rounds list available rounds, incomplete rounds list
+available targets, and there is no silent fallback.
+
 Use `--timing` to print stage durations and LaTeX, bibliography, cache-hit, and
 latexdiff invocation counts. Use `--keep-temp` only when diagnostics are needed.
-
-## Round selection
-
-`--round` selects an existing round without changing the active round. Omission
-selects the active round. Missing rounds list all available rounds; an existing
-but incomplete round reports why the requested target is not buildable and
-lists available targets. There is no silent fallback.
 
 ## Build targets
 
@@ -251,20 +214,13 @@ bibliography cache live under `tmp/`.
 
 ## Validation
 
-Full revision validation requires scientific-text, numbering, paragraph, block
-topology, reference provenance, location-layout, and output-purity identity.
-Marked-only builds run source-level current-content and topology checks but skip
-cross-PDF validation because no clean PDF is compiled.
-
-Build manifests use content digests to identify CURRENT, STALE, and MISSING
-artifacts. Artifact fingerprints include the installed production Python
-implementation, package-owned revision/location TeX runtimes, and the selected
-engine and renderer-tool identities. When a round becomes historical,
-`state/<round>/authors.yaml` stores only its selected author and affiliation
-records; `round_state.yaml` binds that snapshot to source, metadata,
-bibliography, and the parent round-state digest. Historical builds verify the
-complete ancestor chain before compilation and render from the frozen author
-snapshot instead of the current external author library.
+Validation covers scientific text, numbering, paragraph/block topology,
+reference provenance, response locations, and output purity. Build manifests
+classify artifacts as CURRENT, STALE, or MISSING. Historical rounds verify their
+frozen source, bibliography, author metadata, and ancestor state before build.
+Implementation details and maintenance evidence live in
+[workflow](references/workflow.md) and
+[technical core](references/technical_core.md).
 
 ## Zotero / Better BibTeX
 
