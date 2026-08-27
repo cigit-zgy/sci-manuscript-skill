@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install ".[dev]"
       - run: python -m compileall -q src tests
       - run: pytest -q -m "not integration"
       - run: ruff format --check .
@@ -55,7 +55,7 @@ jobs:
               "journal_templates/nature/workflow.tex",
               "journal_templates/acs/workflow.tex",
           )
-          root = files("sci_manuscript.resources")
+          root = files("sci_manuscript") / "resources"
           assert all((root / path).is_file() for path in required)
           PY
           /tmp/sci-wheel-${{ matrix.python-version }}/bin/sci-manuscript --help
@@ -73,6 +73,6 @@ jobs:
         run: |
           brew install tectonic latexdiff poppler
           brew install --cask font-fandol
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install ".[dev]"
       - name: Run unit and real integration release gates
         run: pytest -q

@@ -411,10 +411,10 @@ def doctor(
         engine_check,
         DoctorCheck("latexdiff", latexdiff[0], latexdiff[1], True),
         DoctorCheck(
-            "Poppler PDF tools",
+            "Optional PDF presentation tools",
             pdftotext[0] and pdftoppm[0],
             f"pdftotext={pdftotext[1]}; pdftoppm={pdftoppm[1]}",
-            True,
+            False,
         ),
         bibliography_check,
         DoctorCheck("Ruff", _tool_detail("ruff")[0], _tool_detail("ruff")[1], False),

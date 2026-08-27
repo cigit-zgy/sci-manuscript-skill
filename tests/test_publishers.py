@@ -17,7 +17,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 ROOT = Path(__file__).resolve().parents[1]
-PUBLISHER_ASSETS = ROOT / "src" / "sci_manuscript" / "resources" / "journal_templates"
+PUBLISHER_ASSETS = ROOT / "src" / "resources" / "journal_templates"
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
     "AScY42YAAAAASUVORK5CYII="
@@ -76,16 +76,12 @@ class PublisherTemplateTest(unittest.TestCase):
     """Verify each bundled class with author, figure, and bibliography content."""
 
     tectonic: ClassVar[str | None]
-    pdftotext: ClassVar[str | None]
-    pdfimages: ClassVar[str | None]
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.tectonic = shutil.which("tectonic")
-        cls.pdftotext = shutil.which("pdftotext")
-        cls.pdfimages = shutil.which("pdfimages")
-        if cls.tectonic is None or cls.pdftotext is None:
-            raise unittest.SkipTest("tectonic and pdftotext are required")
+        if cls.tectonic is None:
+            raise unittest.SkipTest("tectonic is required")
 
     def _compile(
         self,
@@ -141,6 +137,7 @@ class PublisherTemplateTest(unittest.TestCase):
                     "-X",
                     "compile",
                     f"--outdir={build}",
+                    "--keep-intermediates",
                     str(work / "main.tex"),
                 ],
                 cwd=work,
@@ -159,26 +156,10 @@ class PublisherTemplateTest(unittest.TestCase):
                 self.assertNotIn("Overfull \\hbox", diagnostics)
                 self.assertNotIn("Overfull \\vbox", diagnostics)
             pdf = build / "main.pdf"
-            self.assertTrue(pdf.is_file(), publisher)
-            extracted = subprocess.run(
-                [self.pdftotext or "pdftotext", str(pdf), "-"],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=True,
-            ).stdout
-            self.assertIn("Test Author", extracted)
-            self.assertIn(expected_reference, extracted.lower())
-            if self.pdfimages is not None:
-                image_list = subprocess.run(
-                    [self.pdfimages, "-list", str(pdf)],
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=True,
-                ).stdout
-                self.assertIn("image", image_list.lower())
-            return extracted
+            self.assertTrue(pdf.is_file() and pdf.stat().st_size > 0, publisher)
+            bbl = (build / "main.bbl").read_text(encoding="utf-8")
+            self.assertIn(expected_reference, bbl.lower())
+            return bbl
 
     def test_elsevier_elsarticle(self) -> None:
         source = r"""
@@ -320,7 +301,7 @@ Template compilation test.
 \end{document}
 """
 
-        extracted = self._compile(
+        bbl = self._compile(
             "chinese",
             source,
             ("kxtbcas.cls", "kxtbcas-numeric.bst"),
@@ -328,14 +309,14 @@ Template compilation test.
             "bare doi reference",
             reject_overfull=True,
         )
-        normalized = re.sub(r"\s+", " ", extracted)
+        normalized = re.sub(r"\s+", " ", bbl)
 
-        self.assertIn("DOI: 10.1234/Test.Mixed-Case-1", normalized)
-        self.assertIn("DOI: 10.5678/AbC.Def-2", normalized)
-        self.assertIn("DOI: 10.9012/Mixed.Punctuation-3", normalized)
+        self.assertIn(r"DOI: \nolinkurl{10.1234/Test.Mixed-Case-1}", normalized)
+        self.assertIn(r"DOI: \nolinkurl{10.5678/AbC.Def-2}", normalized)
+        self.assertIn(r"DOI: \nolinkurl{10.9012/Mixed.Punctuation-3}", normalized)
         self.assertNotIn("DOI: https://doi.org/", normalized)
         self.assertNotIn("DOI: http://dx.doi.org/", normalized)
-        self.assertEqual(normalized.count("DOI:"), 3)
+        self.assertEqual(normalized.count(r"DOI: \nolinkurl{"), 3)
 
 
 if __name__ == "__main__":

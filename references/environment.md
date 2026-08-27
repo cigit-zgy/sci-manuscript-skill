@@ -13,9 +13,10 @@ confirms the exact target environment and installation method.
 | YAML | PyYAML 6.x and ruamel.yaml 0.18.x |
 | LaTeX | Tectonic (primary) or the traditional `latexmk` driver |
 | Revisions | `latexdiff` |
-| PDF QA | Poppler `pdftotext` and `pdftoppm` |
+| CJK environment probe | Poppler `pdftotext` |
+| Optional presentation QA | Poppler render/font tools when explicitly used |
 | Bibliography | Tectonic-integrated BibTeX, external BibTeX, or Biber |
-| Response typography | system Times New Roman visible to fontconfig |
+| Response typography | a TeX-usable installed serif from the platform policy |
 
 Chinese publisher projects additionally require XeLaTeX-compatible
 compilation and usable Chinese fonts. Ruff, Mypy, Zotero, and Better BibTeX are
@@ -29,9 +30,7 @@ Identify the intended Python before running workflow imports:
 python3 --version
 command -v python3
 command -v tectonic latexmk xelatex pdflatex
-command -v latexdiff pdftotext pdftoppm bibtex biber
-command -v fc-match
-fc-match "Times New Roman"
+command -v latexdiff pdftotext bibtex biber
 ```
 
 Then run the installed command:
@@ -47,9 +46,34 @@ diagnostic remains usable when PyYAML is absent, so a missing YAML package is
 reported normally rather than as an import traceback.
 
 The target-aware Chinese check compiles a minimal `xeCJK` document with the
-selected engine, extracts its PDF text, and verifies non-empty Chinese glyphs.
+selected engine, extracts that isolated probe's PDF text, and verifies non-empty
+Chinese glyphs. This is an environment capability probe, not manuscript,
+revision, or response correctness validation. Normal marked/response builds do
+not reverse-parse final PDFs.
 It reports `BLOCKED` on a compile, package, engine, extraction, or glyph failure;
 it never installs or silently switches toolchains.
+
+Response compilation independently probes font candidates with the selected
+correspondence TeX engine. The fixed policies are:
+
+- macOS Latin: Times New Roman, Times, TeX Gyre Termes; CJK: Songti SC,
+  STSong, Noto Serif CJK SC;
+- Windows Latin: Times New Roman, Cambria, Georgia; CJK: SimSun, NSimSun,
+  Noto Serif CJK SC;
+- Linux Latin: Times New Roman, TeX Gyre Termes, Liberation Serif, Nimbus
+  Roman; CJK: Noto Serif CJK SC, Source Han Serif SC, FandolSong.
+
+The first TeX-usable family is selected and recorded in the run audit. If every
+candidate fails, `RESPONSE_LATIN_FONT_UNAVAILABLE` or
+`RESPONSE_CJK_FONT_UNAVAILABLE` reports the platform and attempted families.
+Fonts remain host-installed or temporarily staged from an existing host TeX
+installation; no font binary is distributed by the package.
+
+macOS font resolution and embedded-font output are integration-verified on the
+real release environment. Windows and Linux candidate ordering and resolver
+logic are covered at the logic-test level; actual availability remains a host
+property and must be confirmed on the target machine. This boundary does not
+justify a new Windows/Linux LaTeX CI matrix without a reproducible host issue.
 
 If the selected interpreter is older than Python 3.11, do not alter the system
 Python. Ask which Conda environment or virtual environment should be used.
@@ -85,7 +109,8 @@ For an existing Conda environment selected by the user:
 conda install -n <environment> "python>=3.11" "pyyaml>=6,<7"
 ```
 
-For the primary release-tested macOS toolchain:
+For the primary release-tested macOS toolchain, include Poppler when the CJK
+probe or optional presentation tools are required:
 
 ```bash
 brew install tectonic latexdiff poppler
@@ -116,5 +141,7 @@ bundle.
 
 The bundled Chinese class uses system font fallbacks when project-local font
 files are absent. Tectonic may report absolute system-font access as a
-reproducibility warning. A successful build still requires PDF text extraction
-and rendered-page inspection before handoff.
+reproducibility warning. A successful build requires source/TeX-state
+validation. Rendered-page inspection is separate presentation QA when the
+handoff makes a visual-layout claim; manuscript PDF text extraction is not a
+scientific correctness gate.

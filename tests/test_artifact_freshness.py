@@ -7,13 +7,12 @@ import shutil
 from pathlib import Path
 
 import pytest
-from test_core import _revision, _workspace
-
 import sci_manuscript.workspace as workspace_module
 from sci_manuscript.workspace import (
     build_artifact_is_current,
     write_build_manifest,
 )
+from test_core import _revision, _workspace
 
 
 def test_successful_build_manifest_contains_hashes_without_private_paths(

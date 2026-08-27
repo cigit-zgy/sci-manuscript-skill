@@ -6,8 +6,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from test_core import _revision, _workspace
-
 from sci_manuscript import ManuscriptProject
 from sci_manuscript.api import LifecycleResult
 from sci_manuscript.cli import _print_lifecycle
@@ -21,6 +19,7 @@ from sci_manuscript.metadata import (
 from sci_manuscript.review import audit_reviews, parse_reviews
 from sci_manuscript.review_ids import validate_review_id_list
 from sci_manuscript.workspace import ProjectConfig, initialize_project
+from test_core import _revision, _workspace
 
 
 def _project(tmp_path: Path, language: str = "en") -> ProjectConfig:

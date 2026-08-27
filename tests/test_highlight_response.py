@@ -7,13 +7,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from sci_manuscript.locations import _format_locations
-from sci_manuscript.response import _body_tex
+from sci_manuscript.response import _body_tex, build_response_tex_registry
 from sci_manuscript.review import ReviewBlock, ReviewComment
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES = ROOT / "src/sci_manuscript/resources/correspondence_templates/response"
+TEMPLATES = ROOT / "src/resources/correspondence_templates/response"
 
 
 def _block(prefix: str, review_id: str) -> ReviewBlock:
@@ -27,6 +26,24 @@ def _block(prefix: str, review_id: str) -> ReviewBlock:
 
 def _template(language: str) -> str:
     return (TEMPLATES / f"response_{language}.tex").read_text(encoding="utf-8")
+
+
+def _render_body(
+    blocks: tuple[ReviewBlock, ...],
+    language: str,
+    responses: dict[str, str],
+    revised_ids: set[str],
+) -> str:
+    comment_ids = tuple(
+        comment.review_id for block in blocks for comment in block.comments
+    )
+    locations = {
+        review_id: f"location:{review_id}"
+        for review_id in comment_ids
+        if review_id in revised_ids
+    }
+    registry = build_response_tex_registry((), comment_ids, responses, locations)
+    return _body_tex(blocks, language, responses, revised_ids, registry)
 
 
 ZH_FIXED_OPENING = r"""尊敬的编辑：\par
@@ -47,7 +64,15 @@ We have provided point-by-point responses to all comments and questions and revi
 
 
 def _opening(template: str) -> str:
-    return template.split(r"\begin{document}", 1)[1].split(r"\clearpage", 1)[0].strip()
+    document_opening = (
+        template.split(r"\begin{document}", 1)[1].split(r"\clearpage", 1)[0].strip()
+    )
+    return "\n".join(
+        line
+        for line in document_opening.splitlines()
+        if not line.startswith(r"\SCIState")
+        and line != "%%RESPONSE_CORRESPONDENCE_STATE%%"
+    ).lstrip()
 
 
 def test_package_templates_own_exact_fixed_opening_snapshots() -> None:
@@ -80,7 +105,7 @@ def test_response_templates_forbid_signoffs_and_extra_first_page_prose() -> None
 
 
 def test_pure_deletion_location_note_is_rendered_without_a_fake_line() -> None:
-    body = _body_tex((_block("1", "1-1"),), "zh", {"1-1": "Reply."}, {"1-1"})
+    body = _render_body((_block("1", "1-1"),), "zh", {"1-1": "Reply."}, {"1-1"})
     note = "相关内容已删除，当前稿无对应高亮文本"
 
     rendered = body.replace(r"\ReviewLocation{1-1}", note)
@@ -102,7 +127,7 @@ def test_only_inter_comment_seams_own_entry_end() -> None:
         ),
     )
 
-    body = _body_tex(
+    body = _render_body(
         (block,),
         "en",
         {"1-1": "Revised response.", "1-2": "Response only."},
@@ -118,7 +143,7 @@ def test_only_inter_comment_seams_own_entry_end() -> None:
 
 
 def test_editor_empty_response_preview_keeps_local_entry_spacing() -> None:
-    body = _body_tex((_block("E", "E-1"),), "zh", {"E-1": ""}, set())
+    body = _render_body((_block("E", "E-1"),), "zh", {"E-1": ""}, set())
 
     assert r"\ResponseSection{编辑}" in body
     assert body.index(r"\begin{response}") < body.index(r"\end{response}")
@@ -127,7 +152,7 @@ def test_editor_empty_response_preview_keeps_local_entry_spacing() -> None:
 
 
 def test_reviewer_sections_never_force_a_page_break() -> None:
-    body = _body_tex(
+    body = _render_body(
         (_block("1", "1-1"), _block("2", "2-1")),
         "en",
         {"1-1": "Reply one.", "2-1": "Reply two."},
@@ -139,7 +164,7 @@ def test_reviewer_sections_never_force_a_page_break() -> None:
 
 
 def test_last_comment_does_not_stack_entry_and_reviewer_spacing() -> None:
-    body = _body_tex(
+    body = _render_body(
         (_block("1", "1-1"), _block("2", "2-1")),
         "en",
         {"1-1": "Reply one.", "2-1": "Reply two."},

@@ -151,7 +151,7 @@ def resolve_author_library_path() -> Path:
     configured = configured_author_library_path()
     if configured.is_file():
         return configured
-    bundled = Path(str(files("sci_manuscript.resources") / "authors.yaml"))
+    bundled = Path(str(files("sci_manuscript") / "resources" / "authors.yaml"))
     if not bundled.is_file():
         raise MetadataError("Bundled author library is missing from the installation.")
     return bundled

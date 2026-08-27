@@ -10,7 +10,7 @@ from importlib.resources import files
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "src" / "sci_manuscript"
+SOURCE = ROOT / "src"
 
 
 def _png_size(path: Path) -> tuple[int, int]:
@@ -31,7 +31,7 @@ def test_readme_screenshots_are_real_equal_size_pngs() -> None:
 
 
 def test_runtime_resources_are_package_data() -> None:
-    root = files("sci_manuscript.resources")
+    root = files("sci_manuscript") / "resources"
     required = (
         "authors.yaml",
         "revision_style.template.tex",
@@ -64,16 +64,11 @@ def test_runtime_resources_are_package_data() -> None:
 
 
 def test_revision_semantics_contract_is_documented() -> None:
-    style = (
-        ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.template.tex"
-    ).read_text(encoding="utf-8")
+    style = (ROOT / "src" / "resources" / "revision_style.template.tex").read_text(
+        encoding="utf-8"
+    )
     runtime = (
-        ROOT
-        / "src"
-        / "sci_manuscript"
-        / "resources"
-        / "revision"
-        / "marked_runtime.tex"
+        ROOT / "src" / "resources" / "revision" / "marked_runtime.tex"
     ).read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -81,21 +76,19 @@ def test_revision_semantics_contract_is_documented() -> None:
         encoding="utf-8"
     )
     common = (
-        ROOT
-        / "src"
-        / "sci_manuscript"
-        / "resources"
-        / "manuscript_preamble"
-        / "common.tex"
+        ROOT / "src" / "resources" / "manuscript_preamble" / "common.tex"
     ).read_text(encoding="utf-8")
     assert r"\newcommand{\RevisionReviewerColor}{RubineRed}" in common
     assert r"\definecolor{SciLinkBlue}{RGB}{0,0,255}" not in common
-    assert "citecolor=ProcessBlue" in common
-    assert "urlcolor=ProcessBlue" in common
+    assert "citecolor=blue" in common
+    assert "linkcolor=blue" in common
+    assert "urlcolor=blue" in common
     assert "ForestGreen" in runtime
     assert "definecolor{SciRevision" not in common
     assert "SciLinkBlue" not in common + runtime
-    assert "ProcessBlue" in common + runtime
+    assert "ProcessBlue" not in common + runtime
+    assert "0,0,255" not in common + runtime
+    assert "0000FF" not in common + runtime
     assert "RevisionDeleted" not in style
     assert r"\CJKsout" not in style
     assert r"\SCIDeletedBibItem" not in runtime
@@ -103,15 +96,20 @@ def test_revision_semantics_contract_is_documented() -> None:
     assert r"\CJKunderline" not in style
     assert "author-driven addition/replacement | ForestGreen" in readme
     assert "reviewer-driven addition/replacement | RubineRed" in readme
-    assert "`latexdiff` detects current additions only" in skill
-    assert "current-addition evidence only" in semantics
-    assert "markup inserted into exact current source" in semantics
-    assert "`latexdiff` document is diagnostic evidence" in semantics.lower()
-    assert "Move handling is intentionally exact" in semantics
-    assert "similarity graph" in semantics
-    assert "Citation identity is the BibTeX key" in semantics
-    assert "Parent-only content never appears" in semantics
-    assert "Coverage at or above 0.60" in semantics
+    assert "`latexdiff` is auxiliary detector evidence only" in skill
+    assert "it cannot authorize color" in skill
+    assert "canonical region projection" in semantics
+    assert "same-context region matching" in semantics
+    assert "`latexdiff` remains auxiliary change evidence" in semantics
+    assert "Character-, word-, and short-phrase-level fragments" in semantics
+    assert "more than 50 visible lexical atoms" in semantics
+    assert "more than 30 words" in semantics
+    assert "at most three deterministic revision units" in semantics
+    assert "normalized-identical mathematical body is always" in semantics
+    assert "Global exact-content suppression is forbidden" in semantics
+    assert "Citation identity is the BibTeX key set" in semantics
+    assert "Parent-only content is never displayed" in semantics
+    assert "WHO owns it?" in semantics
     assert r"\ReviewReference" in semantics
 
 
@@ -135,14 +133,41 @@ def test_no_obsolete_public_architecture_strings() -> None:
         assert obsolete not in text
 
 
-def test_release_metadata_is_v2_and_includes_third_party_notices() -> None:
+def test_release_metadata_is_v2_1_and_includes_third_party_notices() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["project"]["version"] == "2.0.0"
+    assert project["project"]["version"] == "2.1.0"
     assert set(project["project"]["license-files"]) == {
         "LICENSE",
         "THIRD_PARTY_NOTICES.md",
-        "src/sci_manuscript/resources/journal_templates/acs/LICENSE.md",
+        "src/resources/journal_templates/acs/LICENSE.md",
     }
+
+
+def test_physical_package_is_flat_but_public_namespace_is_sci_manuscript() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    setuptools = project["tool"]["setuptools"]
+
+    assert setuptools["packages"] == ["sci_manuscript"]
+    assert setuptools["package-dir"] == {"sci_manuscript": "src"}
+    assert SOURCE.joinpath("__init__.py").is_file()
+    assert SOURCE.joinpath("api.py").is_file()
+    assert SOURCE.joinpath("resources").is_dir()
+    assert not SOURCE.joinpath("resources", "__init__.py").exists()
+    assert not SOURCE.joinpath("sci_manuscript").exists()
+
+
+def test_pdf_is_not_production_scientific_authority() -> None:
+    diff = SOURCE.joinpath("diff.py").read_text(encoding="utf-8")
+    response = SOURCE.joinpath("response.py").read_text(encoding="utf-8")
+    workspace = SOURCE.joinpath("workspace.py").read_text(encoding="utf-8")
+
+    assert "_pdf_text_projection" not in diff
+    assert "pdftotext" not in diff
+    assert "_extract_pdf_text" not in response
+    assert "response_source_pdf_consistency" not in response
+    assert "pdftotext" not in response
+    assert '"pdftotext"' not in workspace
+    assert '"pdftoppm"' not in workspace
 
 
 def test_manuscript_package_has_no_scripts_runtime_dependency() -> None:
@@ -187,7 +212,7 @@ def test_review_parser_api_is_owned_only_by_review_modules() -> None:
 
 
 def test_correspondence_templates_are_self_contained() -> None:
-    resources = ROOT / "src" / "sci_manuscript" / "resources"
+    resources = ROOT / "src" / "resources"
     templates = (
         resources / "correspondence_templates" / "cover_letter" / "cover_letter_en.tex",
         resources / "correspondence_templates" / "cover_letter" / "cover_letter_zh.tex",
@@ -278,9 +303,10 @@ def test_current_docs_have_one_revision_rendering_contract() -> None:
         ROOT / "references" / "workflow.md",
     )
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
-    assert "`latexdiff` is an addition detector" in text
+    assert "same-context matching" in text
+    assert "`latexdiff` supplies\nauxiliary detector evidence only" in text
+    assert "it cannot authorize color or ownership" in text
     assert "current clean manuscript plus revision" in text
-    assert "`latexdiff` document is diagnostic evidence" in text.lower()
     assert "reviewer-driven addition/replacement | RubineRed" in text
     assert "author-driven addition/replacement | ForestGreen" in text
     assert "unchanged text | black" in text

@@ -5,12 +5,136 @@
 | # | Subsystem | Core problem | Current solution | Status | Optimization policy |
 |---|---|---|---|---|---|
 | 1 | TeX line locations | 将 reviewer change 映射到最终可见行号 | `lineno` + `\linelabel` + AUX | STABLE / FROZEN | 仅在真实复杂 AMS 需求、引擎兼容性回归或 `lineno` 失效时重开 |
-| 2 | Revision change detection | 从 parent/current 找出 current 中应高亮的内容 | `latexdiff` addition evidence + current-source renderer | WATCH | 只修复可复现的 false positive/negative，不扩张为通用 TeX AST |
+| 2 | Revision change detection | 从 parent/current 找出 current 中应高亮的结构或可读单元 | lightweight structural projection + region matching + current-source renderer | WATCH | 只扩展已定义 canonical region，不构建通用 TeX AST 或 semantic diff |
 | 3 | Review provenance | 分离 WHAT changed 与 WHO caused it | current-source `\review` parser + sidecar intervals | STABLE / CONSERVATIVE | 语法和错误上下文可加固，ownership 语义保持冻结 |
 | 4 | Revision/version state | 冻结、选择和重建历史 round | immutable per-round state + manifest/hash | WATCH | 仅针对真实历史重建或事务失败修复 |
 | 5 | Bibliography/citation state | 以 BibTeX key 保持历史引用身份 | current full DB + resolved cited snapshot | WATCH | 新 backend 或依赖语义出现时扩展闭包规则 |
 | 6 | Build/artifact freshness | 区分 PDF 存在与 PDF 当前有效 | content digest + artifact-specific dependencies | WATCH | 优先补齐真实漏依赖；不建设通用 cache framework |
 | 7 | Template/resource migration | 升级资源同时保护用户修改与冻结状态 | ownership taxonomy + known-stock migration + archive | WATCH | 只为已知旧资源增加迁移器；未知定制继续 fail closed |
+
+## Architecture contract
+
+Manuscript hierarchy、identity、relation vocabulary 和 region master table 的
+canonical owner 是 [manuscript_regions.md](manuscript_regions.md)。Revision
+reasoning 固定为：
+
+```text
+STRUCTURE
+    ↓
+MATCH
+    ↓
+IDENTITY
+    ↓
+CHANGE
+    ↓
+PROVENANCE
+    ↓
+PRESENTATION
+    ↓
+LOCATION
+```
+
+`STRUCTURE`/`MATCH`/`IDENTITY` 只回答可比较对象及其同一性；`CHANGE` 以
+owner-free 方式回答 WHAT changed；`PROVENANCE` 随后回答 WHO owns it；
+`PRESENTATION` 只向 current source 插入显示宏；`LOCATION` 最后从真实排版
+映射 reviewer event。`\review` 不能回流到 change detection。Build/artifact
+`depends-on` 与 manuscript `contains` 是两个不同图，不能混用。
+
+### Authority model
+
+| Authority | Owns | Must not own |
+| --- | --- | --- |
+| SOURCE | scientific content, manuscript hierarchy, region identity, parent/current comparison, WHAT changed, expected provenance boundaries | TeX counters or artifact freshness |
+| TEX | counters, labels, citation resolution, BBL rendering, line numbers, executed package events, compile diagnostics | lifecycle ancestry or scientific inference from PDF |
+| STATE | round ancestry, frozen historical state, artifact dependencies/freshness, build provenance | manuscript content decisions |
+| PDF | final presentation/delivery bytes, output hash, atomic publication | scientific, revision, provenance, response, numbering, bibliography, or location correctness |
+
+The marked pipeline is fixed:
+
+```text
+parent/current source
+  -> canonical projection -> same-context match
+  -> whole-block/sentence/clause identity -> owner-free change proof
+  -> IdentityCertificate / ChangeCertificate / StructuralEvent
+  -> provenance -> owner-aware authorized event -> protected policy
+  -> canonical event macro in exact current source -> LaTeX
+  -> collect RenderCertificates -> exact registry validation
+  -> publish manuscript_marked.pdf
+```
+
+Identity determines correctness; segmentation only determines presentation
+granularity. `IdentityCertificate` is a black hard veto. A visual event requires
+positive unit-level change/addition proof and a deterministic event ID.
+`StructuralEvent` never authorizes unrelated visible color. `latexdiff` remains
+auxiliary detector evidence only: it cannot create a certificate or decide
+ownership, and any overlap with identity-certified content is recorded as a
+detector disagreement.
+
+The response pipeline is fixed:
+
+```text
+comments + responses + metadata + AUX locations
+  -> source composition + expected registry
+  -> package response macros -> LaTeX-emitted SCI registry
+  -> expected == emitted -> publish response_letter.pdf
+```
+
+### TeX-native compiled state
+
+`src/compile.py::TeXStateFiles` is the sole path owner for known compiler
+intermediates. AUX is standard labels/citations and package `sci:loc` line
+state; BBL is rendered bibliography state; TOC/LOF/LOT are optional publisher
+evidence; the compiler log supplies bounded diagnostics; SCI is a versioned,
+small package-event registry. The SCI schema accepts deterministic identifiers,
+hashes, and event presence only: it never duplicates manuscript prose, response
+bodies, captions, or bibliography text. Missing optional files are interpreted
+by target capability, not as a global build failure.
+
+### PDF boundary
+
+Production marked/response correctness has zero PDF reverse-parsing consumers.
+Final PDFs are checked only for creation, non-zero bytes, artifact digest,
+freshness, and atomic publication. The isolated CJK `pdftotext` probe is an
+environment capability test; an optional `pdffonts` smoke and manual rendering
+are presentation QA. Neither feeds scientific state or changes matching,
+provenance, location, or response decisions.
+
+### Production module ownership
+
+| Module | Single current responsibility |
+| --- | --- |
+| `regions.py` | canonical structural projection、L0--L4 source intervals、protected spans 和 coarse natural units |
+| `revision_match.py` | same-context local matching、identity/change/structural proof records 和 matching audit；不处理 ownership/presentation |
+| `revision_render.py` | 只消费 owner-aware authorized spans，向 current source 插入 canonical event macros，并验证 topology/projection identity；不选择 match 或 segmentation |
+| `diff.py` | proof pipeline orchestration、latexdiff disagreement evidence、AUX/BBL/SCI expected-vs-rendered registry validation 和 build audit |
+| `provenance.py` / `review.py` | `\review` ownership intervals、review/response parsing 和 provenance audit |
+| `locations.py` | TeX-native `lineno + \linelabel + AUX` instrumentation 与 line-location resolution |
+| `bibliography.py` | BibTeX key/state parsing、citation closure 和 user-controlled synchronization |
+| `workspace.py` | project paths、round lifecycle、frozen state、manifest 和 artifact freshness |
+| `compile.py` | TeX compiler selection、runtime staging、known TeX-state paths、SCI parsing、bibliography materialization 和 atomic publication |
+| `response.py` | response source/template build、font resolution、expected registry 和 source/TeX-state consistency |
+| `submission.py` | submission workspace validation、artifact assembly 和 atomic publication |
+| `metadata.py` | metadata schema、author/correspondence resolution 和 publisher metadata rendering |
+| `api.py` | public lifecycle/build orchestration and target dependency selection |
+
+这些模块的当前职责已有 consumer 和 regression coverage。文件大小本身不是拆分
+依据；不得为 LOC、抽象对称或“更优雅”而新增 manager/factory/base-class 层。
+
+### Technical boundaries that are not bugs
+
+- projector 是保守 TeX scanner，不是通用 TeX AST；
+- duplicate candidates 不一定能唯一匹配，证据不足必须 audit/fail closed；
+- production 不提供 semantic、fuzzy、embedding 或 NLP matching；
+- complex math-location environments 可因安全边界 fail closed；
+- font availability 取决于 host environment；
+- `50/15/max3` 与 `30/10/max3` 是 presentation policy，不是 semantic truth。
+
+重开任何 subsystem 必须由真实、最小、可重复的 project regression 触发：line
+locations 只因真实 `align/gather/multline` 需求或 `lineno` 回归重开；change
+detection 只因真实稿件 false positive/negative 重开；matching 只因 duplicate/
+context 误配重开；granularity 只因真实视觉 QA 证明阈值不合适而调整；font
+resolver 只因真实 Windows/Linux host failure 扩展。不得主动 benchmark 寻找
+“更优”阈值或增加 hypothetical backend。
 
 ## 1. TeX line locations
 
@@ -21,7 +145,8 @@
 ### Hard invariants
 
 - 行号必须来自最终排版使用的 TeX 行号机制。
-- instrumentation 前后可见 word/bbox 序列完全一致。
+- instrumentation 只插入 package-owned zero-width `\linelabel` commands；
+  current-source projection、paragraph/block topology 和 compiled labels 均保持可验证。
 - CJK、Latin、混排、多行正文、行内公式、`equation`、`equation*`、citation 和 bibliography 均可定位。
 - 只接受 package namespace 下的 start/end label；缺失、冲突、倒序均 fail closed。
 - `align`、`align*`、`gather`、`gather*`、`multline`、`multline*`、`displaymath` 和未验证复杂 AMS 环境不猜测位置。
@@ -42,7 +167,7 @@
 | Determinism | 高：AUX label 可复查 | 中：依赖 PDF 提取器 | 高：坐标写入 AUX |
 | Scientific/document fidelity | 高：不改 scientific source | 中：后处理不改源但会猜测 | 高：marker 不改科学内容 |
 | Failure behavior | 高：缺 label 明确失败 | 低：常以错误数字“成功” | 中：仍需映射规则 |
-| Layout neutrality | 已用 word/bbox identity 证明 | 后处理本身中立 | marker 可中立，映射需额外层 |
+| Layout neutrality | zero-width macro contract + source topology + real compile | 后处理本身中立 | marker 可中立，映射需额外层 |
 | Historical reproducibility | 高 | 中：依赖 PDF 工具版本 | 中：依赖坐标解释器 |
 | Performance | 高：提取约 0.01 s | 低：历史实测约 5.48 s | 中：需额外映射 pass |
 | Code complexity | 低 | 高 | 中高 |
@@ -54,7 +179,8 @@
 ### Experiments / evidence
 
 - `tests/test_tex_locations.py` 覆盖 package label 解析、范围合并、错误上下文、数字 glyph 排除和复杂 AMS fail-closed。
-- mixed CJK/Latin/prose/inline math/equation/citation/bibliography 的 instrumented/control PDF word/bbox 完全相同。
+- mixed CJK/Latin/prose/inline math/equation/citation/bibliography 的 instrumented
+  source 可真实编译，并从 AUX 得到完整、有效的十个 start/end labels；不读取 PDF geometry。
 - Perspective Formula (6) 的 reviewer event 解析为第 153--158 行。
 - `zref/savepos` feasibility probe 可编译，但 AUX 只产生 `posx/posy`，不能直接给出 manuscript line number；继续采用它会重新引入 geometry mapping。
 
@@ -64,10 +190,10 @@
 
 ### Current implementation
 
-- Module: `src/sci_manuscript/locations.py`
+- Module: `src/locations.py`
 - Functions: `instrument_location_source`, `parse_location_labels`, `calculate_tex_locations`, `validate_location_math_environments`, `build_review_locations`
-- TeX resource: `src/sci_manuscript/resources/revision/location_runtime.tex`
-- Integration: `src/sci_manuscript/diff.py::build_marked_manuscript`
+- TeX resource: `src/resources/revision/location_runtime.tex`
+- Integration: `src/diff.py::build_marked_manuscript`
 
 ### Regression coverage
 
@@ -89,76 +215,92 @@
 
 ### Problem
 
-根据 adjacent parent/current 确定 current 中应高亮的可见内容，同时确保 marked 去除 presentation 后严格等于 clean/current scientific content。
+根据 adjacent parent/current 确定 current 中发生实质修改的结构或可读表达，同时确保 marked 去除 presentation 后严格等于 clean/current scientific content。旧实现以 latexdiff fine spans、tiny-island、60% whole-block promotion 和 global exact-move suppression 决定视觉粒度，无法稳定表达 heading、结构移动和大幅改写。
 
 ### Hard invariants
 
 - current source 是唯一结构、内容和排版 authority；parent-only deletion 不进入输出。
-- `\review`、source formatting、surrounding block change 和 exact move 不得使 unchanged content 变色。
+- whole-block identity 先于 sentence identity；whole-sentence identity 先于
+  long-clause segmentation。Segmentation failure 不能制造 change。
+- visual color 必须由 positive change/addition proof 授权；ambiguous matching
+  直接 fail closed，不允许 conservative over-highlighting。
+- `\review` 和 source formatting 不得使 unchanged content 变色；source-file relocation 不算 move。Prose/list/table/heading 的真实 structural move 是 revision event；normalized-identical equation body 即使移动也保持黑色。
 - normalized-identical display equation 对任何 fine/whole highlight 都有 hard veto。
 - changed display equation 使用 whole-current-equation 高亮，并保留真实 math semantics。
-- citation/reference/math protected ranges 与 60% whole-block、tiny-island 合并合同保持不变。
+- heading、prose、frontmatter、equation、table、figure 和 list 使用各自天然 revision unit；普通 prose 是 whole sentence，只有长句可分成最多三个较大 clause。
+- citation/reference/DOI/URL 是 protected islands，使用 RubineRed/ForestGreen/native xcolor `blue` (#0000FF) contract。
+- figure asset change 与 visual caption highlighting 分离：pixels 永不着色，caption 未改则保持黑色。
 
 ### Candidate approaches
 
-**Approach A — raw/full `latexdiff` union.** 直接编译包含 addition 和 deletion markup 的合并文档。
+**Approach A — 继续 patch latexdiff visual spans.** 保留 fine spans，并叠加 tiny-island、whole-block 和 move 特例。
 
-**Approach B — `latexdiff` addition evidence + current-source-only renderer.** 只把 addition 当证据，映射回 current source，再做 move suppression、adaptive block、equation identity、citation/math protection 和 provenance rendering。
+**Approach B — lightweight structural projection + region-aware matching + current-source renderer.** 将四个 publisher 的 TeX 投影为同一 canonical region model；在同一 structural context 判定 WHAT changed，再解析 WHO ownership，最后只向 current source 插入 presentation。
 
-**Approach C — explicit intent tracking.** 要求作者用 `\add`、`\remove`、`\replace` 显式表达每次修改。
+**Approach C — generic TeX AST / semantic alignment.** 解析完整 TeX 或使用 NLP/embedding 进行语义配对。
 
-历史备选 custom semantic parser/alignment 不再实现：它扩大了 TeX 语法面、对排版命令敏感，并重复成熟 diff 工具的职责。
+`latexdiff` 在 Approach B 中仍可作为 auxiliary evidence 和 detector
+disagreement source，但不再选择最终 revision unit、创建 change certificate
+或决定 provenance。显式 intent tracking 仍不要求用户采用。
 
 ### Evaluation
 
 | Criterion | A | B | C |
 |---|---|---|---|
-| Correctness | 中：union 可污染 current | 高：输出只来自 current | 高：若人工标注完整 |
-| Determinism | 中高 | 高 | 高 |
-| Scientific/document fidelity | 低中：union 改结构 | 高：projection 可证明 | 中：intent 宏侵入写作 |
-| Failure behavior | 中：TeX 错误晚暴露 | 高：unresolved mapping 明确失败 | 低中：漏标难发现 |
-| Layout neutrality | 低中 | 高 | 中高 |
-| Historical reproducibility | 中 | 高 | 高 |
-| Performance | 中：一次 diff + compile | 中：一次 diff + renderer | 高：无需自动 diff |
-| Code complexity | 低表面、高兼容风险 | 中高但职责分层 | 低代码、高流程复杂度 |
-| Dependency burden | `latexdiff` | `latexdiff` | 无 diff 依赖 |
-| Maintenance burden | 高 | 中 | 高：依赖作者纪律 |
-| Backward compatibility | 低 | 高 | 低：要求迁移 |
-| Testability | 中 | 高：纯函数 span tests | 中 |
+| Correctness | 低中：区域规则继续冲突 | 高：规则直接映射 current units | 中：语法/语义误判面大 |
+| Determinism | 中 | 高 | 中低 |
+| Scientific/document fidelity | 中 | 高：projection 可证明 | 中 |
+| Failure behavior | 低：特例易 silent | 高：UNKNOWN/AMBIGUOUS fail closed | 中 |
+| Layout neutrality | 中 | 高 | 中 |
+| Historical reproducibility | 高 | 高 | 中 |
+| Performance | 中 | 中：轻量 Python projection | 低 |
+| Code complexity | 高且持续增长 | 中高但职责清楚 | 很高 |
+| Dependency burden | `latexdiff` | existing toolchain only | parser/NLP dependencies |
+| Maintenance burden | 高 | 中 | 很高 |
+| Backward compatibility | 中 | 高：metadata/CLI 不变 | 低中 |
+| Testability | 低中 | 高：region/unit pure functions | 中 |
 
 ### Experiments / evidence
 
-- `tests/test_highlight_renderer.py` 和 `tests/test_revision_architecture.py` 覆盖 small addition、rewrite、large rewrite、move、CJK/Latin whitespace、citation、inline math、display equation 和 Formula (6)。
+- Synthetic region fixtures 覆盖 Chinese、Elsevier、Nature、ACS 的 title、frontmatter、heading、prose、equation、figure、table、list、citation 和 bibliography shapes。
+- Prose 使用 coarse sentence/long-clause unit；Chinese 采用 50/15/max3，English 采用 30/10/max3。Matching 只使用结构、顺序和 exact/normalized identity anchor，不使用 fuzzy/semantic similarity。
 - normalized equation identity 忽略 comment、普通 source whitespace 和 line wrapping，但保留 `\text{...}` 等真实语义。
-- Perspective object-definition equation normalized-identical，保持 black；Formula (6) 真实改变，whole equation 为 RubineRed。
-- tiny unchanged island 仅在 CJK 不超过 5 lexical atoms、Latin 不超过 2 words、局部修改密度至少 80%、provenance 相同、同一 sentence/block 且非 citation/reference/math 时合并。
+- Perspective 只作为真实 regression corpus：H1/H2、Chinese abstract、English Summary、Equation (1)/(6)、keywords、funding、citations 和 structural move 必须实际 PDF 检查。
 
 ### Decision
 
-选择 Approach B。它保留成熟 diff evidence，同时将 published output 限定为 current source。Approach A、C 和 custom semantic parser 不进入 production。
+选择 Approach B。结构类型先决定 match context；identity/change proof 先于
+presentation segmentation 和 provenance；renderer 仍只发布 current source。
+Python expected events 与 TeX SCI render events 按 event identity/owner 精确一一
+对应，不要求 frontmatter 的 TeX execution order 等于 source order。Approach A
+不再是默认 production path，Approach C 不进入 production。
 
 ### Current implementation
 
-- Detector/orchestration: `src/sci_manuscript/diff.py::run_latexdiff`, `prepare_change_detection_sources`, `build_marked_manuscript`
-- Renderer: `src/sci_manuscript/revision_render.py::resolve_equation_spans`, `adaptive_blocks`, `coalesce_tiny_unchanged_islands`, `apply_highlights`
-- TeX resource: `src/sci_manuscript/resources/revision/marked_runtime.tex`
-- User hooks: `src/sci_manuscript/resources/revision_style.template.tex`
+- Projection: `src/regions.py`
+- Matching/revision proofs: `src/revision_match.py`
+- Auxiliary evidence/proof orchestration: `src/diff.py::run_latexdiff`, `structure_highlight_spans`, `build_marked_manuscript`
+- Current-source presentation: `src/revision_render.py::apply_highlights`
+- TeX resource: `src/resources/revision/marked_runtime.tex`
+- User hooks: `src/resources/revision_style.template.tex`
 
 ### Regression coverage
 
 - `tests/test_highlight_renderer.py`
 - `tests/test_revision_architecture.py`
+- `tests/test_regions.py`
+- `tests/test_revision_match.py`
 - `tests/test_revision_style.py`
 - `tests/test_release_integration.py`
 
 ### Known limitations
 
-大幅重写的单个 block 可能按 60% 规则整体高亮；move suppression 只接受 exact normalized identity；没有 fuzzy semantic alignment、通用 TeX AST 或 Math AST。
+Projection 是受限 TeX structural scanner，不是通用 AST。复杂自定义 environments 可能成为 `UNKNOWN_REGION`；complex display environments 的 location 支持继续 fail closed。没有 semantic comparison、embedding、NLP dependency 或 Math AST。
 
 ### Future optimization triggers
 
-- 出现最小、稳定、可复现的 false-positive/false-negative fixture。
-- publisher macro 使 current-source projection 无法保持 identity。
+- 一个真实 publisher macro 无法稳定映射到现有 canonical region。
+- 同一 structural context 的确定性 pairing 出现最小、稳定、可复现的误配。
 - `latexdiff` 版本变化破坏 addition evidence contract。
 
 ## 3. Review provenance
@@ -212,10 +354,10 @@
 
 ### Current implementation
 
-- Module: `src/sci_manuscript/provenance.py`
+- Module: `src/provenance.py`
 - Functions/classes: `extract_provenance`, `split_by_review_provenance`, `ProvenanceSource`, `ReviewSpan`
-- ID grammar: `src/sci_manuscript/review_ids.py::validate_review_id_list`
-- Source audit: `src/sci_manuscript/review.py::_review_ids_with_paths`
+- ID grammar: `src/review_ids.py::validate_review_id_list`
+- Source audit: `src/review.py::_review_ids_with_paths`
 
 ### Regression coverage
 
@@ -239,6 +381,32 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 ### Problem
 
 管理 `initial_submission -> revision_01 -> revision_02 -> ...` 的冻结、回滚、重建和历史选择，同时避免失败操作污染 last successful state。
+
+正式 lifecycle hierarchy 是：
+
+```text
+Project
+├── initial_submission
+├── revision_01
+├── revision_02
+└── ...
+
+each round:
+USER SCIENTIFIC STATE
+        ↓
+ROUND STATE
+        ↓
+BUILD INPUT DAG
+        ↓
+DERIVED ARTIFACTS
+```
+
+`round_state.yaml` 是 scientific/historical authority。一个 round 成为
+historical 后，其 scientific source、metadata snapshot、selected
+authors/affiliations、bibliography snapshot、ancestry 和 `round_state.yaml`
+必须 immutable。`build_manifest.yaml` 只记录 derived artifact provenance；
+historical rebuild 可原子更新这个 mutable manifest，但不能改变任何 frozen
+scientific state。
 
 ### Hard invariants
 
@@ -293,9 +461,9 @@ Ownership 仍由作者显式声明；系统不能从 reviewer prose 或最终颜
 
 ### Current implementation
 
-- Module: `src/sci_manuscript/workspace.py`
+- Module: `src/workspace.py`
 - Types/functions: `ProjectConfig`, `load_project`, `start_revision`, `ensure_historical_round_state`, `rollback_revision`, `reindex_revisions`, `temporary_run`, `write_build_manifest`
-- Lifecycle orchestration: `src/sci_manuscript/api.py::ManuscriptProject`
+- Lifecycle orchestration: `src/api.py::ManuscriptProject`
 
 ### Regression coverage
 
@@ -371,10 +539,10 @@ library 仍与已冻结 hash 相符时才能安全升级。
 
 ### Current implementation
 
-- Module: `src/sci_manuscript/bibliography.py`
+- Module: `src/bibliography.py`
 - Functions: `resolved_citation_keys`, `source_citation_keys`, `citation_only_bibliography`, `sync_bibliography`
-- State routing: `src/sci_manuscript/workspace.py::bibliography_source_for_round`, `snapshot_bibliography`
-- Visible comparison: `src/sci_manuscript/diff.py::_bibliography_change_states`
+- State routing: `src/workspace.py::bibliography_source_for_round`, `snapshot_bibliography`
+- Visible comparison: `src/diff.py::_bibliography_change_states`
 
 ### Regression coverage
 
@@ -399,6 +567,37 @@ BibTeX parser 是保守 top-level scanner，不是完整 BibLaTeX data model；�
 
 PDF 文件存在不代表它由当前 source、metadata、resource、provenance 和 location state 生成；系统必须把 artifact 分为 `MISSING`、`CURRENT`、`STALE`。
 
+Build graph 只使用 `depends-on`，且保持为文档合同而非通用 graph framework：
+
+```text
+clean
+├── depends-on: current source
+├── depends-on: metadata
+├── depends-on: bibliography
+├── depends-on: publisher resources
+└── depends-on: implementation/tool identity
+
+marked
+├── depends-on: parent state
+├── depends-on: current source
+├── depends-on: matching/render contract
+├── depends-on: revision style
+├── depends-on: bibliography
+└── depends-on: implementation/tool identity
+
+response
+├── depends-on: responses.tex
+├── depends-on: reviewer_comments.md
+├── depends-on: metadata
+├── depends-on: response template
+├── depends-on: marked/current location state
+└── depends-on: implementation/tool identity
+```
+
+Artifact state vocabulary is limited to `MISSING`, `STALE`, and `CURRENT`.
+File existence proves only “not missing”; it never proves `CURRENT` without a
+matching manifest, output digest, and artifact-specific input fingerprints.
+
 ### Hard invariants
 
 - `CURRENT` 同时要求 artifact bytes hash 和 artifact-specific input fingerprints 匹配 manifest。
@@ -407,8 +606,9 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 - source 或 dependency 改变后，旧 PDF 不得继续留在 `output/` 并被视为 current。
 - marked 至少依赖 parent/current source、bibliography、provenance、revision style 和 renderer resources。
 - response 至少依赖 `responses.tex`、`reviewer_comments.md`、response template、metadata、marked/reference location inputs。
-- response success 必须同时通过 staged-TeX projection 和 post-compile
-  Poppler PDF projection；最终 consistency 状态不能仅由 source 推断。
+- response success 必须同时通过 source registry 和实际 TeX 执行产生的 SCI
+  registry；最终 consistency 不能只由 pre-compile source 声明，也不能由 PDF
+  reverse parsing 推断。
 - failed manifest update 保留上一次 successful manifest；successful write 使用 atomic replace。
 
 ### Candidate approaches
@@ -446,8 +646,9 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
   marked/response stale，clean artifact 保持 current。
 - stale selective build 删除旧 PDF；manifest-verified current PDF 保留。
 - response target 可复用 current marked PDF；缺失/陈旧 marked 会重建。
-- response PDF projection 验证 localized fixed opening/signature、ordered comment
-  IDs、non-empty visible response bodies 和 resolved location text。
+- response source registry 与实际 TeX 执行后写出的 SCI registry 精确一致；
+  fixed template、ordered comment IDs、response hashes、correspondence IDs 和
+  resolved location hashes 均由 source + TeX state 验证。
 - manifest atomic replace 注入失败后，previous successful manifest bytes 不变。
 
 ### Decision
@@ -456,10 +657,11 @@ PDF 文件存在不代表它由当前 source、metadata、resource、provenance 
 
 ### Current implementation
 
-- Fingerprints/state: `src/sci_manuscript/workspace.py::_implementation_digest`, `_toolchain_identity`, `_build_input_fingerprints`, `_artifact_input_fingerprints`, `artifact_input_digest`, `build_artifact_is_current`
-- Manifest: `src/sci_manuscript/workspace.py::write_build_manifest`
-- Target orchestration and stale cleanup: `src/sci_manuscript/api.py::ManuscriptProject.build`, `_remove_stale_output_pdfs`
-- Response consistency audit: `src/sci_manuscript/response.py::_response_pdf_consistency`, `build_response`
+- Fingerprints/state: `src/workspace.py::_implementation_digest`, `_toolchain_identity`, `_build_input_fingerprints`, `_artifact_input_fingerprints`, `artifact_input_digest`, `build_artifact_is_current`
+- Manifest: `src/workspace.py::write_build_manifest`
+- Target orchestration and stale cleanup: `src/api.py::ManuscriptProject.build`, `_remove_stale_output_pdfs`
+- Response consistency audit: `src/response.py::build_response_tex_registry`,
+  `validate_response_tex_state`, `build_response`
 
 ### Regression coverage
 
@@ -485,13 +687,30 @@ runtime 均采用保守整体 digest，避免 renderer consumer 漏登记。新�
 
 package 升级后，旧项目可能保留过时 resource；迁移必须升级已知 stock contract，同时保护用户定制、response scientific body 和 frozen historical state。
 
+Resource ownership hierarchy 和 migration policy 固定为：
+
+| Ownership | Meaning | Migration policy |
+| --- | --- | --- |
+| `PACKAGE-OWNED` | installed package 是唯一 authority | 每次 build 从 package stage，不复制为 editable round state |
+| `GENERATED` | 可由已知输入确定性重建 | 可重建；只删除/覆盖 manifest 证明由系统拥有的产物 |
+| `COPY-ONCE USER-EDITABLE` | 初始化后转交用户维护 | 只对已知 stock fingerprint 做 targeted migration；unknown customization 停止 |
+| `USER-OWNED` | scientific、response 或 submission content | 未经用户明确授权绝不改写 |
+| `FROZEN STATE` | historical scientific authority | immutable；只允许显式、受控的历史迁移流程 |
+
+这五类 ownership 不能通过“文件位于 package/project/state 中”以外的启发式
+重新推断；migration 必须遵守对应 policy。
+
 ### Hard invariants
 
 - ownership 分类决定更新策略：`PACKAGE-OWNED` 每次从安装包 staging；`GENERATED` 可重建；`COPY-ONCE USER-EDITABLE` 只做已知 stock targeted migration；`USER-OWNED` 不自动改；`FROZEN STATE` 不静默迁移。
 - 自动迁移必须 deterministic、idempotent、rollback-safe。
 - unknown/heavily customized legacy resource 明确停止。
 - 迁移不得修改 scientific prose、response body 或 frozen historical content。
-- response Latin typography（Times New Roman）是 versioned package-owned template contract。
+- response Latin typography 优先 Times New Roman，并使用 package-owned、TeX-verified platform serif fallback policy；manuscript typography 始终由 publisher/manuscript template 控制。
+- response font 只从 host 已安装字体或 host TeX installation 临时 stage 的 Fandol 解析；package/repository 不分发 font binary。
+- macOS font integration 已在真实环境验证；Windows/Linux 只验证候选顺序和
+  resolver logic，实际可用字体仍由目标 host 决定，不以本轮新增 CI 代替真实
+  host evidence。
 
 ### Candidate approaches
 
@@ -525,8 +744,9 @@ package 升级后，旧项目可能保留过时 resource；迁移必须升级已
 - latest resource 为 no-op；unknown customized legacy color 返回 `REVISION_STYLE_MIGRATION_UNSUPPORTED`，原文件和 archive state 不变。
 - archive directory 使用 source content digest，不使用时间戳/随机值；重复相同 migration 复用一致 archive，冲突 fail closed。
 - package-owned response templates 仅在 run staging 中使用，不复制进 round；response body 始终来自 user-owned `responses.tex`。
-- real response integration 通过 `pdffonts` 验证最终 response artifact 的
-  Times New Roman font metadata，而非只编译独立 font probe。
+- response resolver 以实际 correspondence TeX engine 逐一 probe platform
+  candidates，run audit 记录 preferred/resolved/fallback/platform；一个可选
+  `pdffonts` smoke 可验证最终 embedded font，但不参与 response correctness。
 
 ### Decision
 
@@ -534,10 +754,10 @@ package 升级后，旧项目可能保留过时 resource；迁移必须升级已
 
 ### Current implementation
 
-- Ownership/staging: `src/sci_manuscript/templates.py::stage_runtime_resources`, `copy_project_scaffold`
-- Known-stock migration: `src/sci_manuscript/workspace.py::migrate_revision_style_file`
-- Legacy workspace stop: `src/sci_manuscript/workspace.py::_detect_v1_workspace`
-- Package resources: `src/sci_manuscript/resources/`
+- Ownership/staging: `src/templates.py::stage_runtime_resources`, `copy_project_scaffold`
+- Known-stock migration: `src/workspace.py::migrate_revision_style_file`
+- Legacy workspace stop: `src/workspace.py::_detect_v1_workspace`
+- Package resources: `src/resources/`
 
 ### Regression coverage
 

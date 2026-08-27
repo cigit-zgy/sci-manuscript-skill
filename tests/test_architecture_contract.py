@@ -6,8 +6,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from test_core import _workspace
-
 from sci_manuscript.errors import WorkflowError
 from sci_manuscript.metadata import (
     ManuscriptMetadata,
@@ -19,6 +17,7 @@ from sci_manuscript.review import ReviewAuditResult
 from sci_manuscript.submission import prepare_submission_artifacts
 from sci_manuscript.templates import resources_root
 from sci_manuscript.workspace import ProjectConfig, initialize_project
+from test_core import _workspace
 
 
 def _metadata() -> ManuscriptMetadata:

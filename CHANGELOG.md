@@ -7,14 +7,23 @@
   and streamlined the public README without changing manuscript behavior.
 - Highlighted manuscripts now render only current scientific content: reviewer
   additions are RubineRed, author additions are ForestGreen, citation markers
-  and DOI/URL links use xcolor `ProcessBlue`, ordinary text is black, and parent-only
-  deletions are absent.
+  and DOI/URL links use native xcolor `blue` (#0000FF), ordinary text is black,
+  and parent-only deletions are absent. Current development therefore restores
+  citation/DOI/URL link styling from ProcessBlue to pure blue.
 - `latexdiff` is limited to current-addition evidence. Highlight markup is
   inserted into the exact current source with hard source, paragraph, block
   topology, numbering, and output-purity validation.
-- Adaptive 60% whole-block highlighting, exact-move suppression, atomic current
-  display equations, tiny unchanged-island coalescing, and causal reference
-  provenance are covered by regression tests.
+- Structure-aware same-context matching now uses coarse sentence units and at
+  most three larger clauses for long sentences. Identical mathematical bodies
+  remain black even after structural moves; figure asset changes are audited
+  without using an unchanged caption as a visual proxy.
+- Maintainer contracts now freeze the L0--L4 manuscript hierarchy, finite
+  relation/change-state vocabularies, WHAT-before-WHO reasoning pipeline, and
+  round-state versus derived-artifact lifecycle without changing runtime
+  behavior.
+- The repository's physical package tree is flattened to `src/` through an
+  explicit setuptools mapping while the installed public namespace remains
+  `sci_manuscript`; resources are package data rather than a Python subpackage.
 - Revision builds support target-aware marked-only, response, clean, and full
   paths with deterministic bibliography caching and per-stage timing.
 - Historical rounds freeze source, metadata, selected author/affiliation
@@ -27,10 +36,12 @@
 - Response letters use package-owned Chinese and English openings, ordered
   one-to-many correspondence metadata, one opening-page break, automatic
   TeX-native current locations, frozen component-local spacing, and exact
-  system Times New Roman for Latin-script text.
-- Response validation separately checks staged TeX and real Poppler-extracted
-  PDF projections, including the opening/signature, ordered comment IDs,
-  visible response bodies, and resolved locations.
+  TeX-verified platform serif font fallback policies. Times New Roman remains
+  the preferred Latin family, and resolved fonts are recorded in the run audit.
+- Marked and response correctness now use exact source projection plus
+  TeX-native AUX/BBL and a compact package `.sci` event registry. Final PDFs are
+  delivery artifacts and are no longer reverse-parsed to infer scientific,
+  numbering, bibliography, location, or response correctness.
 - Reviewer locations now come from package-owned `lineno`/`\linelabel` AUX
   records; unsupported complex AMS environments fail closed instead of falling
   back to PDF geometry.

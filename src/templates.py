@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 def resources_root() -> Path:
     """Return the installed package-resource directory."""
-    resource = files("sci_manuscript.resources")
+    resource = files("sci_manuscript") / "resources"
     return Path(str(resource))
 
 

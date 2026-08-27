@@ -5,12 +5,28 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{fontspec}
 \usepackage{xeCJK}
-\setmainfont{Times New Roman}
+%%RESPONSE_LATIN_FONT_SETUP%%
+%%RESPONSE_CJK_FONT_SETUP%%
 \usepackage{microtype}
 \usepackage{xcolor}
 \usepackage[most]{tcolorbox}
 \usepackage[hidelinks,hypertexnames=false]{hyperref}
 \input{author_metadata.tex}
+
+% Package-owned compiled-state registry. Fields are deterministic IDs/hashes;
+% no scientific prose is written to the sidecar.
+\newwrite\SCIStateStream
+\AtBeginDocument{%
+  \immediate\openout\SCIStateStream=\jobname.sci
+  \immediate\write\SCIStateStream{SCI_SCHEMA|1}%
+  \immediate\write\SCIStateStream{DOCUMENT|response}}
+\AtEndDocument{\immediate\closeout\SCIStateStream}
+\newcommand{\SCIStateResponseSchema}[1]{\immediate\write\SCIStateStream{RESPONSE_SCHEMA|#1}}
+\newcommand{\SCIStateTemplate}[1]{\immediate\write\SCIStateStream{TEMPLATE|#1}}
+\newcommand{\SCIStateCorrespondence}[1]{\immediate\write\SCIStateStream{CORRESPONDENCE|\detokenize{#1}}}
+\newcommand{\SCIStateComment}[1]{\immediate\write\SCIStateStream{COMMENT|\detokenize{#1}}}
+\newcommand{\SCIStateResponse}[2]{\immediate\write\SCIStateStream{RESPONSE|\detokenize{#1}|\detokenize{#2}}}
+\newcommand{\SCIStateLocation}[2]{\immediate\write\SCIStateStream{LOCATION|\detokenize{#1}|\detokenize{#2}}}
 
 \definecolor{ink}{HTML}{20262E}
 \definecolor{navy}{HTML}{17365D}
@@ -61,6 +77,8 @@
 \newcommand{\ReviewLocation}[1]{#1}
 \newcommand{\ReviewerComment}[1]{#1\par}
 \begin{document}
+\SCIStateResponseSchema{1}
+\SCIStateTemplate{1}
 
 尊敬的编辑：\par
 \vspace{0.50\baselineskip}
@@ -68,6 +86,7 @@
 \vspace{0.62\baselineskip}
 我们已对所有审稿意见和问题进行了逐条回复，并根据相关意见对稿件进行了相应修改。为便于编辑和审稿人查阅，因审稿意见而新增或修改的正文内容以红色标示，作者在修订过程中主动新增或修改的正文内容以绿色标示。对于涉及正文修改的意见，我们同时在相应的逐条回复中注明了具体修改位置。\par
 \vspace{1.05\baselineskip}
+%%RESPONSE_CORRESPONDENCE_STATE%%
 \CorrespondenceAuthorsZh
 
 \clearpage

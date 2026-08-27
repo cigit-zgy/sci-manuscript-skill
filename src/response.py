@@ -5,21 +5,25 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import platform
 import re
 import shutil
 import subprocess
-import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import review
-from .authors import AuthorSelection
-from .compile import compile_tex, publish_file_atomically, stage_cjk_fonts
-from .errors import WorkflowError
-from .metadata import (
-    _correspondence_address,
-    _metadata_with_frontmatter_title,
-    generate_metadata,
+from .compile import (
+    SciState,
+    SciStateEvent,
+    compile_tex,
+    parse_sci_state,
+    publish_file_atomically,
+    resolve_engine,
+    stage_cjk_fonts,
 )
+from .errors import WorkflowError
+from .metadata import generate_metadata
 from .review_ids import is_review_id
 from .templates import resources_root
 from .timing import BuildTelemetry
@@ -31,178 +35,245 @@ from .workspace import (
 
 LOCATION_USE = re.compile(r"\\ReviewLocation\{([^}]+)\}")
 RESPONSE_LATIN_FONT = "Times New Roman"
+_FONT_POLICIES = {
+    "Darwin": (
+        "macOS",
+        ("Times New Roman", "Times", "TeX Gyre Termes"),
+        ("Songti SC", "STSong", "Noto Serif CJK SC"),
+    ),
+    "Windows": (
+        "Windows",
+        ("Times New Roman", "Cambria", "Georgia"),
+        ("SimSun", "NSimSun", "Noto Serif CJK SC"),
+    ),
+    "Linux": (
+        "Linux",
+        (
+            "Times New Roman",
+            "TeX Gyre Termes",
+            "Liberation Serif",
+            "Nimbus Roman",
+        ),
+        ("Noto Serif CJK SC", "Source Han Serif SC", "FandolSong"),
+    ),
+}
 
 
-def ensure_response_latin_font() -> None:
-    """Fail closed unless fontconfig resolves the exact response Latin font."""
-    matcher = shutil.which("fc-match")
-    if matcher is None:
+@dataclass(frozen=True)
+class ResponseFontResolution:
+    """TeX-verified correspondence font selection for one build."""
+
+    platform: str
+    latin_preferred: str
+    latin_resolved: str
+    latin_fallback: bool
+    cjk_resolved: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseTexRegistry:
+    """Expected package events for one compiled response letter."""
+
+    corresponding_author_ids: tuple[str, ...]
+    comment_ids: tuple[str, ...]
+    response_hashes: tuple[tuple[str, str], ...]
+    location_hashes: tuple[tuple[str, str], ...]
+
+    def events(self) -> tuple[SciStateEvent, ...]:
+        """Return the exact deterministic TeX event sequence."""
+        response_by_id = dict(self.response_hashes)
+        location_by_id = dict(self.location_hashes)
+        events = [
+            SciStateEvent("RESPONSE_SCHEMA", ("1",)),
+            SciStateEvent("TEMPLATE", ("1",)),
+            *(
+                SciStateEvent("CORRESPONDENCE", (author_id,))
+                for author_id in self.corresponding_author_ids
+            ),
+        ]
+        for review_id in self.comment_ids:
+            events.append(SciStateEvent("COMMENT", (review_id,)))
+            events.append(
+                SciStateEvent("RESPONSE", (review_id, response_by_id[review_id]))
+            )
+            if review_id in location_by_id:
+                events.append(
+                    SciStateEvent("LOCATION", (review_id, location_by_id[review_id]))
+                )
+        return tuple(events)
+
+
+def validate_response_tex_state(
+    expected: ResponseTexRegistry,
+    emitted: SciState,
+) -> bool:
+    """Require exact source-registry equality with TeX-emitted response state."""
+    if emitted.document != "response" or emitted.events != expected.events():
         raise WorkflowError(
-            "RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN: cannot verify the required "
-            "system font because fc-match is unavailable. Install Times New Roman "
-            "as a system font and ensure fontconfig can see it."
+            "RESPONSE_TEX_STATE_CONSISTENCY_FAILED: expected and emitted "
+            "response registries differ."
         )
+    return True
+
+
+def build_response_tex_registry(
+    corresponding_author_ids: tuple[str, ...],
+    comment_ids: tuple[str, ...],
+    responses: dict[str, str],
+    locations: dict[str, str],
+) -> ResponseTexRegistry:
+    """Build the source-owned expected registry without copying prose into TeX state."""
+    if set(responses) != set(comment_ids):
+        raise WorkflowError(
+            "RESPONSE_SOURCE_REGISTRY_INCOMPLETE: response IDs do not match comments."
+        )
+    if not set(locations).issubset(comment_ids):
+        raise WorkflowError(
+            "RESPONSE_SOURCE_REGISTRY_INCOMPLETE: location IDs do not match comments."
+        )
+
+    def digest(value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    return ResponseTexRegistry(
+        corresponding_author_ids=corresponding_author_ids,
+        comment_ids=comment_ids,
+        response_hashes=tuple(
+            (review_id, digest(responses[review_id])) for review_id in comment_ids
+        ),
+        location_hashes=tuple(
+            (review_id, digest(locations[review_id]))
+            for review_id in comment_ids
+            if review_id in locations
+        ),
+    )
+
+
+def response_font_candidates(
+    system_name: str,
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Return the frozen serif candidate order for one operating system."""
+    try:
+        return _FONT_POLICIES[system_name]
+    except KeyError as exc:
+        raise WorkflowError(
+            f"RESPONSE_FONT_PLATFORM_UNSUPPORTED: platform={system_name}"
+        ) from exc
+
+
+def _cjk_font_setup(candidate: str, root: Path) -> str:
+    """Render a xeCJK setup for an installed font or staged Fandol fallback."""
+    if candidate == "FandolSong" and (root / "FandolSong-Regular.otf").is_file():
+        return r"\setCJKmainfont[Path=./]{FandolSong-Regular.otf}"
+    return rf"\setCJKmainfont{{{candidate}}}"
+
+
+def _font_usable_by_tex(
+    config: ProjectConfig,
+    probe_root: Path,
+    kind: str,
+    candidate: str,
+    engine_override: str | None,
+    telemetry: BuildTelemetry | None,
+) -> bool:
+    """Ask the actual correspondence TeX engine whether one font is usable."""
+    selected = resolve_engine(config, engine_override)
+    slug = re.sub(r"[^a-z0-9]+", "-", candidate.lower()).strip("-")
+    candidate_root = probe_root / f"{kind}-{slug}"
+    output = candidate_root / "output"
+    output.mkdir(parents=True, exist_ok=True)
+    if kind == "cjk":
+        stage_cjk_fonts(candidate_root)
+    setup = rf"\setmainfont{{{candidate}}}"
+    packages = r"\usepackage{fontspec}"
+    visible = "Response font probe"
+    if kind == "cjk":
+        packages += "\n" + r"\usepackage{xeCJK}"
+        setup = _cjk_font_setup(candidate, candidate_root)
+        visible = "中文字体测试"
+    source = candidate_root / "font_probe.tex"
+    source.write_text(
+        "\\documentclass{article}\n"
+        f"{packages}\n"
+        f"{setup}\n"
+        "\\begin{document}\n"
+        f"{visible}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    if selected == "tectonic":
+        command = [
+            shutil.which("tectonic") or "tectonic",
+            "-X",
+            "compile",
+            f"--outdir={output}",
+            str(source),
+        ]
+    else:
+        if shutil.which("xelatex") is None:
+            return False
+        command = [
+            shutil.which("latexmk") or "latexmk",
+            "-xelatex",
+            f"-outdir={output}",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            str(source),
+        ]
+    if telemetry is not None:
+        telemetry.latex_invocations += 1
     result = subprocess.run(
-        [matcher, "--format=%{family}\\n", RESPONSE_LATIN_FONT],
+        command,
+        cwd=candidate_root,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
     )
-    families = {
-        family.strip()
-        for line in result.stdout.splitlines()
-        for family in line.split(",")
-        if family.strip()
-    }
-    if result.returncode != 0 or RESPONSE_LATIN_FONT not in families:
-        raise WorkflowError(
-            "RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN: install Times New Roman "
-            "as a system font and ensure fontconfig can see it."
-        )
-
-
-def _extract_pdf_text(path: Path) -> str:
-    """Extract response PDF text through the required Poppler executable."""
-    executable = shutil.which("pdftotext")
-    if executable is None:
-        raise WorkflowError(
-            "RESPONSE_PDF_TEXT_EXTRACTION_UNAVAILABLE: pdftotext is required."
-        )
-    try:
-        result = subprocess.run(
-            [executable, str(path), "-"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-    except OSError as exc:
-        raise WorkflowError(f"RESPONSE_PDF_TEXT_EXTRACTION_FAILED: {path}") from exc
-    if result.returncode != 0 or not result.stdout.strip():
-        detail = result.stderr.strip() or "no extractable text"
-        raise WorkflowError(f"RESPONSE_PDF_TEXT_EXTRACTION_FAILED: {path}: {detail}")
-    return result.stdout
-
-
-def _normalized_visible_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", value)
-    normalized = normalized.replace(chr(0x2013), "-").replace(chr(0x2014), "-")
-    normalized = normalized.replace("--", "-")
-    return "".join(normalized.split())
-
-
-def _visible_response_tokens(source: str) -> tuple[str, ...]:
-    """Return ordered visible prose tokens without pretending to render TeX."""
-    text = re.sub(r"(?<!\\)%[^\n]*", " ", source)
-    text = re.sub(r"\$[^$]*\$", " ", text, flags=re.DOTALL)
-    text = re.sub(r"\\\([^)]*\\\)", " ", text, flags=re.DOTALL)
-    text = re.sub(r"\\\[[^]]*\\\]", " ", text, flags=re.DOTALL)
-    text = re.sub(
-        r"\\(?:cite\w*|ref|pageref|label|url|href)\s*(?:\[[^]]*\]\s*)*"
-        r"\{[^{}]*\}(?:\{[^{}]*\})?",
-        " ",
-        text,
+    (candidate_root / "font_probe.log").write_text(
+        result.stdout + result.stderr,
+        encoding="utf-8",
     )
-    for escaped, visible in ((r"\%", "%"), (r"\&", "&"), (r"\_", "_")):
-        text = text.replace(escaped, visible)
-    text = re.sub(r"\\[A-Za-z@]+\*?", " ", text)
-    text = re.sub(r"[{}~]", " ", text)
-    return tuple(
-        token
-        for token in re.findall(r"[^\W_]+(?:[-'][^\W_]+)*", text, flags=re.UNICODE)
-        if token
-    )
+    return result.returncode == 0 and (output / "font_probe.pdf").is_file()
 
 
-def _contains_tokens_in_order(text: str, tokens: tuple[str, ...]) -> bool:
-    cursor = 0
-    for token in tokens:
-        normalized = _normalized_visible_text(token)
-        position = text.find(normalized, cursor)
-        if position < 0:
-            return False
-        cursor = position + len(normalized)
-    return True
-
-
-def _response_pdf_consistency(
+def resolve_response_fonts(
     config: ProjectConfig,
-    round_number: int,
-    selection: AuthorSelection,
-    expected_ids: tuple[str, ...],
-    responses: dict[str, str],
-    locations: dict[str, str],
-    pdf: Path,
-) -> tuple[bool, tuple[str, ...]]:
-    """Validate visible response structure against real extracted PDF text."""
-    extracted = _normalized_visible_text(_extract_pdf_text(pdf))
-    metadata = _metadata_with_frontmatter_title(
-        config.metadata, config.round_dir(round_number)
+    probe_root: Path,
+    engine_override: str | None = None,
+    telemetry: BuildTelemetry | None = None,
+) -> ResponseFontResolution:
+    """Resolve the first TeX-usable platform serif fonts, or fail closed."""
+    platform_name, latin_candidates, cjk_candidates = response_font_candidates(
+        platform.system()
     )
-    if config.language == "zh":
-        anchors = (
-            "尊敬的编辑：",  # noqa: RUF001 - fixed response contract
-            metadata.localized_title("zh"),
-            metadata.journal_name,
-            "我们已对所有审稿意见和问题进行了逐条回复",
-        )
-        label = "意见"
-    else:
-        anchors = (
-            "Dear Editor,",
-            metadata.localized_title("en"),
-            metadata.journal_name,
-            "We have provided point-by-point responses",
-        )
-        label = "Comment"
-    issues = [
-        f"missing fixed anchor: {anchor}"
-        for anchor in anchors
-        if _normalized_visible_text(anchor) not in extracted
-    ]
-    affiliations = {item.affiliation_id: item for item in selection.affiliations}
-    for author in selection.corresponding_authors:
-        name = author.name_zh if config.language == "zh" else author.name_en
-        signature_fields = (
-            name,
-            _correspondence_address(author, affiliations, config.language),
-            author.email,
-        )
-        issues.extend(
-            f"missing correspondence field for {author.author_id}: {field}"
-            for field in signature_fields
-            if _normalized_visible_text(field) not in extracted
+
+    def resolve(kind: str, candidates: tuple[str, ...]) -> str:
+        for candidate in candidates:
+            if _font_usable_by_tex(
+                config,
+                probe_root,
+                kind,
+                candidate,
+                engine_override,
+                telemetry,
+            ):
+                return candidate
+        tried = ", ".join(candidates)
+        raise WorkflowError(
+            f"RESPONSE_{kind.upper()}_FONT_UNAVAILABLE: platform={platform_name}; "
+            f"candidate fonts tried: {tried}"
         )
 
-    positions: list[int] = []
-    cursor = 0
-    for review_id in expected_ids:
-        marker = _normalized_visible_text(f"{label} {review_id}")
-        position = extracted.find(marker, cursor)
-        if position < 0:
-            issues.append(f"missing or out-of-order comment ID: {review_id}")
-            positions.append(len(extracted))
-            continue
-        positions.append(position)
-        cursor = position + len(marker)
-    for index, review_id in enumerate(expected_ids):
-        start = positions[index]
-        stop = positions[index + 1] if index + 1 < len(positions) else len(extracted)
-        segment = extracted[start:stop]
-        body = responses.get(review_id, "")
-        if body.strip():
-            tokens = _visible_response_tokens(body)
-            if not tokens:
-                issues.append(f"empty visible response projection: {review_id}")
-            elif not _contains_tokens_in_order(segment, tokens):
-                issues.append(f"missing visible response projection: {review_id}")
-        if (
-            review_id in locations
-            and _normalized_visible_text(locations[review_id]) not in segment
-        ):
-            issues.append(f"missing resolved location text: {review_id}")
-    return not issues, tuple(issues)
+    latin = resolve("latin", latin_candidates)
+    cjk = resolve("cjk", cjk_candidates) if config.language == "zh" else None
+    return ResponseFontResolution(
+        platform=platform_name,
+        latin_preferred=RESPONSE_LATIN_FONT,
+        latin_resolved=latin,
+        latin_fallback=latin != RESPONSE_LATIN_FONT,
+        cjk_resolved=cjk,
+    )
 
 
 def _escape_latex(value: str) -> str:
@@ -239,6 +310,10 @@ def _response_template(language: str) -> str:
     if template.count("%%RESPONSE_BODY%%") != 1:
         raise WorkflowError(
             f"Response template must contain one response-body token: {path}"
+        )
+    if template.count("%%RESPONSE_CORRESPONDENCE_STATE%%") != 1:
+        raise WorkflowError(
+            f"Response template must contain one correspondence-state token: {path}"
         )
     if "%%RESPONSE_LETTER%%" in template:
         raise WorkflowError(
@@ -356,7 +431,10 @@ def _body_tex(
     language: str,
     responses: dict[str, str],
     revised_ids: set[str],
+    registry: ResponseTexRegistry,
 ) -> str:
+    response_hashes = dict(registry.response_hashes)
+    location_hashes = dict(registry.location_hashes)
     lines: list[str] = []
     for block in blocks:
         if not block.comments and not block.summary:
@@ -378,9 +456,12 @@ def _body_tex(
         for index, comment in enumerate(block.comments):
             lines.extend(
                 [
+                    f"\\SCIStateComment{{{comment.review_id}}}",
                     f"\\begin{{reviewcomment}}{{{_escape_latex(comment.review_id)}}}",
                     *_comment_tex(comment.paragraphs),
                     "\\end{reviewcomment}",
+                    f"\\SCIStateResponse{{{comment.review_id}}}"
+                    f"{{{response_hashes[comment.review_id]}}}",
                     "\\begin{response}",
                     responses[comment.review_id],
                     "\\end{response}",
@@ -390,6 +471,8 @@ def _body_tex(
             if comment.review_id in revised_ids:
                 lines.extend(
                     [
+                        f"\\SCIStateLocation{{{comment.review_id}}}"
+                        f"{{{location_hashes[comment.review_id]}}}",
                         f"\\reviewlocation{{\\ReviewLocation{{{comment.review_id}}}}}",
                         "",
                     ]
@@ -408,8 +491,6 @@ def build_response(
     telemetry: BuildTelemetry | None = None,
 ) -> Path:
     """Compile a response copy with automatic marked-manuscript locations."""
-
-    ensure_response_latin_font()
 
     def replace_location(match: re.Match[str]) -> str:
         review_id = match.group(1)
@@ -446,19 +527,50 @@ def build_response(
         stage.mkdir(parents=True)
         if config.language == "zh":
             stage_cjk_fonts(stage)
-        text = _response_template(config.language)
-        text = text.replace(
-            "%%RESPONSE_BODY%%",
-            _body_tex(blocks, config.language, responses, revised_ids),
-        )
-        staged_source = stage / "response_letter.tex"
-        staged_source.write_text(
-            LOCATION_USE.sub(replace_location, text), encoding="utf-8"
-        )
         selection = generate_metadata(
             config.round_dir(round_number),
             stage,
             author_library_source_for_round(config, round_number),
+        )
+        font_resolution = resolve_response_fonts(
+            config,
+            run_dir / "font_resolution",
+            engine_override,
+            telemetry,
+        )
+        text = _response_template(config.language)
+        text = text.replace(
+            "%%RESPONSE_LATIN_FONT_SETUP%%",
+            rf"\setmainfont{{{font_resolution.latin_resolved}}}",
+        )
+        if font_resolution.cjk_resolved is not None:
+            text = text.replace(
+                "%%RESPONSE_CJK_FONT_SETUP%%",
+                _cjk_font_setup(font_resolution.cjk_resolved, stage),
+            )
+        active_locations = {
+            key: value for key, value in locations.items() if key in revised_ids
+        }
+        registry = build_response_tex_registry(
+            tuple(author.author_id for author in selection.corresponding_authors),
+            expected_ids,
+            responses,
+            active_locations,
+        )
+        text = text.replace(
+            "%%RESPONSE_CORRESPONDENCE_STATE%%",
+            "\n".join(
+                f"\\SCIStateCorrespondence{{{author_id}}}"
+                for author_id in registry.corresponding_author_ids
+            ),
+        )
+        text = text.replace(
+            "%%RESPONSE_BODY%%",
+            _body_tex(blocks, config.language, responses, revised_ids, registry),
+        )
+        staged_source = stage / "response_letter.tex"
+        staged_source.write_text(
+            LOCATION_USE.sub(replace_location, text), encoding="utf-8"
         )
     compile_stage = (
         telemetry.measure("response_compile") if telemetry else contextlib.nullcontext()
@@ -470,6 +582,8 @@ def build_response(
                 run_dir / "response_build",
                 config,
                 engine_override,
+                force_xelatex=True,
+                keep_intermediates=True,
             )
         else:
             compiled = compile_tex(
@@ -477,12 +591,15 @@ def build_response(
                 run_dir / "response_build",
                 config,
                 engine_override,
+                force_xelatex=True,
+                keep_intermediates=True,
                 telemetry=telemetry,
             )
     staged_text = staged_source.read_text(encoding="utf-8")
-    tex_projection_consistency = bool(
+    source_registry_complete = bool(
         all(body in staged_text for body in responses.values() if body)
         and not LOCATION_USE.search(staged_text)
+        and "%%RESPONSE_CORRESPONDENCE_STATE%%" not in staged_text
         and [
             match.group(1)
             for match in re.finditer(
@@ -491,22 +608,39 @@ def build_response(
         ]
         == list(expected_ids)
     )
-    pdf_projection_consistency, pdf_consistency_issues = _response_pdf_consistency(
-        config,
-        round_number,
-        selection,
-        expected_ids,
-        responses,
-        {key: value for key, value in locations.items() if key in revised_ids},
-        compiled.pdf,
+    if not source_registry_complete:
+        raise WorkflowError(
+            "RESPONSE_SOURCE_REGISTRY_INCOMPLETE: staged source composition differs "
+            "from the expected response registry."
+        )
+    state_stage = (
+        telemetry.measure("tex_state_parse") if telemetry else contextlib.nullcontext()
     )
-    response_consistency = tex_projection_consistency and pdf_projection_consistency
+    with state_stage:
+        if compiled.state.sci is None:
+            raise WorkflowError(
+                "RESPONSE_TEX_STATE_CONSISTENCY_FAILED: SCI sidecar is missing."
+            )
+        emitted_state = parse_sci_state(compiled.state.sci, "response")
+        response_tex_state_consistency = validate_response_tex_state(
+            registry, emitted_state
+        )
     output = config.output_dir(round_number) / "response_letter.pdf"
     audit = {
-        "response_source_pdf_consistency": response_consistency,
-        "response_tex_projection_consistency": tex_projection_consistency,
-        "response_pdf_projection_consistency": pdf_projection_consistency,
-        "response_pdf_consistency_issues": list(pdf_consistency_issues),
+        "response_latin_font": {
+            "preferred": font_resolution.latin_preferred,
+            "resolved": font_resolution.latin_resolved,
+            "fallback": font_resolution.latin_fallback,
+            "platform": font_resolution.platform,
+        },
+        "response_cjk_font": {
+            "resolved": font_resolution.cjk_resolved,
+            "platform": font_resolution.platform,
+        },
+        "response_source_registry_complete": source_registry_complete,
+        "response_tex_sidecar_registry_complete": bool(emitted_state.events),
+        "response_tex_state_consistency": response_tex_state_consistency,
+        "response_tex_state_issues": [],
         "responses_source_sha256": hashlib.sha256(
             (response_dir / "responses.tex").read_bytes()
         ).hexdigest(),
@@ -519,6 +653,9 @@ def build_response(
         "response_staged_source_sha256": hashlib.sha256(
             staged_source.read_bytes()
         ).hexdigest(),
+        "response_sci_sha256": hashlib.sha256(
+            compiled.state.sci.read_bytes()
+        ).hexdigest(),
         "response_build_input_digest": artifact_input_digest(
             config, round_number, output, engine_override
         ),
@@ -529,9 +666,6 @@ def build_response(
     (run_dir / "response_audit.json").write_text(
         json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    if not response_consistency:
-        detail = "; ".join(pdf_consistency_issues) or "staged TeX projection mismatch"
-        raise WorkflowError(f"RESPONSE_SOURCE_PDF_CONSISTENCY_FAILED: {detail}")
     publish_stage = (
         telemetry.measure("artifact_publish") if telemetry else contextlib.nullcontext()
     )

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from sci_manuscript.tex import (
     command_at,
     extract_braced,

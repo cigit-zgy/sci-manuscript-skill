@@ -7,13 +7,11 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-import yaml
-from test_core import _revision, _workspace
-
 import sci_manuscript.submission as submission_module
 import sci_manuscript.workspace as workspace_module
+import yaml
 from sci_manuscript.api import ManuscriptProject
-from sci_manuscript.compile import CompileResult
+from sci_manuscript.compile import CompileResult, TeXStateFiles
 from sci_manuscript.diff import MarkedResult
 from sci_manuscript.errors import WorkflowError
 from sci_manuscript.metadata import (
@@ -33,6 +31,7 @@ from sci_manuscript.workspace import (
     _submission_source_entries,
     load_project,
 )
+from test_core import _revision, _workspace
 
 
 def _submission_config(tmp_path: Path, settings: SubmissionSettings) -> ProjectConfig:
@@ -291,7 +290,7 @@ def test_submission_metadata_uses_frozen_authors_only_for_historical_rounds(
         build_dir.mkdir(parents=True, exist_ok=True)
         pdf = build_dir / f"{source.stem}.pdf"
         pdf.write_bytes(b"submission source")
-        return CompileResult(pdf, "")
+        return CompileResult(pdf, "", TeXStateFiles.discover(build_dir, source.stem))
 
     monkeypatch.setattr(submission_module, "build_clean_manuscript", fake_clean)
     monkeypatch.setattr(submission_module, "build_marked_manuscript", fake_marked)

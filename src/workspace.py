@@ -207,7 +207,7 @@ def migrate_revision_style_file(style: Path, archive_root: Path) -> Path | None:
                 "REVISION_STYLE_MIGRATION_UNSUPPORTED: "
                 f"{name} is customized in {style}. Remove the legacy semantic "
                 "color override or migrate it manually to the package-owned "
-                "RubineRed/ForestGreen/xcolor ProcessBlue contract."
+                "RubineRed/ForestGreen/xcolor blue contract."
             )
         migrated = migrated.replace(stock_definition, "", 1)
     for name in LEGACY_DELETION_COMMANDS:
@@ -1177,8 +1177,6 @@ def _toolchain_identity(
         ),
         "driver": driver,
         "latexdiff": _tool_version("latexdiff"),
-        "pdftotext": _tool_version("pdftotext"),
-        "pdftoppm": _tool_version("pdftoppm"),
         "bibliography_tool": bibliography_tool,
         "bibliography_tool_version": _tool_version(bibliography_tool),
     }
@@ -1472,8 +1470,6 @@ def write_build_manifest(
         },
         "tools": {
             "latexdiff": _tool_version("latexdiff"),
-            "pdftotext": _tool_version("pdftotext"),
-            "pdftoppm": _tool_version("pdftoppm"),
             "bibtex_or_biber": _tool_version("bibtex")
             if shutil.which("bibtex")
             else _tool_version("biber"),

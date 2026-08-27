@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sci-manuscript-skill"
-version = "2.0.0"
+version = "2.1.0"
 description = "Isolated LaTeX scientific manuscript lifecycle management."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "src/sci_manuscript/resources/journal_templates/acs/LICENSE.md"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "src/resources/journal_templates/acs/LICENSE.md"]
 dependencies = ["PyYAML>=6.0,<7", "ruamel.yaml>=0.18,<0.19"]
 
 [project.optional-dependencies]
@@ -27,8 +27,12 @@ sci-manuscript = "sci_manuscript.cli:main"
 [project.urls]
 Repository = "https://github.com/cigit-zgy/sci-manuscript-skill"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+packages = ["sci_manuscript"]
+include-package-data = false
+
+[tool.setuptools.package-dir]
+sci_manuscript = "src"
 
 [tool.setuptools.package-data]
 sci_manuscript = ["py.typed", "resources/**/*"]
@@ -61,5 +65,5 @@ warn_unused_ignores = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "integration: requires the real LaTeX, latexdiff, and Poppler toolchain",
+    "integration: requires real LaTeX/latexdiff; selected probes may use Poppler",
 ]

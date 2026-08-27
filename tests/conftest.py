@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from sci_manuscript.authors import CONFIG_DIRECTORY_ENV
 from sci_manuscript.templates import resources_root
 

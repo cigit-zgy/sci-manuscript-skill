@@ -9,7 +9,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
 from sci_manuscript import cli
 from sci_manuscript.authors import (
     CONFIG_DIRECTORY_ENV,

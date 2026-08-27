@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import sci_manuscript.compile as compile_module
+import sci_manuscript.response as response_module
 import yaml
-
 from sci_manuscript import ManuscriptProject, initialize_manuscript
 from sci_manuscript.api import LifecycleResult, doctor
 from sci_manuscript.authors import load_author_library, resolve_authors
 from sci_manuscript.compile import (
     CjkProbeResult,
     CompileResult,
+    TeXStateFiles,
     parse_overfull_boxes,
     relocate_pre_document_section_inputs,
     resolve_engine,
@@ -58,6 +61,58 @@ from sci_manuscript.workspace import (
     start_revision,
     temporary_run,
 )
+
+
+def test_tex_native_state_contract_is_publicly_available_to_build_modules() -> None:
+    assert hasattr(compile_module, "TeXStateFiles")
+    assert hasattr(compile_module, "parse_sci_state")
+    assert hasattr(response_module, "validate_response_tex_state")
+
+
+def _fake_response_compile_result(
+    source: Path,
+    build_dir: Path,
+    *,
+    omit_kind: str | None = None,
+) -> CompileResult:
+    """Simulate TeX execution of package-owned response state macros."""
+    build_dir.mkdir(parents=True, exist_ok=True)
+    text = source.read_text(encoding="utf-8")
+    event_pattern = re.compile(
+        r"\\SCIState(?P<kind>ResponseSchema|Template|Correspondence|Comment|Response|Location)"
+        r"\{(?P<first>[^{}]+)\}(?:\{(?P<second>[^{}]+)\})?"
+    )
+    names = {
+        "ResponseSchema": "RESPONSE_SCHEMA",
+        "Template": "TEMPLATE",
+        "Correspondence": "CORRESPONDENCE",
+        "Comment": "COMMENT",
+        "Response": "RESPONSE",
+        "Location": "LOCATION",
+    }
+    events: list[str] = []
+    for match in event_pattern.finditer(text):
+        kind = names[match.group("kind")]
+        if kind == omit_kind:
+            continue
+        fields = [kind, match.group("first")]
+        if match.group("second") is not None:
+            fields.append(match.group("second"))
+        events.append("|".join(fields))
+    build_dir.joinpath(f"{source.stem}.sci").write_text(
+        "SCI_SCHEMA|1\nDOCUMENT|response\n" + "\n".join(events) + "\n",
+        encoding="utf-8",
+    )
+    build_dir.joinpath(f"{source.stem}.compiler.log").write_text(
+        "fake compile\n", encoding="utf-8"
+    )
+    pdf = build_dir / f"{source.stem}.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    return CompileResult(
+        pdf,
+        "",
+        TeXStateFiles.discover(build_dir, source.stem),
+    )
 
 
 def test_bibliography_comparison_uses_keys_and_ignores_numbering() -> None:
@@ -661,15 +716,18 @@ def test_response_automatic_signature_uses_frozen_locale_email_labels() -> None:
     assert r"\CorrespondenceAuthorsZh" not in english
 
 
-def test_response_templates_require_times_new_roman_for_latin_text() -> None:
+def test_response_templates_receive_resolved_system_serif_fonts() -> None:
     templates = resources_root() / "correspondence_templates" / "response"
     chinese = (templates / "response_zh.tex").read_text(encoding="utf-8")
     english = (templates / "response_en.tex").read_text(encoding="utf-8")
 
     for template in (chinese, english):
         assert r"\usepackage{fontspec}" in template
-        assert r"\setmainfont{Times New Roman}" in template
+        assert "%%RESPONSE_LATIN_FONT_SETUP%%" in template
+        assert r"\setmainfont{Times New Roman}" not in template
         assert r"\usepackage{lmodern}" not in template
+    assert "%%RESPONSE_CJK_FONT_SETUP%%" in chinese
+    assert "%%RESPONSE_CJK_FONT_SETUP%%" not in english
 
 
 def test_chinese_build_refuses_a_failed_real_preflight(
@@ -1119,8 +1177,12 @@ def test_response_build_uses_package_template_without_mutating_source(
     template_dir.mkdir(parents=True)
     (template_dir / "response_en.tex").write_text(
         "\\documentclass{article}\n"
+        "%%RESPONSE_LATIN_FONT_SETUP%%\n"
         "\\begin{document}\n"
+        "\\SCIStateResponseSchema{1}\n"
+        "\\SCIStateTemplate{1}\n"
         "UPGRADED FIXED OPENING\n"
+        "%%RESPONSE_CORRESPONDENCE_STATE%%\n"
         "%%RESPONSE_BODY%%\n"
         "\\end{document}\n",
         encoding="utf-8",
@@ -1131,24 +1193,26 @@ def test_response_build_uses_package_template_without_mutating_source(
         build_dir: Path,
         _config: ProjectConfig,
         _engine: str | None = None,
+        *,
+        force_xelatex: bool = False,
+        **_kwargs: object,
     ) -> CompileResult:
+        assert force_xelatex is True
         assembled = source.read_text(encoding="utf-8")
         assert "UPGRADED FIXED OPENING" in assembled
         assert "Stable user response." in assembled
-        build_dir.mkdir(parents=True)
-        pdf = build_dir / "response_letter.pdf"
-        pdf.write_bytes(b"%PDF-1.4\n")
-        return CompileResult(pdf, "")
+        return _fake_response_compile_result(source, build_dir)
 
     monkeypatch.setattr(response_module, "resources_root", lambda: package_root)
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
-    monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
-    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     monkeypatch.setattr(
         response_module,
-        "_response_pdf_consistency",
-        lambda *_args, **_kwargs: (True, ()),
+        "resolve_response_fonts",
+        lambda *_args, **_kwargs: response_module.ResponseFontResolution(
+            "macOS", "Times New Roman", "Times New Roman", False, None
+        ),
     )
+    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     run_dir = tmp_path / "run"
     result = response_module.build_response(config, 1, {}, run_dir)
     assert result.is_file()
@@ -1160,7 +1224,7 @@ def test_response_build_uses_package_template_without_mutating_source(
     assert (run_dir / "response_source" / "response_letter.tex").is_file()
 
 
-def test_response_build_rejects_pdf_missing_visible_response_body(
+def test_response_build_rejects_missing_tex_emitted_response_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1177,27 +1241,27 @@ def test_response_build_rejects_pdf_missing_visible_response_body(
     responses.write_text("\\Response{1-1}{VisibleResponseSentinel}\n", encoding="utf-8")
 
     def fake_compile(
-        _source: Path,
+        source: Path,
         build_dir: Path,
         _config: ProjectConfig,
         _engine: str | None = None,
+        *,
+        force_xelatex: bool = False,
+        **_kwargs: object,
     ) -> CompileResult:
-        build_dir.mkdir(parents=True)
-        pdf = build_dir / "response_letter.pdf"
-        pdf.write_bytes(b"%PDF-1.4\n")
-        return CompileResult(pdf, "")
+        assert force_xelatex is True
+        return _fake_response_compile_result(source, build_dir, omit_kind="RESPONSE")
 
-    monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
-    monkeypatch.setattr(response_module, "compile_tex", fake_compile)
-    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     monkeypatch.setattr(
         response_module,
-        "_extract_pdf_text",
-        lambda _path: "Dear Editor, Comment 1-1",
-        raising=False,
+        "resolve_response_fonts",
+        lambda *_args, **_kwargs: response_module.ResponseFontResolution(
+            "macOS", "Times New Roman", "Times New Roman", False, None
+        ),
     )
-
-    with pytest.raises(WorkflowError, match="RESPONSE_SOURCE_PDF_CONSISTENCY_FAILED"):
+    monkeypatch.setattr(response_module, "compile_tex", fake_compile)
+    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
+    with pytest.raises(WorkflowError, match="RESPONSE_TEX_STATE_CONSISTENCY_FAILED"):
         response_module.build_response(config, 1, {}, tmp_path / "run")
 
 
@@ -1225,22 +1289,24 @@ def test_response_build_accepts_empty_response_for_response_only_comment(
         build_dir: Path,
         _config: ProjectConfig,
         _engine: str | None = None,
+        *,
+        force_xelatex: bool = False,
+        **_kwargs: object,
     ) -> CompileResult:
+        assert force_xelatex is True
         assembled = source.read_text(encoding="utf-8")
         assert "Please clarify." in assembled
-        build_dir.mkdir(parents=True)
-        pdf = build_dir / "response_letter.pdf"
-        pdf.write_bytes(b"%PDF-1.4\n")
-        return CompileResult(pdf, "")
+        return _fake_response_compile_result(source, build_dir)
 
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
-    monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
-    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     monkeypatch.setattr(
         response_module,
-        "_response_pdf_consistency",
-        lambda *_args, **_kwargs: (True, ()),
+        "resolve_response_fonts",
+        lambda *_args, **_kwargs: response_module.ResponseFontResolution(
+            "macOS", "Times New Roman", "Times New Roman", False, None
+        ),
     )
+    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
 
     result = response_module.build_response(config, 1, {}, tmp_path / "run")
 
@@ -1276,21 +1342,23 @@ def test_response_build_omits_unavailable_marked_location(
         build_dir: Path,
         _config: ProjectConfig,
         _engine: str | None = None,
+        *,
+        force_xelatex: bool = False,
+        **_kwargs: object,
     ) -> CompileResult:
+        assert force_xelatex is True
         assert r"\reviewlocation{" not in source.read_text(encoding="utf-8")
-        build_dir.mkdir(parents=True)
-        pdf = build_dir / "response_letter.pdf"
-        pdf.write_bytes(b"%PDF-1.4\n")
-        return CompileResult(pdf, "")
+        return _fake_response_compile_result(source, build_dir)
 
     monkeypatch.setattr(response_module, "compile_tex", fake_compile)
-    monkeypatch.setattr(response_module, "ensure_response_latin_font", lambda: None)
-    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     monkeypatch.setattr(
         response_module,
-        "_response_pdf_consistency",
-        lambda *_args, **_kwargs: (True, ()),
+        "resolve_response_fonts",
+        lambda *_args, **_kwargs: response_module.ResponseFontResolution(
+            "macOS", "Times New Roman", "Times New Roman", False, None
+        ),
     )
+    monkeypatch.setattr(response_module, "artifact_input_digest", lambda *_args: "test")
     assert response_module.build_response(config, 1, {}, tmp_path / "run").is_file()
 
 

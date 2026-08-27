@@ -9,7 +9,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from sci_manuscript import ManuscriptProject
 from sci_manuscript.api import LifecycleResult
 from sci_manuscript.cli import _print_lifecycle
@@ -274,7 +273,6 @@ def test_response_templates_own_localized_automatic_location_labels() -> None:
     resources = (
         Path(__file__).resolve().parents[1]
         / "src"
-        / "sci_manuscript"
         / "resources"
         / "correspondence_templates"
         / "response"
@@ -304,43 +302,110 @@ def test_response_templates_own_localized_automatic_location_labels() -> None:
     assert "Manuscript ID" not in en
 
 
-def test_response_font_preflight_fails_closed_before_compilation(
+@pytest.mark.parametrize(
+    ("system_name", "platform_name", "latin", "cjk"),
+    (
+        (
+            "Darwin",
+            "macOS",
+            ("Times New Roman", "Times", "TeX Gyre Termes"),
+            ("Songti SC", "STSong", "Noto Serif CJK SC"),
+        ),
+        (
+            "Windows",
+            "Windows",
+            ("Times New Roman", "Cambria", "Georgia"),
+            ("SimSun", "NSimSun", "Noto Serif CJK SC"),
+        ),
+        (
+            "Linux",
+            "Linux",
+            (
+                "Times New Roman",
+                "TeX Gyre Termes",
+                "Liberation Serif",
+                "Nimbus Roman",
+            ),
+            ("Noto Serif CJK SC", "Source Han Serif SC", "FandolSong"),
+        ),
+    ),
+)
+def test_response_font_candidates_are_platform_ordered_serif_fallbacks(
+    system_name: str,
+    platform_name: str,
+    latin: tuple[str, ...],
+    cjk: tuple[str, ...],
+) -> None:
+    from sci_manuscript.response import response_font_candidates
+
+    assert response_font_candidates(system_name) == (platform_name, latin, cjk)
+
+
+def test_response_font_resolution_uses_first_tex_usable_candidate(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sci_manuscript.response import ensure_response_latin_font
+    import sci_manuscript.response as response_module
 
-    monkeypatch.setattr("sci_manuscript.response.shutil.which", lambda _name: None)
+    attempts: list[tuple[str, str]] = []
 
-    with pytest.raises(
-        WorkflowError,
-        match="RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN",
-    ):
-        ensure_response_latin_font()
+    def usable(
+        _config: ProjectConfig,
+        _probe_root: Path,
+        kind: str,
+        candidate: str,
+        _engine: str | None,
+        _telemetry: object,
+    ) -> bool:
+        attempts.append((kind, candidate))
+        return candidate in {"Times", "STSong"}
+
+    monkeypatch.setattr(response_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(response_module, "_font_usable_by_tex", usable)
+
+    resolution = response_module.resolve_response_fonts(
+        _project(tmp_path, "zh"), tmp_path / "font_probe"
+    )
+
+    assert resolution.platform == "macOS"
+    assert resolution.latin_preferred == "Times New Roman"
+    assert resolution.latin_resolved == "Times"
+    assert resolution.latin_fallback is True
+    assert resolution.cjk_resolved == "STSong"
+    assert attempts == [
+        ("latin", "Times New Roman"),
+        ("latin", "Times"),
+        ("cjk", "Songti SC"),
+        ("cjk", "STSong"),
+    ]
 
 
-@pytest.mark.parametrize("resolved", ("Liberation Serif", "Times", "TeX Gyre Termes"))
-def test_response_font_preflight_rejects_substitute_families(
+def test_response_font_resolution_fails_with_platform_and_candidates(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    resolved: str,
 ) -> None:
-    from sci_manuscript.response import ensure_response_latin_font
+    import sci_manuscript.response as response_module
 
+    monkeypatch.setattr(response_module.platform, "system", lambda: "Linux")
     monkeypatch.setattr(
-        "sci_manuscript.response.shutil.which", lambda _name: "/usr/bin/fc-match"
-    )
-    monkeypatch.setattr(
-        "sci_manuscript.response.subprocess.run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, resolved, ""),
+        response_module,
+        "_font_usable_by_tex",
+        lambda *_args, **_kwargs: False,
     )
 
-    with pytest.raises(
-        WorkflowError,
-        match="RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN",
-    ):
-        ensure_response_latin_font()
+    with pytest.raises(WorkflowError) as error:
+        response_module.resolve_response_fonts(
+            _project(tmp_path, "en"), tmp_path / "font_probe"
+        )
+
+    message = str(error.value)
+    assert "RESPONSE_LATIN_FONT_UNAVAILABLE" in message
+    assert "platform=Linux" in message
+    assert "Times New Roman" in message
+    assert "Nimbus Roman" in message
 
 
-def test_response_font_contract_compiles_mixed_text_with_times_new_roman(
+def test_response_font_contract_compiles_mixed_text_with_preferred_fonts(
     tmp_path: Path,
 ) -> None:
     tectonic = shutil.which("tectonic")
@@ -353,6 +418,7 @@ def test_response_font_contract_compiles_mixed_text_with_times_new_roman(
 \usepackage{fontspec}
 \usepackage{xeCJK}
 \setmainfont{Times New Roman}
+\setCJKmainfont{Songti SC}
 \begin{document}
 中文 English 2026 DOI response
 \end{document}
@@ -379,7 +445,7 @@ def test_response_font_contract_compiles_mixed_text_with_times_new_roman(
     assert fonts.returncode == 0, fonts.stdout
     normalized = fonts.stdout.replace(" ", "").lower()
     assert "timesnewroman" in normalized
-    assert "fandolsong" in normalized
+    assert "songti" in normalized
 
 
 def test_response_parser_preserves_multiline_latex_body_semantics(

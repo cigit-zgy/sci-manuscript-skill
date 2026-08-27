@@ -19,6 +19,10 @@ bibliography, reviewer comments, or response prose unless the user explicitly
 supplies or approves that exact change. Lifecycle/build authorization is not
 scientific-edit authorization.
 
+Never infer manuscript, revision, or response scientific state from the final
+PDF. Use source state and TeX-native intermediate state; the PDF is a delivery
+artifact only.
+
 ## Route the request
 
 1. Normalize the project to `PROJECT/manuscript/` and run `status` when the
@@ -39,6 +43,8 @@ revision, modifying response/reference metadata, synchronizing bibliography, or
 preparing submission. Read
 [references/revision_semantics.md](references/revision_semantics.md) when marked
 content, provenance, topology, citations, equations, or locations are involved.
+For structure-aware highlighting implementation or audit, read it together with
+[references/manuscript_regions.md](references/manuscript_regions.md).
 Read [references/environment.md](references/environment.md) only for environment
 diagnosis. Read [references/technical_core.md](references/technical_core.md)
 only for repository audits, technical maintenance, architecture optimization,
@@ -65,15 +71,20 @@ when clean, marked, response, and full identity validation are required.
 - Marked = current clean scientific content + revision highlighting.
 - Reviewer-owned current additions/replacements are RubineRed; author-owned are
   ForestGreen; unchanged text is black.
-- Citation markers and DOI/URL links use xcolor `ProcessBlue` from `dvipsnames`;
+- Citation markers and DOI/URL links use native xcolor `blue` (#0000FF);
   bibliography prose remains black.
 - Parent-only deleted content is absent.
-- `latexdiff` detects current additions only; it is not the final renderer.
+- `latexdiff` is auxiliary detector evidence only; it cannot authorize color
+  or provenance and is not the final renderer.
 - `\review` defines provenance only; unchanged scoped text stays black.
-- At 60% addition coverage, one current block may be highlighted wholly only
-  with identical provenance. Structural seams never merge.
-- Current source, equations, citations, bibliography, labels, counters, and
-  paragraph topology are the only layout authority.
+- Canonical manuscript regions establish identity before segmentation; no
+  change certificate means no revision color. Provenance is applied only after
+  change detection. Ordinary prose uses coarse sentence units and only long
+  sentences split into a few larger clauses. Structural seams never merge.
+- A normalized-identical equation is always black, even after a move; only a
+  substantive mathematical-body change colors the whole current equation.
+- Current source is the scientific/structure authority. TeX-native AUX, BBL,
+  log, and package sidecar state are the compiled-state authority.
 - `\ReviewReference` is causal reference provenance, not ownership inferred
   from a response mention. AUTHOR/REVIEWER conflict is an error.
 - The response-letter first-page opening is a package-owned fixed template.

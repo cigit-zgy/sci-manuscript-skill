@@ -24,6 +24,7 @@ TIMING_STAGES = (
     "location_extract",
     "response_render",
     "response_compile",
+    "tex_state_parse",
     "validation",
     "artifact_publish",
 )

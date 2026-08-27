@@ -7,11 +7,16 @@ content.
 ## Development setup
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install ".[dev]"
 ```
 
-The real integration suite also requires the LaTeX, `latexdiff`, Poppler, and
-font dependencies reported by `sci-manuscript doctor`.
+Reinstall after changing package code. The regular install materializes the
+explicit `src/` to `sci_manuscript` package mapping for Python and mypy without
+`PYTHONPATH`, runtime path mutation, or an import-loader shim.
+
+The real integration suite also requires the LaTeX, `latexdiff`, CJK-probe,
+optional PDF-presentation, and font dependencies reported by
+`sci-manuscript doctor`.
 
 ## Quality gate
 
@@ -20,7 +25,7 @@ Run the complete gate once the change is stable:
 
 ```bash
 python -m compileall -q src tests
-PYTHONPATH=src pytest -q
+pytest -q
 ruff format --check .
 ruff check .
 mypy src tests

@@ -6,14 +6,12 @@ import hashlib
 from pathlib import Path
 
 import pytest
-import yaml
-from test_core import _revision, _workspace
-
 import sci_manuscript.api as api_module
 import sci_manuscript.compile as compile_module
+import yaml
 from sci_manuscript.api import BuildTarget, ManuscriptProject
 from sci_manuscript.authors import resolve_author_library_path
-from sci_manuscript.compile import CompileResult
+from sci_manuscript.compile import CompileResult, TeXStateFiles
 from sci_manuscript.diff import MarkedResult
 from sci_manuscript.errors import WorkflowError
 from sci_manuscript.timing import BuildTelemetry
@@ -24,6 +22,7 @@ from sci_manuscript.workspace import (
     source_digest,
     write_build_manifest,
 )
+from test_core import _revision, _workspace
 
 
 def _reviewed_revision(tmp_path: Path) -> ProjectConfig:
@@ -608,7 +607,7 @@ def test_bibliography_cache_is_content_keyed_and_invalidates_on_input_change(
         bbl.write_text(f"bibliography {compile_calls}\n", encoding="utf-8")
         pdf = build_dir / f"{staged.stem}.pdf"
         pdf.write_bytes(b"pdf")
-        return CompileResult(pdf, "")
+        return CompileResult(pdf, "", TeXStateFiles.discover(build_dir, staged.stem))
 
     monkeypatch.setattr(compile_module, "compile_tex", fake_compile)
     monkeypatch.setattr(compile_module, "resolve_engine", lambda *_args: "tectonic")

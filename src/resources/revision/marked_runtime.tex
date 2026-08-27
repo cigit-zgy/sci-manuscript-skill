@@ -1,0 +1,51 @@
+% Current-only highlighted-revision primitives. The renderer never emits
+% parent-only deletion content.
+%%CJK_REVISION_PACKAGE%%
+\RequirePackage{xcolor}
+\RequirePackage{lineno}
+\AtBeginDocument{\linenumbers}
+
+% Thin package-owned compiled-state proof. It records schema execution only;
+% scientific prose and revision content remain source-owned.
+\newwrite\SCIStateStream
+\AtBeginDocument{%
+  \immediate\openout\SCIStateStream=\jobname.sci
+  \immediate\write\SCIStateStream{SCI_SCHEMA|1}%
+  \immediate\write\SCIStateStream{DOCUMENT|marked}%
+  \immediate\write\SCIStateStream{MARKED_SCHEMA|1}}
+\AtEndDocument{\immediate\closeout\SCIStateStream}
+
+\makeatletter
+\newcommand{\SCISetCitationColor}[1]{%
+  \@ifpackageloaded{hyperref}{\hypersetup{citecolor=#1}}{}%
+}
+\newcommand{\SCIEmitRevision}[2]{%
+  \@ifundefined{SCIRevisionSeen@#1}{%
+    \expandafter\gdef\csname SCIRevisionSeen@#1\endcsname{1}%
+    \immediate\write\SCIStateStream{REVISION|#1|#2}}{}}
+\makeatother
+
+\providecommand{\SciAuthorRevision}[2]{%
+  \SCIEmitRevision{#1}{author}%
+  \RevisionAddedBackground{{\RevisionAddedFont\color{ForestGreen}#2}}}
+\providecommand{\SciReviewerRevision}[3]{%
+  \SCIEmitRevision{#1}{reviewer|#2}%
+  \RevisionReviewBackground{{\RevisionReviewFont\color{\RevisionReviewerColor}#3}}}
+\providecommand{\review}[2]{#2}
+\providecommand{\SCIReviewSpan}[2]{#2}
+\providecommand{\SCIReviewReferenceSpan}[2]{#2}
+\providecommand{\SCIReferenceLink}[1]{%
+  \begingroup\SCISetCitationColor{blue}\color{blue}#1\endgroup}
+% A revision wrapper ending on a CJK character hides that character from
+% xeCJK's following-token inspection. Restore the package's native CJK/Latin
+% glue before an immediately adjacent citation without adding source text.
+\providecommand{\SCIRevisionCitationSeam}{%
+  \ifdefined\CJKecglue\CJKecglue\fi}
+\providecommand{\SciAuthorDisplayRevisionBegin}[1]{%
+  \SCIEmitRevision{#1}{author}%
+  \begingroup\color{ForestGreen}}
+\providecommand{\SCIReviewDisplayBegin}[1]{}
+\providecommand{\SciReviewerDisplayRevisionBegin}[2]{%
+  \SCIEmitRevision{#1}{reviewer|#2}%
+  \begingroup\color{\RevisionReviewerColor}}
+\providecommand{\SCIDisplayEnd}[1]{\endgroup}

@@ -27,6 +27,117 @@ from .workspace import (
 )
 
 SUPPORTED_ENGINES = ("auto", "tectonic", "latex")
+SCI_STATE_SCHEMA = 1
+_SCI_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:@/-]+\Z")
+_SCI_HASH = re.compile(r"[0-9a-f]{64}\Z")
+_SCI_REVIEW_ID = re.compile(r"(?:E|AE|[1-9][0-9]*)-[1-9][0-9]*\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class TeXStateFiles:
+    """Known TeX-native intermediate files for one compilation."""
+
+    aux: Path | None
+    bbl: Path | None
+    toc: Path | None
+    lof: Path | None
+    lot: Path | None
+    sci: Path | None
+    compiler_log: Path | None
+
+    @classmethod
+    def discover(cls, build_dir: Path, stem: str) -> TeXStateFiles:
+        """Collect only existing known intermediates without guessing capability."""
+
+        def optional(suffix: str) -> Path | None:
+            candidate = build_dir / f"{stem}{suffix}"
+            return candidate if candidate.is_file() else None
+
+        return cls(
+            aux=optional(".aux"),
+            bbl=optional(".bbl"),
+            toc=optional(".toc"),
+            lof=optional(".lof"),
+            lot=optional(".lot"),
+            sci=optional(".sci"),
+            compiler_log=optional(".compiler.log"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SciStateEvent:
+    """One validated package-owned TeX event without scientific prose."""
+
+    kind: str
+    fields: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SciState:
+    """Parsed package-owned compiled state for one document target."""
+
+    schema: int
+    document: str
+    events: tuple[SciStateEvent, ...]
+
+
+def _valid_sci_event(kind: str, fields: tuple[str, ...]) -> bool:
+    """Return whether one sidecar event matches the frozen compact schema."""
+    if kind in {"MARKED_SCHEMA", "RESPONSE_SCHEMA", "TEMPLATE"}:
+        return fields == ("1",)
+    if kind == "CORRESPONDENCE":
+        return len(fields) == 1 and _SCI_IDENTIFIER.fullmatch(fields[0]) is not None
+    if kind == "COMMENT":
+        return len(fields) == 1 and _SCI_REVIEW_ID.fullmatch(fields[0]) is not None
+    if kind in {"RESPONSE", "LOCATION"}:
+        return (
+            len(fields) == 2
+            and _SCI_REVIEW_ID.fullmatch(fields[0]) is not None
+            and _SCI_HASH.fullmatch(fields[1]) is not None
+        )
+    if kind == "REVISION":
+        if len(fields) not in {2, 3}:
+            return False
+        if _SCI_IDENTIFIER.fullmatch(fields[0]) is None:
+            return False
+        if fields[1] == "author":
+            return len(fields) == 2
+        if fields[1] != "reviewer" or len(fields) != 3:
+            return False
+        review_ids = tuple(item.strip() for item in fields[2].split(","))
+        return bool(review_ids) and all(
+            _SCI_REVIEW_ID.fullmatch(item) is not None for item in review_ids
+        )
+    return False
+
+
+def parse_sci_state(path: Path, expected_document: str) -> SciState:
+    """Parse a deterministic SCI sidecar and reject prose or duplicate events."""
+    if not path.is_file():
+        raise WorkflowError(f"TEX_STATE_ERROR: SCI sidecar is missing: {path}")
+    lines = path.read_text(encoding="utf-8", errors="strict").splitlines()
+    if len(lines) < 2 or lines[0] != f"SCI_SCHEMA|{SCI_STATE_SCHEMA}":
+        raise WorkflowError(f"TEX_STATE_ERROR: unsupported SCI schema: {path}")
+    if lines[1] != f"DOCUMENT|{expected_document}":
+        raise WorkflowError(
+            "TEX_STATE_ERROR: SCI document target mismatch: "
+            f"expected {expected_document!r}: {path}"
+        )
+    events: list[SciStateEvent] = []
+    seen: set[tuple[str, ...]] = set()
+    for number, raw in enumerate(lines[2:], 3):
+        fields = tuple(raw.split("|"))
+        if not fields or not _valid_sci_event(fields[0], fields[1:]):
+            raise WorkflowError(
+                f"TEX_STATE_ERROR: malformed SCI event at {path}:{number}."
+            )
+        if fields in seen:
+            raise WorkflowError(
+                f"TEX_STATE_ERROR: duplicate SCI event at {path}:{number}."
+            )
+        seen.add(fields)
+        events.append(SciStateEvent(fields[0], fields[1:]))
+    return SciState(SCI_STATE_SCHEMA, expected_document, tuple(events))
 
 
 @dataclass(frozen=True)
@@ -35,6 +146,7 @@ class CompileResult:
 
     pdf: Path
     output: str
+    state: TeXStateFiles
 
 
 @dataclass(frozen=True)
@@ -376,6 +488,7 @@ def compile_tex(
     config: ProjectConfig,
     engine_override: str | None = None,
     *,
+    force_xelatex: bool = False,
     keep_intermediates: bool = False,
     telemetry: BuildTelemetry | None = None,
 ) -> CompileResult:
@@ -395,7 +508,12 @@ def compile_tex(
             command.append("--keep-intermediates")
         command.append(str(source))
     else:
-        driver_flag, _driver = _latex_driver(config)
+        if force_xelatex:
+            if shutil.which("xelatex") is None:
+                raise WorkflowError("XeLaTeX is required for correspondence output.")
+            driver_flag = "-xelatex"
+        else:
+            driver_flag, _driver = _latex_driver(config)
         command = [
             shutil.which("latexmk") or "latexmk",
             driver_flag,
@@ -415,7 +533,9 @@ def compile_tex(
     pdf = build_dir / f"{source.stem}.pdf"
     if not pdf.is_file():
         raise WorkflowError(f"Compiler did not produce the expected PDF: {pdf}")
-    return CompileResult(pdf, diagnostics)
+    return CompileResult(
+        pdf, diagnostics, TeXStateFiles.discover(build_dir, source.stem)
+    )
 
 
 def _bibliography_cache_key(

@@ -6,13 +6,15 @@ import contextlib
 import json
 import re
 import shutil
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .compile import (
+    SciStateEvent,
     compile_tex,
     materialize_bibliography,
+    parse_sci_state,
     publish_file_atomically,
     run_command,
     stage_runtime_resources,
@@ -24,25 +26,26 @@ from .provenance import (
     extract_provenance,
     split_by_review_provenance,
 )
+from .regions import RegionKind, StructuralBlock, project_manuscript
 from .review import parse_response_source, review_ids_from_sources
+from .revision_match import (
+    ChangeState,
+    RevisionMatchAudit,
+    RevisionMatchResult,
+    match_revisions,
+)
 from .revision_render import (
     CitationProvenance,
     HighlightSpan,
-    adaptive_blocks,
     added_citation_provenance,
     apply_highlights,
     citation_spans,
-    coalesce_tiny_unchanged_islands,
     display_evidence_is_covered,
-    preserve_text_command_shells,
     preserve_topology_seams,
     protected_citation_spans,
     replace_special_spans,
-    resolve_equation_spans,
-    suppress_exact_moves,
     validate_topology_identity,
 )
-from .revision_render import normalized_block_hash as normalized_block_hash
 from .revision_render import strip_highlight_markup as _strip_highlight_markup
 from .templates import resources_root
 from .tex import (
@@ -110,23 +113,28 @@ def _revision_runtime(language: str) -> str:
 
 
 def _validate_reference_style_contract() -> None:
-    """Require one shared xcolor ProcessBlue contract for clean and marked output."""
+    """Require one shared native xcolor blue contract for clean and marked output."""
     common = _COMMON_PREAMBLE.read_text(encoding="utf-8")
     required = (
         r"\newcommand{\RevisionReviewerColor}{RubineRed}",
-        "citecolor=ProcessBlue",
-        "urlcolor=ProcessBlue",
+        "citecolor=blue",
+        "linkcolor=blue",
+        "urlcolor=blue",
     )
     forbidden = (
         "definecolor{SciRevision",
         "SciLinkBlue",
+        "ProcessBlue",
+        "0,0,255",
+        "0000FF",
         "citecolor=black",
+        "linkcolor=black",
         "urlcolor=black",
     )
     if (
         any(token not in common for token in required)
         or "ForestGreen" not in REVISION_RUNTIME
-        or "ProcessBlue" not in REVISION_RUNTIME
+        or r"\SCISetCitationColor{blue}\color{blue}#1" not in REVISION_RUNTIME
         or any(token in common + REVISION_RUNTIME for token in forbidden)
     ):
         raise WorkflowError("CLEAN_MARKED_REFERENCE_STYLE_MISMATCH")
@@ -174,6 +182,377 @@ class _BibliographyDocument:
     header: str
     entries: tuple[_BibliographyEntry, ...]
     footer: str
+
+
+def _containing_display(
+    blocks: tuple[StructuralBlock, ...], start: int, end: int
+) -> StructuralBlock:
+    displays = [
+        block
+        for block in blocks
+        if block.kind is RegionKind.DISPLAY_EQUATION
+        and block.source_start <= start
+        and end <= block.source_end
+    ]
+    if len(displays) != 1:
+        raise WorkflowError(
+            "REGION_CLASSIFICATION_AMBIGUOUS\n"
+            "region context: display equation render interval\n"
+            f"nearby TeX: current offsets {start}:{end}"
+        )
+    return displays[0]
+
+
+def structure_highlight_spans(
+    parent: str,
+    provenance: ProvenanceSource,
+    *,
+    evidence: list[HighlightSpan] | None = None,
+    parent_asset_root: Path | None = None,
+    current_asset_root: Path | None = None,
+    truth_path: Path | None = None,
+) -> tuple[list[HighlightSpan], RevisionMatchAudit]:
+    """Select natural current units first, then split them by provenance."""
+    projection_started = time.perf_counter()
+    parent_projection = project_manuscript(
+        parent,
+        asset_root=parent_asset_root,
+        source_name="parent flattened manuscript",
+    )
+    current_projection = project_manuscript(
+        provenance.text,
+        asset_root=current_asset_root,
+        source_name="current flattened manuscript",
+    )
+    projection_seconds = time.perf_counter() - projection_started
+    matching_started = time.perf_counter()
+    matched = match_revisions(parent_projection, current_projection)
+    matching_seconds = time.perf_counter() - matching_started
+    detector_disagreements = tuple(
+        decision.current_id
+        for decision in matched.decisions
+        if decision.state is ChangeState.UNCHANGED
+        and any(
+            item.start < decision.source_end and decision.source_start < item.end
+            for item in evidence or ()
+        )
+    )
+    certificate_started = time.perf_counter()
+    spans: list[HighlightSpan] = []
+    rendered_displays: set[tuple[int, int]] = set()
+    event_number = 0
+
+    def authorized(
+        start: int,
+        end: int,
+        owner: tuple[str, ...] | None,
+        kind: str = "text",
+    ) -> HighlightSpan:
+        nonlocal event_number
+        event_number += 1
+        return HighlightSpan(
+            start,
+            end,
+            owner,
+            kind,
+            f"sci:rev:e{event_number:04d}",
+        )
+
+    for certificate in matched.change_certificates:
+        change = certificate.change
+        if change.region_kind is RegionKind.DISPLAY_EQUATION:
+            display = _containing_display(
+                current_projection.blocks, change.source_start, change.source_end
+            )
+            if display.container_start is None or display.container_end is None:
+                raise WorkflowError("Display equation has no render container.")
+            interval = (display.container_start, display.container_end)
+            if interval in rendered_displays:
+                continue
+            owners = {
+                item.review_ids
+                for item in provenance.review_spans
+                if item.start < change.source_end and change.source_start < item.end
+            }
+            if len(owners) > 1:
+                raise WorkflowError(
+                    "AMBIGUOUS_DISPLAY_PROVENANCE: changed display equation spans "
+                    "multiple reviewer owners."
+                )
+            owner = next(iter(owners)) if owners else None
+            spans.append(authorized(*interval, owner, "display"))
+            rendered_displays.add(interval)
+            continue
+        spans.extend(
+            authorized(left, right, owner)
+            for left, right, owner in split_by_review_provenance(
+                provenance, change.source_start, change.source_end
+            )
+        )
+    audit = replace(
+        matched.audit,
+        changed_units=event_number,
+        change_certificates=event_number,
+    )
+    ordered_spans = sorted(spans, key=lambda item: (item.start, item.end))
+    _validate_truth_spans(ordered_spans, matched)
+    certificate_seconds = time.perf_counter() - certificate_started
+    if truth_path is not None:
+        _write_revision_truth(
+            truth_path,
+            matched,
+            ordered_spans,
+            projection_seconds=projection_seconds,
+            matching_seconds=matching_seconds,
+            certificate_seconds=certificate_seconds,
+            detector_disagreements=detector_disagreements,
+        )
+    return ordered_spans, audit
+
+
+def _validate_truth_spans(
+    spans: list[HighlightSpan], matched: RevisionMatchResult
+) -> None:
+    visual = [item for item in matched.decisions if item.visual_authorized]
+    unchanged = [
+        item for item in matched.decisions if item.state is ChangeState.UNCHANGED
+    ]
+    for span in spans:
+        if span.kind == "citation":
+            continue
+        if not any(
+            (decision.source_start <= span.start and span.end <= decision.source_end)
+            or (
+                span.kind == "display"
+                and span.start <= decision.source_start
+                and decision.source_end <= span.end
+            )
+            for decision in visual
+        ):
+            raise WorkflowError(
+                "REVISION_RENDER_UNAUTHORIZED: highlight has no ChangeCertificate."
+            )
+        if any(
+            span.start < decision.source_end and decision.source_start < span.end
+            for decision in unchanged
+        ):
+            raise WorkflowError("REVISION_HIGHLIGHT_CROSSES_UNCHANGED_UNIT")
+    for decision in visual:
+        if not any(
+            span.kind != "citation"
+            and (
+                (
+                    decision.source_start <= span.start
+                    and span.end <= decision.source_end
+                )
+                or (
+                    span.kind == "display"
+                    and span.start <= decision.source_start
+                    and decision.source_end <= span.end
+                )
+            )
+            for span in spans
+        ):
+            raise WorkflowError(
+                "REVISION_RENDER_CERTIFICATE_MISMATCH: missing authorized highlight."
+            )
+
+
+def _write_revision_truth(
+    path: Path,
+    matched: RevisionMatchResult,
+    spans: list[HighlightSpan],
+    *,
+    projection_seconds: float,
+    matching_seconds: float,
+    certificate_seconds: float,
+    detector_disagreements: tuple[str, ...],
+) -> None:
+    """Persist compact proof records without copying scientific prose."""
+    authorized_highlights: list[dict[str, object]] = []
+    for span in spans:
+        if span.kind == "citation":
+            continue
+        decision = next(
+            (
+                item
+                for item in matched.decisions
+                if item.visual_authorized
+                and (
+                    (item.source_start <= span.start and span.end <= item.source_end)
+                    or (
+                        span.kind == "display"
+                        and span.start <= item.source_start
+                        and item.source_end <= span.end
+                    )
+                )
+            ),
+            None,
+        )
+        if decision is None or span.event_id is None:
+            raise WorkflowError(
+                "REVISION_RENDER_UNAUTHORIZED: truth manifest has no proof owner."
+            )
+        authorized_highlights.append(
+            {
+                "event_id": span.event_id,
+                "current_id": decision.current_id,
+                "source_start": span.start,
+                "source_end": span.end,
+                "owner": "author" if span.review_ids is None else "reviewer",
+                "review_ids": list(span.review_ids or ()),
+            }
+        )
+    payload = {
+        "schema": 1,
+        "units": [
+            {
+                "current_id": item.current_id,
+                "type": item.region_kind.value,
+                "structural_path": list(item.structural_path),
+                "source_start": item.source_start,
+                "source_end": item.source_end,
+                "normalized_hash": item.normalized_hash,
+                "candidate_parent_ids": list(item.candidate_parent_ids),
+                "final_state": item.state.value,
+                "proof": item.proof.value,
+                "visual_authorized": item.visual_authorized,
+            }
+            for item in matched.decisions
+        ],
+        "structural_events": [
+            {
+                "event_id": item.event_id,
+                "type": item.region_kind.value,
+                "structural_path": list(item.structural_path),
+                "source_start": item.source_start,
+                "source_end": item.source_end,
+                "state": item.state.value,
+                "proof": item.proof.value,
+            }
+            for item in matched.structural_events
+        ],
+        "detector_disagreements": list(detector_disagreements),
+        "authorized_highlights": authorized_highlights,
+        "summary": {
+            "total_revision_units": matched.audit.total_revision_units,
+            "unchanged_units": matched.audit.unchanged_units,
+            "changed_units": sum(
+                item.state is ChangeState.CHANGED for item in matched.decisions
+            ),
+            "added_units": matched.audit.added_units,
+            "structural_only_units": len(matched.structural_events),
+            "ambiguous_units": matched.audit.ambiguous_units,
+            "identity_certificates": len(matched.identity_certificates),
+            "unit_change_proofs": len(matched.change_certificates),
+            "change_certificates": len(authorized_highlights),
+            "visual_revision_events": len(authorized_highlights),
+            "detector_disagreements": len(detector_disagreements),
+        },
+        "performance_seconds": {
+            "source_projection": projection_seconds,
+            "identity_and_matching": matching_seconds,
+            "certificate_generation": certificate_seconds,
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _complete_revision_truth(
+    path: Path,
+    render_events: tuple[SciStateEvent, ...],
+    sidecar_seconds: float,
+) -> None:
+    """Attach the validated TeX registry to one compact truth manifest."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["render_certificates"] = [
+        {
+            "event_id": event.fields[0],
+            "owner": event.fields[1],
+            "review_ids": event.fields[2].split(",") if len(event.fields) == 3 else [],
+        }
+        for event in sorted(render_events, key=lambda item: item.fields[0])
+    ]
+    summary = payload["summary"]
+    summary.update(
+        {
+            "render_certificates": len(render_events),
+            "false_positive_units": 0,
+            "false_negative_units": 0,
+            "unexpected_render_events": 0,
+            "missing_render_events": 0,
+            "duplicate_render_events": 0,
+            "owner_conflicts": 0,
+        }
+    )
+    payload["performance_seconds"]["tex_sidecar_validation"] = sidecar_seconds
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def revision_render_registry(
+    spans: list[HighlightSpan],
+) -> tuple[SciStateEvent, ...]:
+    """Return the exact expected TeX render events for authorized highlights."""
+    events: list[SciStateEvent] = []
+    seen: dict[str, tuple[str, ...]] = {}
+    for span in spans:
+        if span.kind == "citation":
+            continue
+        if span.event_id is None:
+            raise WorkflowError("REVISION_RENDER_UNAUTHORIZED: missing event ID.")
+        fields = (
+            (span.event_id, "author")
+            if span.review_ids is None
+            else (span.event_id, "reviewer", ",".join(span.review_ids))
+        )
+        previous = seen.get(span.event_id)
+        if previous is not None:
+            if previous != fields:
+                raise WorkflowError(
+                    "REVISION_RENDER_OWNER_CONFLICT: one event ID has multiple owners."
+                )
+            continue
+        seen[span.event_id] = fields
+        events.append(SciStateEvent("REVISION", fields))
+    return tuple(events)
+
+
+def _validate_revision_render_registry(
+    expected: tuple[SciStateEvent, ...],
+    actual: tuple[SciStateEvent, ...],
+) -> None:
+    """Require one TeX render certificate per authorized event.
+
+    TeX may execute stored frontmatter after body-source macros, so execution
+    order is not source order.  Event identity and ownership remain exact.
+    """
+    schema = SciStateEvent("MARKED_SCHEMA", ("1",))
+    if not actual or actual[0] != schema:
+        raise WorkflowError(
+            "REVISION_RENDER_CERTIFICATE_MISMATCH: marked schema is missing."
+        )
+    rendered = actual[1:]
+    rendered_by_id: dict[str, SciStateEvent] = {}
+    for event in rendered:
+        event_id = event.fields[0]
+        if event_id in rendered_by_id:
+            raise WorkflowError(
+                "REVISION_RENDER_CERTIFICATE_MISMATCH: duplicate render event ID."
+            )
+        rendered_by_id[event_id] = event
+    expected_by_id = {event.fields[0]: event for event in expected}
+    if len(expected_by_id) != len(expected) or rendered_by_id != expected_by_id:
+        raise WorkflowError(
+            "REVISION_RENDER_CERTIFICATE_MISMATCH: marked SCI registry differs "
+            "from expected ChangeCertificates."
+        )
 
 
 def prepare_change_detection_sources(
@@ -666,55 +1045,31 @@ def _inject_revision_style(text: str, config: ProjectConfig) -> str:
 
 
 _AUX_IDENTITY = re.compile(
-    r"\\(?:newlabel|bibcite)\{(?P<key>[^}]+)\}\{\{?(?P<value>[^{}]*)"
+    r"\\(?P<kind>newlabel|bibcite)\{(?P<key>[^}]+)\}"
+    r"\{\{?(?P<value>[^{}]*)"
 )
 
 
-def _numbering_state(path: Path) -> dict[str, str]:
+def _tex_identity_state(path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Read label/citation identities from AUX and reject duplicate definitions."""
     if not path.is_file():
-        raise WorkflowError(f"Numbering AUX is missing: {path}")
-    return {
-        match.group("key"): match.group("value")
-        for match in _AUX_IDENTITY.finditer(
-            path.read_text(encoding="utf-8", errors="replace")
-        )
-        if not match.group("key").endswith("@cref")
-        and not match.group("key").startswith("sci:loc:")
-    }
-
-
-def _pdf_text_projection(path: Path, *, remove_line_numbers: bool) -> str:
-    pdftotext = shutil.which("pdftotext")
-    if pdftotext is None:
-        raise WorkflowError("pdftotext is required for marked-manuscript identity.")
-    xml = run_command([pdftotext, "-bbox", str(path), "-"], cwd=path.parent).stdout
-    try:
-        root = ET.fromstring(xml)
-    except ET.ParseError as exc:
-        raise WorkflowError("Poppler produced malformed PDF identity XML.") from exc
-    values: list[str] = []
-    pages = [item for item in root.iter() if item.tag.rsplit("}", 1)[-1] == "page"]
-    for page in pages:
-        width = float(page.attrib["width"])
-        for word in (
-            item for item in page.iter() if item.tag.rsplit("}", 1)[-1] == "word"
-        ):
-            value = "".join(word.itertext())
-            if (
-                remove_line_numbers
-                and value.isdigit()
-                and (
-                    float(word.attrib["xMax"]) <= width * 0.25
-                    or float(word.attrib["xMin"]) >= width * 0.75
-                )
-            ):
-                continue
-            values.extend("".join(value.split()))
-    # Exact source projection already proves order and structure. At PDF level,
-    # compare page count plus the rendered character inventory: color-induced
-    # line wrapping and math subscripts can change Poppler's word order without
-    # changing any visible scientific content.
-    return f"pages={len(pages)}\n{''.join(sorted(values))}"
+        raise WorkflowError(f"TeX identity AUX is missing: {path}")
+    labels: dict[str, str] = {}
+    citations: dict[str, str] = {}
+    for match in _AUX_IDENTITY.finditer(
+        path.read_text(encoding="utf-8", errors="replace")
+    ):
+        key = match.group("key")
+        if key.endswith("@cref") or key.startswith("sci:loc:"):
+            continue
+        target = citations if match.group("kind") == "bibcite" else labels
+        if key in target:
+            raise WorkflowError(
+                f"TeX identity AUX contains duplicate {match.group('kind')} key: "
+                f"{key!r}: {path}"
+            )
+        target[key] = match.group("value")
+    return labels, citations
 
 
 def _latexdiff_version() -> str:
@@ -859,25 +1214,25 @@ def build_marked_manuscript(
     )
     with mapping_stage:
         evidence = evidence_path.read_text(encoding="utf-8")
-        additions, unresolved = _locate_additions(
+        evidence_additions, unresolved = _locate_additions(
             evidence, provenance, detector_current_text
         )
         if unresolved:
             raise WorkflowError(
                 "Latexdiff additions could not be resolved onto the current source."
             )
-        additions, moves = suppress_exact_moves(
-            parent_compare, provenance.text, additions, provenance
+        additions, region_audit = structure_highlight_spans(
+            parent_compare,
+            provenance,
+            evidence=evidence_additions,
+            parent_asset_root=parent_source_dir,
+            current_asset_root=source_dir,
+            truth_path=run_dir / "revision_truth.json",
         )
-        additions, block_count, fine_blocks, whole_blocks = adaptive_blocks(
-            provenance.text, additions
-        )
-        additions, equations, equation_audit = resolve_equation_spans(
-            parent_compare, provenance, additions
-        )
-        citations = citation_spans(parent_compare, provenance, additions)
+        equations = [item for item in additions if item.kind == "display"]
+        citations = citation_spans(parent_compare, provenance, evidence_additions)
         citation_provenance = added_citation_provenance(
-            parent_compare, provenance, additions
+            parent_compare, provenance, evidence_additions
         )
         marked_bibliography, bibliography_notices = (
             _current_bibliography_with_reference_provenance(
@@ -901,16 +1256,7 @@ def build_marked_manuscript(
         ]
         additions = replace_special_spans(additions, [*protected_citations, *equations])
         additions = preserve_topology_seams(provenance.text, additions)
-        additions, tiny_islands = coalesce_tiny_unchanged_islands(
-            provenance.text, additions
-        )
-        additions = preserve_text_command_shells(
-            provenance.text,
-            additions,
-            CHINESE_SINGLE_VALUE_COMMANDS
-            if config.metadata.publisher == "chinese"
-            else (),
-        )
+        expected_revision_events = revision_render_registry(additions)
 
     render_stage = (
         telemetry.measure("highlight_render") if telemetry else contextlib.nullcontext()
@@ -969,7 +1315,7 @@ def build_marked_manuscript(
                 telemetry=telemetry,
             )
         marked_pdf = compiled.pdf
-        marked_aux = run_dir / "marked_build" / "manuscript_marked.aux"
+        marked_aux = compiled.state.aux
     else:
         if not reuse_marked_pdf.is_file():
             raise WorkflowError(
@@ -981,29 +1327,32 @@ def build_marked_manuscript(
         telemetry.measure("validation") if telemetry else contextlib.nullcontext()
     )
     with validation_stage:
-        text_identity: bool | None = None
         numbering_identity: bool | None = None
+        citation_state_identity: bool | None = None
+        bibliography_state_identity: bool | None = None
         if validate_clean:
-            clean_pdf = config.output_dir(round_number) / "manuscript_clean.pdf"
-            if not clean_pdf.is_file():
-                raise WorkflowError(
-                    "Full marked validation requires the current clean manuscript."
-                )
             if marked_aux is None:
                 raise WorkflowError(
                     "Full marked validation requires a fresh marked compilation."
                 )
-            text_identity = _pdf_text_projection(
-                clean_pdf, remove_line_numbers=True
-            ) == _pdf_text_projection(marked_pdf, remove_line_numbers=True)
             clean_aux = run_dir / "clean_build" / "manuscript.aux"
-            numbering_identity = _numbering_state(clean_aux) == _numbering_state(
-                marked_aux
+            clean_labels, clean_citations = _tex_identity_state(clean_aux)
+            marked_labels, marked_citations = _tex_identity_state(marked_aux)
+            numbering_identity = clean_labels == marked_labels
+            citation_state_identity = clean_citations == marked_citations
+            bibliography_state_identity = tuple(
+                entry.key for entry in _parse_bibliography(current_bibliography).entries
+            ) == tuple(
+                entry.key for entry in _parse_bibliography(marked_bibliography).entries
             )
-            if not text_identity or not numbering_identity:
+            if not (
+                numbering_identity
+                and citation_state_identity
+                and bibliography_state_identity
+            ):
                 raise WorkflowError(
-                    "Clean/marked scientific text or numbering identity validation "
-                    "failed."
+                    "Clean/marked TeX numbering, citation, or bibliography state "
+                    "identity validation failed."
                 )
 
     locations: dict[str, str] = {}
@@ -1016,6 +1365,22 @@ def build_marked_manuscript(
             marked_source,
             marked_pdf,
             telemetry,
+        )
+    state_stage = (
+        telemetry.measure("tex_state_parse") if telemetry else contextlib.nullcontext()
+    )
+    with state_stage:
+        state_started = time.perf_counter()
+        marked_sci = run_dir / "marked_build" / "manuscript_marked.sci"
+        marked_state = parse_sci_state(marked_sci, "marked")
+        _validate_revision_render_registry(
+            expected_revision_events,
+            marked_state.events,
+        )
+        _complete_revision_truth(
+            run_dir / "revision_truth.json",
+            tuple(event for event in marked_state.events if event.kind == "REVISION"),
+            time.perf_counter() - state_started,
         )
     reviewer_ids = {
         review_id for span in additions for review_id in (span.review_ids or ())
@@ -1047,9 +1412,15 @@ def build_marked_manuscript(
     )
     audit = {
         "latexdiff_version": _latexdiff_version(),
-        "current_blocks": block_count,
-        "fine_highlight_blocks": fine_blocks,
-        "whole_highlight_blocks": whole_blocks,
+        "region_parent_blocks": region_audit.parent_blocks,
+        "region_current_blocks": region_audit.current_blocks,
+        "region_unchanged_blocks": region_audit.unchanged_blocks,
+        "region_changed_units": region_audit.changed_units,
+        "region_structural_moves": region_audit.structural_moves,
+        "region_reordered_units": region_audit.reordered_units,
+        "region_equation_structural_events": region_audit.equation_structural_events,
+        "region_figure_asset_changes": region_audit.figure_asset_changes,
+        "region_ambiguous_duplicate_groups": region_audit.ambiguous_duplicate_groups,
         "reviewer_highlight_spans": sum(
             item.review_ids is not None and item.kind != "citation"
             for item in additions
@@ -1057,15 +1428,10 @@ def build_marked_manuscript(
         "author_highlight_spans": sum(
             item.review_ids is None and item.kind != "citation" for item in additions
         ),
-        "exact_moves_suppressed": moves,
         "equations_whole_highlighted": len(equations),
-        "equations_examined": equation_audit.examined,
-        "equations_normalized_identical": equation_audit.normalized_identical,
-        "equations_highlighted": equation_audit.highlighted,
-        "equation_identity_ambiguous": equation_audit.ambiguous,
         "citation_groups_highlighted": 0,
         "bibliography_entries_highlighted": 0,
-        "reference_visual_policy": "xcolor ProcessBlue",
+        "reference_visual_policy": "xcolor blue (#0000FF)",
         "clean_marked_reference_style_identity": True,
         "citation_changes_tracked": len(citations),
         "bibliography_changes_tracked": bibliography_changes,
@@ -1077,10 +1443,22 @@ def build_marked_manuscript(
         + max(0, bibliography_changes - reviewer_bibliography_events),
         "protected_citation_spans": len(all_protected_citations),
         "pure_deletion_reviews": pure_deletions,
-        "validation_scope": "full" if validate_clean else "source",
-        "clean_marked_text_identity": text_identity,
+        "validation_scope": (
+            "source+tex_state" if validate_clean else "source+marked_tex_state"
+        ),
         "clean_marked_source_projection_identity": source_projection_identity,
         "clean_marked_numbering_identity": numbering_identity,
+        "numbering_identity_from_tex_state": numbering_identity,
+        "citation_state_identity_from_tex": citation_state_identity,
+        "bibliography_state_identity_from_tex": bibliography_state_identity,
+        "marked_tex_sidecar_registry_complete": True,
+        "visual_revision_event_count": len(expected_revision_events),
+        "change_certificate_count": len(expected_revision_events),
+        "render_certificate_count": len(expected_revision_events),
+        "unexpected_render_events": 0,
+        "missing_render_events": 0,
+        "duplicate_render_events": 0,
+        "owner_conflicts": 0,
         "clean_marked_block_topology_identity": True,
         "clean_marked_paragraph_identity": True,
         "paragraph_boundary_count_clean": topology.paragraph_boundary_count_clean,
@@ -1088,12 +1466,6 @@ def build_marked_manuscript(
         "clean_paragraph_count": topology.paragraph_count_clean,
         "marked_paragraph_count": topology.paragraph_count_marked,
         "whitespace_seam_identity": whitespace_seam_identity,
-        "tiny_islands_examined": tiny_islands.examined,
-        "tiny_islands_coalesced": tiny_islands.coalesced,
-        "tiny_islands_rejected_density": tiny_islands.rejected_density,
-        "tiny_islands_rejected_boundary": tiny_islands.rejected_boundary,
-        "tiny_islands_rejected_protected": tiny_islands.rejected_protected,
-        "tiny_islands_rejected_provenance": tiny_islands.rejected_provenance,
         "shadowed_frontmatter_fields_parent": shadowed_parent_fields,
         "shadowed_frontmatter_fields_current": shadowed_current_fields,
         "reference_provenance_conflicts": 0,

@@ -16,13 +16,9 @@ from sci_manuscript.errors import WorkflowError
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STYLE = ROOT / "src" / "sci_manuscript" / "resources" / "revision_style.template.tex"
-COMMON = (
-    ROOT / "src" / "sci_manuscript" / "resources" / "manuscript_preamble" / "common.tex"
-)
-LOCATION_RUNTIME = (
-    ROOT / "src" / "sci_manuscript" / "resources" / "revision" / "location_runtime.tex"
-)
+STYLE = ROOT / "src" / "resources" / "revision_style.template.tex"
+COMMON = ROOT / "src" / "resources" / "manuscript_preamble" / "common.tex"
+LOCATION_RUNTIME = ROOT / "src" / "resources" / "revision" / "location_runtime.tex"
 
 
 def test_revision_style_has_no_deletion_contract() -> None:
@@ -44,11 +40,15 @@ def test_author_color_uses_dvips_named_forest_green() -> None:
     assert "definecolor{SciRevisionAuthor" not in common
 
 
-def test_reference_link_color_uses_xcolor_process_blue_directly() -> None:
+def test_reference_link_color_uses_native_xcolor_blue_directly() -> None:
     common = COMMON.read_text(encoding="utf-8")
-    assert "citecolor=ProcessBlue" in common
-    assert "urlcolor=ProcessBlue" in common
+    assert "citecolor=blue" in common
+    assert "linkcolor=blue" in common
+    assert "urlcolor=blue" in common
+    assert "ProcessBlue" not in common
     assert "definecolor{SciLinkBlue" not in common
+    assert "0,0,255" not in common
+    assert "0000FF" not in common
 
 
 def test_staged_manuscript_enables_dvipsnames_before_documentclass() -> None:
@@ -61,7 +61,7 @@ def test_staged_manuscript_enables_dvipsnames_before_documentclass() -> None:
     assert manuscript_compile.enable_dvips_named_colors(staged) == staged
 
 
-def test_dvips_named_colors_compile_with_tectonic(tmp_path: Path) -> None:
+def test_revision_and_native_blue_colors_compile_with_tectonic(tmp_path: Path) -> None:
     tectonic = shutil.which("tectonic")
     if tectonic is None:
         pytest.skip("tectonic is not installed")
@@ -73,7 +73,7 @@ def test_dvips_named_colors_compile_with_tectonic(tmp_path: Path) -> None:
 \begin{document}
 \textcolor{RubineRed}{Reviewer}
 \textcolor{ForestGreen}{Author}
-\textcolor{ProcessBlue}{Citation}
+\textcolor{blue}{Citation DOI URL}
 \end{document}
 """,
         encoding="utf-8",
@@ -109,8 +109,11 @@ def test_project_style_cannot_redefine_semantic_colors() -> None:
 
 
 def test_runtime_uses_addition_only_color() -> None:
-    assert r"\RevisionAddedFont\color{ForestGreen}#1" in REVISION_RUNTIME
-    assert r"\RevisionReviewFont\color{\RevisionReviewerColor}#1" in REVISION_RUNTIME
+    assert r"\providecommand{\SciAuthorRevision}[2]" in REVISION_RUNTIME
+    assert r"\RevisionAddedFont\color{ForestGreen}#2" in REVISION_RUNTIME
+    assert r"\providecommand{\SciReviewerRevision}[3]" in REVISION_RUNTIME
+    assert r"\RevisionReviewFont\color{\RevisionReviewerColor}#3" in REVISION_RUNTIME
+    assert r"\immediate\write\SCIStateStream{REVISION|#1|#2}" in REVISION_RUNTIME
     assert r"\begingroup\color{ForestGreen}" in REVISION_RUNTIME
     assert r"\begingroup\color{\RevisionReviewerColor}" in REVISION_RUNTIME
     assert r"\DIFdel" not in REVISION_RUNTIME
@@ -118,23 +121,23 @@ def test_runtime_uses_addition_only_color() -> None:
 
 
 def test_runtime_keeps_every_citation_link_blue_without_ownership_colors() -> None:
-    assert r"\SCISetCitationColor{ProcessBlue}\color{ProcessBlue}#1" in REVISION_RUNTIME
+    assert r"\SCISetCitationColor{blue}\color{blue}#1" in REVISION_RUNTIME
+    assert "ProcessBlue" not in REVISION_RUNTIME
     assert "SciLinkBlue" not in REVISION_RUNTIME
     assert r"\SCIAuthorCitation" not in REVISION_RUNTIME
     assert r"\SCIReviewCitation" not in REVISION_RUNTIME
 
 
-def test_clean_contract_sets_citation_and_url_blue_without_internal_link_override() -> (
-    None
-):
+def test_clean_contract_sets_every_reference_link_color_to_native_blue() -> None:
     common = COMMON.read_text(encoding="utf-8")
-    assert "citecolor=ProcessBlue" in common
-    assert "urlcolor=ProcessBlue" in common
-    assert "linkcolor=" not in common
+    assert "citecolor=blue" in common
+    assert "linkcolor=blue" in common
+    assert "urlcolor=blue" in common
 
 
 def test_marked_runtime_has_no_citation_or_url_black_override() -> None:
     assert "citecolor=black" not in REVISION_RUNTIME
+    assert "linkcolor=black" not in REVISION_RUNTIME
     assert "urlcolor=black" not in REVISION_RUNTIME
     assert "SCIReferenceBlack" not in REVISION_RUNTIME
 

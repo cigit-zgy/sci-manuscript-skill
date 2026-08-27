@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from sci_manuscript import ManuscriptProject, cli
 from sci_manuscript.authors import load_author_library, resolve_authors
 from sci_manuscript.metadata import (

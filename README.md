@@ -33,9 +33,11 @@ python -m pip install .
 sci-manuscript doctor
 ```
 
-`doctor` reports missing LaTeX, `latexdiff`, and PDF-tool dependencies for the
-configured environment. Response builds separately fail closed unless Times New
-Roman is available through fontconfig.
+`doctor` reports missing LaTeX and `latexdiff` dependencies for the configured
+environment. Its target-aware Chinese environment probe additionally uses
+`pdftotext`; other Poppler tools are optional presentation-QA aids. Response
+builds resolve installed serif fonts with the actual correspondence TeX engine
+and fail closed only when no platform candidate is usable.
 
 ## Quick start
 
@@ -58,6 +60,15 @@ initialize -> build initial submission -> create revision
 
 The CLI builds the minimum dependency set for the selected round and target,
 validates the result, and atomically publishes only current artifacts.
+
+```text
+source -> stage -> compile -> collect TeX state -> validate -> publish PDF
+```
+
+Source decides scientific content and structure. TeX intermediates decide
+compiled labels, citations, bibliography, line locations, and package events.
+The PDF is the final delivery artifact; revision and response correctness never
+depend on reverse-parsing it.
 
 ## Project lifecycle
 
@@ -113,23 +124,31 @@ AUTHOR versus REVIEWER ownership conflicts fail explicitly.
 
 The marked manuscript is the current clean manuscript plus revision
 highlighting. The current source is the only layout and structure authority.
-`latexdiff` detects current additions; its union output is never compiled as the
-marked manuscript. Parent-only deletions never appear.
+Canonical manuscript regions and same-context matching determine readable
+current revision units. Identity is checked before presentation segmentation,
+and revision color requires a validated change certificate. `latexdiff` supplies
+auxiliary detector evidence only; it cannot authorize color or ownership, and
+its union output is never compiled as the marked manuscript.
+Parent-only deletions never appear.
 
 | Current content | Appearance |
 | --- | --- |
 | reviewer-driven addition/replacement | RubineRed |
 | author-driven addition/replacement | ForestGreen |
 | unchanged text | black |
-| citation markers and DOI/URL links | xcolor `ProcessBlue` (`dvipsnames`) |
+| citation markers and DOI/URL links | xcolor `blue` (#0000FF) |
 
-Fine addition spans are preferred. Unchanged display equations stay black, and
-highlight spans cannot merge structural blocks. The complete identity,
-whole-block, move, equation, and citation rules are maintained in
+Revision highlighting is deliberately coarse and readable: ordinary prose is
+highlighted by sentence, while only long sentences may be split into a small
+number of larger clauses. Equations, captions, tables, lists, and frontmatter
+use their natural current units. Unchanged display equations stay black, and
+highlight spans cannot merge structural blocks. Maintainer-level structure and
+identity rules live in [manuscript regions](references/manuscript_regions.md);
+change, provenance, presentation, and location rules live in
 [revision semantics](references/revision_semantics.md).
 
 Citation identity is the BibTeX key, not its rendered number. Citation markers
-and DOI/URL links use xcolor `ProcessBlue`; bibliography prose remains black.
+and DOI/URL links use xcolor `blue`; bibliography prose remains black.
 Parent-only content is absent from the marked manuscript. A deletion-only reply
 uses a locale-aware note rather than inventing a line number.
 
@@ -144,11 +163,12 @@ never rewrite response bodies. The package audits comments, responses, and
 manuscript/reference provenance. Formal submission requires a complete audit;
 ordinary marked builds do not.
 
-Response letters use Times New Roman for Latin-script text while retaining the
-existing CJK font contract. The font is resolved from the host system and is
-never bundled. If the exact font is unavailable through fontconfig, the build
-fails with `RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN` instead of silently
-substituting a Times-like family.
+Fonts are never bundled, and manuscript typography remains controlled by the
+publisher/manuscript template. Correspondence prefers Times New Roman for Latin
+text and resolves platform-aware installed serif fallbacks with the actual TeX
+engine; Chinese correspondence uses the analogous installed CJK serif policy.
+The resolved fonts and fallback state are recorded in the build audit for
+reproducibility. The build fails closed only when every candidate is unusable.
 
 Multiple corresponding authors are supported. The response letter lists them
 in manuscript author order, filtering the selected author list without sorting
@@ -162,9 +182,9 @@ Block labels are `通讯地址：` and `邮箱：` in Chinese, and
 `Correspondence address:` and `E-mail:` in English.
 
 Reviewer locations come from a layout-equivalent compilation of the final
-marked source and never alter the visible marked PDF. Response builds verify
-the opening, correspondence data, responses, locations, and exact Latin font
-against the compiled PDF.
+marked source and never alter the visible marked PDF. Response builds compare
+the expected source registry with package events emitted by the actual TeX run;
+locations remain TeX-native AUX state.
 
 ## Build commands
 
@@ -214,10 +234,12 @@ bibliography cache live under `tmp/`.
 
 ## Validation
 
-Validation covers scientific text, numbering, paragraph/block topology,
-reference provenance, response locations, and output purity. Build manifests
-classify artifacts as CURRENT, STALE, or MISSING. Historical rounds verify their
-frozen source, bibliography, author metadata, and ancestor state before build.
+Validation covers exact source projection, TeX-native numbering/citation/
+bibliography state, paragraph/block topology, reference provenance, response
+registries, line locations, and output purity. It does not infer scientific
+state from final PDF text or geometry. Build manifests classify artifacts as
+CURRENT, STALE, or MISSING. Historical rounds verify their frozen source,
+bibliography, author metadata, and ancestor state before build.
 Implementation details and maintenance evidence live in
 [workflow](references/workflow.md) and
 [technical core](references/technical_core.md).
@@ -235,33 +257,40 @@ back to the source `.bib`.
 - PyYAML and ruamel.yaml
 - Tectonic (primary tested engine) or the supported `latexmk` toolchain
 - latexdiff for revisions
-- Poppler tools for PDF text, geometry, and layout checks
+- `pdftotext` only for the target-aware CJK environment probe
+- optional Poppler tools for manual presentation QA and the embedded-font smoke
 
 Run `sci-manuscript doctor` to inspect the local toolchain.
 
 ## Limitations
 
-Highlight extent is best-effort: heavily rewritten single blocks may be colored
-as a whole. Move suppression is exact normalized block identity only. There is
-no fuzzy move detection, semantic parser, generic LaTeX AST, sentence aligner,
+Highlight extent is intentionally coarse: changed ordinary sentences are whole
+units, and only long sentences split into a few larger clauses. There is no
+fuzzy move detection, semantic parser, generic LaTeX AST, NLP sentence aligner,
 or mathematical AST. Tectonic has the strongest integration evidence; the
 traditional LaTeX driver depends on a correctly installed local toolchain.
 
 ## Development and testing
 
 ```bash
-python -m pip install -e ".[dev]"
-PYTHONPATH=src pytest
+python -m pip install ".[dev]"
+pytest
 ruff format --check .
 ruff check .
 mypy src tests
 python -m build
 ```
 
+Reinstall after changing package code. The regular development install makes
+the explicit `src/` to `sci_manuscript` package mapping visible to Python and
+mypy without `PYTHONPATH` or import-loader shims.
+
 Package behavior is documented in [SKILL.md](SKILL.md),
 [references/workflow.md](references/workflow.md), and
 [references/revision_semantics.md](references/revision_semantics.md).
-Maintainers performing architecture or release audits should also read
+Maintainers changing structure-aware highlighting should also read
+[references/manuscript_regions.md](references/manuscript_regions.md).
+Architecture or release audits additionally require
 [references/technical_core.md](references/technical_core.md); normal manuscript
 work does not require it.
 

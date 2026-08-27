@@ -14,6 +14,32 @@ revision_01/          r01, parent r00
 revision_02/          r02, parent r01
 ```
 
+The lifecycle hierarchy is:
+
+```text
+Project
+├── initial_submission
+├── revision_01
+├── revision_02
+└── ...
+
+each round:
+USER SCIENTIFIC STATE
+        ↓
+ROUND STATE
+        ↓
+BUILD INPUT DAG
+        ↓
+DERIVED ARTIFACTS
+```
+
+`state/<round>/round_state.yaml` is the scientific and historical authority.
+Once a round becomes historical, its scientific source, metadata, author and
+affiliation snapshot, bibliography snapshot, ancestry, and round-state bytes
+are immutable. `state/<round>/build_manifest.yaml` is separate mutable derived-
+artifact provenance. A historical rebuild may refresh that manifest and final
+derived artifacts, but never the frozen scientific state.
+
 The project root contains the only user-editable `references/` tree:
 bibliography and revision style. Built-in publisher resources come from the
 installed package. No version may contain `references/`. Historical
@@ -106,7 +132,18 @@ publishes final PDFs. User rounds therefore do not contain `preamble/`,
 `references/revision_style.tex`, initialized from the packaged
 `revision_style.template.tex` for optional font/background hooks. Semantic
 colors are package-owned and frozen: reviewer RubineRed, author ForestGreen,
-and citation/DOI/URL xcolor `ProcessBlue` from `dvipsnames`.
+and citation/DOI/URL native xcolor `blue` (#0000FF).
+
+Every build follows one authority-preserving order:
+
+```text
+source -> stage -> compile -> collect TeX state -> validate -> publish PDF
+```
+
+Source owns scientific content and hierarchy. AUX/BBL and the small package
+`.sci` sidecar own compiled labels, citation/bibliography state, line ranges,
+and executed package events. State files own lifecycle/freshness. PDF publication
+is last and its contents are never reverse-parsed for correctness.
 
 For a custom publisher, initialize with `publisher: custom` and
 `--custom-template /absolute/path/to/template`. Its `sections.yaml` declares
@@ -203,11 +240,12 @@ section titles are rendered verbatim (no generated `Response to` prefix and no
 forced break between sections). General comments use a neutral light-gray panel
 distinct from specific-comment panels. Component-local spacing is fixed by the
 response template; global paragraph spacing must not stack with it.
-All response-letter Latin-script text uses the exact system-installed Times New
-Roman family through `fontspec`; Chinese text continues to use the existing CJK
-font contract. The package does not bundle or substitute fonts. If fontconfig
-cannot resolve the exact family, response compilation stops with
-`RESPONSE_FONT_UNAVAILABLE_TIMES_NEW_ROMAN`.
+Response letters prefer Times New Roman for Latin text and a platform-native CJK
+serif for Chinese text. The actual correspondence TeX engine selects the first
+usable family from the documented platform order and records the resolved name
+and fallback state in the run audit. The package never bundles fonts. If every
+candidate fails, compilation stops with a platform- and candidate-specific
+font error.
 
 ### Review audit
 
@@ -252,6 +290,13 @@ submission requires `COMPLETE` and stops before assembling submission artifacts
 otherwise. A malformed response source makes `response` and `all` explicitly
 not buildable, while `clean` and `marked` remain available.
 
+Before response compilation, Python builds an expected registry from the fixed
+template schema, corresponding-author IDs, ordered comment IDs, response source
+hashes, and resolved AUX locations. Package-owned response macros emit the same
+IDs/hashes into `.sci` when TeX actually executes them. Exact registry equality,
+successful compilation, and source composition prove response correctness;
+final PDF text is not extracted.
+
 Response locations are resolved from package-generated, TeX-native `lineno`
 start/end labels in the final marked source. Python reads only the package-owned
 `sci:loc:` AUX namespace; it never infers line numbers from PDF glyphs or
@@ -271,7 +316,8 @@ rewrite the user-owned composition root or any section source.
 Parent and current bibliography sources are staged separately and materialized
 by the real publisher style into `.bbl` for key-based machine comparison.
 Bibliography changes are rendered using the current revision only: the marked
-PDF contains exactly the current entries, order, numbering, and DOI output.
+source embeds the current BBL, while clean/marked AUX citation state and BBL key
+order provide compiled-state validation.
 Bibliography prose remains black; citation markers and DOI/URL links retain the
 same pure-blue style as clean. New and corrected current entry prose remains black.
 Reviewer attribution may be declared with `\ReviewReference` and is reflected
@@ -285,39 +331,54 @@ response never changes its ownership.
 
 ## Revision comparison contract
 
-The direct-parent marked comparison has five stages:
+The direct-parent marked comparison has eight stages:
 
 1. remove current `\review` wrappers while retaining ownership intervals;
-2. use `latexdiff` only to detect current additions;
-3. split spans at immutable current block seams, discard whitespace-only spans,
-   and apply the fixed 60% same-provenance rule within one block only;
-4. intersect additions with reviewer provenance;
-5. render from the current manuscript layout.
+2. project parent/current sources into canonical manuscript regions;
+3. match compatible blocks and establish whole-block identity first;
+4. establish sentence/clause or region-specific identity and emit positive
+   change/addition certificates only for proved current units;
+5. retain `latexdiff` only as auxiliary detector/disagreement evidence;
+6. assign reviewer/author ownership from current `\review` intervals after
+   change detection;
+7. render canonical event macros from the current manuscript layout;
+8. require expected certificate IDs/owners to equal TeX-emitted SCI render
+   certificates.
 
 Raw `latexdiff` output is never compiled as the final marked document. Parent
-content and structural commands never enter marked source or PDF. Pure moves may be suppressed
-only by exact normalized block identity; fuzzy paragraph, sentence, token, and
-grapheme alignment are outside the contract.
+content and structural commands never enter marked source or PDF. Source-file
+relocation alone is ignored, while changes in rendered hierarchy or logical
+order are structural revisions. Character-, word-, and short-phrase-level diff
+never selects final highlight extent. Ordinary prose uses whole sentences;
+only long sentences may split into at most three larger clauses.
 
-Mathematics is treated as a scientific block without a Math AST. A substantively
-changed display may be highlighted as one current block. The current formula is
-the only active numbered display; parent labels, tags, and cross-reference
-commands never enter marked output.
+Mathematics is treated as a scientific block without a Math AST. A normalized-
+identical mathematical body is always black, even after a move or ancestry
+change. A substantively changed display is highlighted as one current block.
+The current formula is the only active numbered display; parent labels, tags,
+and cross-reference commands never enter marked output.
 
 Visible states are mutually exclusive:
 
 - ordinary author addition: ForestGreen text in prose and mathematics;
 - reviewer/editor-linked addition: RubineRed text in prose and mathematics;
 - unchanged content: normal rendering;
-- every citation marker and DOI/URL link: xcolor `ProcessBlue`, independent of ownership;
+- every citation marker and DOI/URL link: xcolor `blue`, independent of ownership;
 - bibliography prose: black.
 
 Parent-only deletions are absent. Stripping color/provenance markup from marked
-must reproduce the exact current source projection; PDF text and AUX numbering
-must also match clean. Paragraph and block-topology fingerprints must match as
-independent hard invariants.
+must reproduce the exact current source projection. Clean/marked AUX labels and
+citations plus BBL key order must match; paragraph and block-topology
+fingerprints remain independent source invariants. Final PDF text is not a
+scientific identity backend.
 
 ## Submission and artifact contract
+
+Every canonical artifact has exactly one state: `MISSING`, `STALE`, or
+`CURRENT`. A file that exists is merely not `MISSING`; it is `CURRENT` only
+when its output digest and artifact-specific `depends-on` fingerprints match
+the successful build manifest. Otherwise it is `STALE` and cannot satisfy a
+submission or dependency check.
 
 `submission` first verifies review completeness. For a revision, any incomplete
 or malformed audit blocks formal artifact assembly; authors use `build` to
