@@ -55,7 +55,8 @@ sci-manuscript build --project /path/to/paper --target all
 
 ```text
 initialize -> build initial submission -> create revision
-           -> mark current additions -> build responses -> prepare submission
+           -> validate and render current revisions -> build responses
+           -> prepare submission
 ```
 
 The CLI builds the minimum dependency set for the selected round and target,
@@ -295,6 +296,10 @@ Architecture or release audits additionally require
 work does not require it.
 
 ## Rendered examples
+
+These screenshots are representative presentation examples only. Revision and
+response correctness are validated from source and TeX-native state, not from
+the images.
 
 ![Highlighted revised manuscript](docs/images/marked_manuscript.png)
 
