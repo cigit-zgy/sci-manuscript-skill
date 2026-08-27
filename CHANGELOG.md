@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0 - 2026-08-27
 
 - Removed unused `uv` and pre-commit state, retired two unconsumed workspace
   wrappers, reorganized release-era regressions under permanent domain names,
