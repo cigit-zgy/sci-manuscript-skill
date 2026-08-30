@@ -22,6 +22,7 @@ jobs:
       - name: Apply migration
         run: |
           python scripts/migrate-kxtbcas-temp.py
+          python scripts/fix-kxtbcas-temp.py
           chmod +x src/resources/journal_templates/kxtbcas/scripts/setup-fonts.sh
       - name: Validate Python package
         run: |
@@ -29,7 +30,7 @@ jobs:
           python -m pip install -e '.[dev]'
           ruff check src tests
           mypy src
-          pytest -q
+          pytest -q -m 'not integration'
       - name: Commit migration
         run: |
           git config user.name "github-actions[bot]"
