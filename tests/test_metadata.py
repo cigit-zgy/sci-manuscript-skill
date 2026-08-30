@@ -41,7 +41,7 @@ manuscript:
   article_type: 观点
 journal:
   name: 科学通报
-  publisher: chinese
+  publisher: kxtbcas
 authors:
 {authors}
 frontmatter:
@@ -144,7 +144,7 @@ def test_publisher_language_matrix_is_explicit(
     )
     text = path.read_text(encoding="utf-8")
     text = text.replace("  language: zh", f"  language: {language}")
-    text = text.replace("  publisher: chinese", f"  publisher: {publisher}")
+    text = text.replace("  publisher: kxtbcas", f"  publisher: {publisher}")
     path.write_text(text, encoding="utf-8")
 
     with pytest.raises(MetadataError, match=r"accepted language"):
@@ -159,7 +159,7 @@ def test_custom_publisher_is_a_canonical_option(tmp_path: Path) -> None:
     )
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "  publisher: chinese", "  publisher: custom"
+            "  publisher: kxtbcas", "  publisher: custom"
         ),
         encoding="utf-8",
     )
@@ -207,7 +207,7 @@ def test_funding_and_selected_multiple_author_biographies_render() -> None:
         article_type="观点",
         language="zh",
         journal_name="科学通报",
-        publisher="chinese",
+        publisher="kxtbcas",
         round_number=0,
         parent_round=None,
         first_authors=("zhao_guangyao",),

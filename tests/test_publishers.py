@@ -99,7 +99,7 @@ class PublisherTemplateTest(unittest.TestCase):
             (work / "main.tex").write_text(source, encoding="utf-8")
             (work / "references.bib").write_text(bibliography, encoding="utf-8")
             (work / "figure.png").write_bytes(PNG_1X1)
-            if publisher == "chinese":
+            if publisher == "kxtbcas":
                 configured = os.environ.get("SCI_MANUSCRIPT_CJK_FONT_DIR")
                 font_root = (
                     Path(configured).expanduser()

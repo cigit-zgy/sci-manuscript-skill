@@ -25,9 +25,10 @@ __all__ = [
     "load_meta",
 ]
 
-PUBLISHERS = ("elsevier", "nature", "acs", "chinese", "custom")
+PUBLISHERS = ("elsevier", "nature", "acs", "kxtbcas", "custom")
+PUBLISHER_ALIASES = {"chinese": "kxtbcas"}
 PUBLISHER_LANGUAGES = {
-    "chinese": "zh",
+    "kxtbcas": "zh",
     "elsevier": "en",
     "nature": "en",
     "acs": "en",
@@ -210,8 +211,15 @@ def revision_directory_name(round_number: int) -> str:
     return "initial_submission" if round_number == 0 else f"revision_{round_number:02d}"
 
 
+def normalize_publisher(publisher: str) -> str:
+    """Return the canonical publisher resource key."""
+    normalized = publisher.strip().lower()
+    return PUBLISHER_ALIASES.get(normalized, normalized)
+
+
 def validate_publisher_language(publisher: str, language: str) -> None:
     """Reject publisher and language combinations outside the release matrix."""
+    publisher = normalize_publisher(publisher)
     if publisher == "custom":
         return
     required_language = PUBLISHER_LANGUAGES[publisher]
@@ -272,7 +280,9 @@ def load_meta(path: Path) -> ManuscriptMetadata:
     language = _text(manuscript.get("language"), "manuscript.language")
     if language not in {"en", "zh"}:
         raise MetadataError("manuscript.language must be en or zh.")
-    publisher = _text(journal.get("publisher"), "journal.publisher").lower()
+    publisher = normalize_publisher(
+        _text(journal.get("publisher"), "journal.publisher")
+    )
     if publisher not in PUBLISHERS:
         raise MetadataError(
             f"journal.publisher must be one of: {', '.join(PUBLISHERS)}."
@@ -485,7 +495,7 @@ def _add_meta_comments(data: CommentedMap) -> None:
     )
     journal.yaml_set_comment_before_after_key(
         "publisher",
-        before="Packaged publisher resource key: chinese, elsevier, nature, or acs.",
+        before="Packaged publisher resource key: kxtbcas, elsevier, nature, or acs.",
     )
     authors = data["authors"]
     authors.yaml_set_comment_before_after_key(
@@ -890,7 +900,7 @@ def render_publisher_metadata(
                 command = "affiliation" if index == 0 else "alsoaffiliation"
                 name = _latex_escape(_affiliation_text(affiliations[key], "en"))
                 lines.append(f"\\{command}[{name}]{{{name}}}")
-    elif metadata.publisher == "chinese":
+    elif metadata.publisher == "kxtbcas":
         labels_en = ", ".join(
             _author_label(item, selection, "en") for item in selection.authors
         )

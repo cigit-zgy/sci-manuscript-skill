@@ -65,10 +65,10 @@
 
 \makeatletter
 
-% Portable bundled default: use local files when supplied, otherwise fall back
-% to the system font names declared below.
-\def\kxtb@latinfontpath{./}
-\def\kxtb@cjkfontpath{./}
+% Template-local exact font contract. The font files are staged into
+% ./fonts by this publisher resource; silent typeface substitution is forbidden.
+\def\kxtb@latinfontpath{./fonts/}
+\def\kxtb@cjkfontpath{./fonts/}
 \def\kxtb@latinfont@upright{TimesNewRoman-Regular.ttf}
 \def\kxtb@latinfont@bold{TimesNewRoman-Bold.ttf}
 \def\kxtb@latinfont@italic{TimesNewRoman-Italic.ttf}
@@ -77,15 +77,6 @@
 \def\kxtb@cjkfont@bold{SimSun-Bold.ttf}
 \def\kxtb@cjkfont@italic{SimSun.ttf}
 \def\kxtb@mathfont{STIX Two Math}
-
-\def\kxtb@latinfallback@main{Times New Roman}
-\def\kxtb@latinfallback@mainalt{TeX Gyre Termes}
-\def\kxtb@latinfallback@sans{Times New Roman}
-\def\kxtb@latinfallback@sansalt{TeX Gyre Termes}
-\def\kxtb@cjkfallback@main{Songti SC}
-\def\kxtb@cjkfallback@mainalt{STSong}
-\def\kxtb@cjkfallback@sans{Heiti SC}
-\def\kxtb@cjkfallback@sansalt{STHeiti}
 
 \newcommand{\kxtbsetfontroot}[1]{%
   \gdef\kxtb@latinfontpath{#1}%
@@ -123,17 +114,7 @@
       BoldItalicFont=\kxtb@latinfont@bolditalic
     ]{\kxtb@latinfont@upright}%
   }{%
-    \IfFontExistsTF{\kxtb@latinfallback@main}{%
-      \setmainfont{\kxtb@latinfallback@main}%
-      \setsansfont{\kxtb@latinfallback@main}%
-    }{%
-      \setmainfont{\kxtb@latinfallback@mainalt}%
-      \IfFontExistsTF{\kxtb@latinfallback@sans}{%
-        \setsansfont{\kxtb@latinfallback@sans}%
-      }{%
-        \setsansfont{\kxtb@latinfallback@sansalt}%
-      }%
-    }%
+    \ClassError{kxtbcas}{Required Times New Roman files are missing}{The KXTB-CAS publisher setup must stage the exact fonts before compilation.}%
   }%
 }
 
@@ -152,16 +133,7 @@
       ItalicFont=\kxtb@cjkfont@italic
     ]{\kxtb@cjkfont@upright}%
   }{%
-    \IfFontExistsTF{\kxtb@cjkfallback@main}{%
-      \setCJKmainfont{\kxtb@cjkfallback@main}%
-    }{%
-      \setCJKmainfont{\kxtb@cjkfallback@mainalt}%
-    }%
-    \IfFontExistsTF{\kxtb@cjkfallback@sans}{%
-      \setCJKsansfont{\kxtb@cjkfallback@sans}%
-    }{%
-      \setCJKsansfont{\kxtb@cjkfallback@sansalt}%
-    }%
+    \ClassError{kxtbcas}{Required SimSun files are missing}{The KXTB-CAS publisher setup must stage the exact fonts before compilation.}%
   }%
 }
 

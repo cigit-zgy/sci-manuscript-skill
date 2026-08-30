@@ -56,8 +56,8 @@ def test_runtime_resources_are_package_data() -> None:
         "journal_templates/nature/sn-nature.bst",
         "journal_templates/acs/achemso.cls",
         "journal_templates/acs/achemso.dtx",
-        "journal_templates/chinese/kxtbcas.cls",
-        "journal_templates/chinese/kxtbcas-numeric.bst",
+        "journal_templates/kxtbcas/kxtbcas.cls",
+        "journal_templates/kxtbcas/kxtbcas-numeric.bst",
     )
     for relative in required:
         assert (root / relative).is_file(), relative

@@ -298,6 +298,66 @@ def stage_cjk_fonts(target: Path) -> tuple[Path, ...]:
     return ()
 
 
+KXTBCAS_FONT_FILES = (
+    "TimesNewRoman-Regular.ttf",
+    "TimesNewRoman-Bold.ttf",
+    "TimesNewRoman-Italic.ttf",
+    "TimesNewRoman-BoldItalic.ttf",
+    "SimSun.ttf",
+    "SimSun-Bold.ttf",
+)
+
+
+def stage_kxtbcas_fonts(target: Path) -> tuple[Path, ...]:
+    """Stage exact KXTB-CAS fonts into one isolated build source."""
+    target.mkdir(parents=True, exist_ok=True)
+    script = target / "scripts" / "setup-fonts.sh"
+    if not script.is_file():
+        source = (
+            resources_root()
+            / "journal_templates"
+            / "kxtbcas"
+            / "scripts"
+            / "setup-fonts.sh"
+        )
+        script.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, script)
+    result = subprocess.run(
+        ["bash", str(script)],
+        cwd=target,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        details = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part.strip()
+        )
+        raise WorkflowError(
+            "KXTB-CAS exact font staging failed. "
+            "Times New Roman and SimSun are required.\n" + details
+        )
+    staged = tuple(target / "fonts" / name for name in KXTBCAS_FONT_FILES)
+    missing = tuple(path.name for path in staged if not path.is_file())
+    if missing:
+        raise WorkflowError(
+            "KXTB-CAS font staging did not produce: " + ", ".join(missing)
+        )
+    return staged
+
+
+def probe_kxtbcas_fonts() -> CjkProbeResult:
+    """Check exact KXTB-CAS font availability without modifying user files."""
+    with tempfile.TemporaryDirectory(prefix="sci-manuscript-kxtbcas-fonts-") as temporary:
+        try:
+            staged = stage_kxtbcas_fonts(Path(temporary))
+        except WorkflowError as exc:
+            return CjkProbeResult(False, str(exc))
+    names = ", ".join(path.name for path in staged)
+    return CjkProbeResult(True, f"Exact KXTB-CAS fonts resolved: {names}")
+
+
 def probe_cjk_environment(
     engine: str = "auto", telemetry: BuildTelemetry | None = None
 ) -> CjkProbeResult:
@@ -398,9 +458,13 @@ def ensure_cjk_environment(
     telemetry: BuildTelemetry | None = None,
 ) -> None:
     """Block Chinese targets unless the real CJK probe succeeds."""
-    if config.language != "zh" and config.metadata.publisher != "chinese":
+    if config.language != "zh" and config.metadata.publisher != "kxtbcas":
         return
-    result = probe_cjk_environment(engine or config.engine, telemetry)
+    result = (
+        probe_kxtbcas_fonts()
+        if config.metadata.publisher == "kxtbcas"
+        else probe_cjk_environment(engine or config.engine, telemetry)
+    )
     if not result.ready:
         raise WorkflowError(f"Chinese environment is blocked: {result.detail}")
 
@@ -440,7 +504,7 @@ def select_engine(requested: str) -> str:
 
 def _latex_driver(config: ProjectConfig) -> tuple[str, str]:
     """Return the latexmk flag and executable selected for one manuscript."""
-    if config.language == "zh" or config.metadata.publisher == "chinese":
+    if config.language == "zh" or config.metadata.publisher == "kxtbcas":
         if shutil.which("xelatex") is None:
             raise WorkflowError("XeLaTeX is required for Chinese latex mode.")
         return "-xelatex", "xelatex"
@@ -669,13 +733,13 @@ def stage_runtime_resources(
     """Stage package resources and current metadata without mutating user source."""
     version = config.round_dir(round_number)
     target.mkdir(parents=True, exist_ok=True)
-    if config.language == "zh" or config.metadata.publisher == "chinese":
+    if config.language == "zh" and config.metadata.publisher != "kxtbcas":
         stage_cjk_fonts(target)
     if include_manuscript:
         manuscript = target / "manuscript.tex"
         shutil.copy2(version / "manuscript.tex", manuscript)
         manuscript_text = manuscript.read_text(encoding="utf-8")
-        if config.metadata.publisher == "chinese":
+        if config.metadata.publisher == "kxtbcas":
             manuscript_text = relocate_pre_document_section_inputs(manuscript_text)
         manuscript.write_text(
             enable_dvips_named_colors(manuscript_text),
@@ -700,6 +764,8 @@ def stage_runtime_resources(
             shutil.copytree(resource, destination, dirs_exist_ok=True)
         else:
             shutil.copy2(resource, destination)
+    if config.metadata.publisher == "kxtbcas":
+        stage_kxtbcas_fonts(target)
     _render_preamble(config, target / "preamble")
     (target / "preamble.tex").write_text(
         f"\\input{{preamble/{config.language}}}\n", encoding="utf-8"

@@ -32,7 +32,7 @@ def _project(tmp_path: Path, language: str = "en") -> ProjectConfig:
         article_type="Research Article",
         language=language,
         journal_name="Example Journal",
-        publisher="chinese" if language == "zh" else "elsevier",
+        publisher="kxtbcas" if language == "zh" else "elsevier",
         round_number=0,
         parent_round=None,
         first_authors=("author",),

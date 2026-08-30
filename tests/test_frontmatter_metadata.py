@@ -25,7 +25,7 @@ def _bilingual_metadata() -> ManuscriptMetadata:
         article_type="观点",
         language="zh",
         journal_name="科学通报",
-        publisher="chinese",
+        publisher="kxtbcas",
         round_number=0,
         parent_round=None,
         first_authors=("zhao_guangyao",),
@@ -51,7 +51,7 @@ manuscript:
   article_type: 观点
 journal:
   name: 科学通报
-  publisher: chinese
+  publisher: kxtbcas
 authors:
   first: [zhao_guangyao]
   corresponding: [liu_hong]
@@ -172,7 +172,7 @@ manuscript:
   article_type: 观点
 journal:
   name: 科学通报
-  publisher: chinese
+  publisher: kxtbcas
 authors:
   first: [zhao_guangyao]
   corresponding: [liu_hong]

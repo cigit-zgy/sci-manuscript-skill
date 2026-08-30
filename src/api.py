@@ -18,6 +18,7 @@ from .compile import (
     build_clean_manuscript,
     ensure_cjk_environment,
     probe_cjk_environment,
+    probe_kxtbcas_fonts,
     publish_file_atomically,
     select_engine,
     validate_revision_layout,
@@ -28,6 +29,7 @@ from .metadata import (
     PUBLISHERS,
     ManuscriptMetadata,
     SubmissionSettings,
+    normalize_publisher,
     validate_publisher_language,
 )
 from .response import build_response, ensure_response_source, init_response
@@ -344,6 +346,8 @@ def doctor(
     engine: str = "auto",
 ) -> DoctorResult:
     """Inspect required manuscript tooling without changing the environment."""
+    if publisher is not None:
+        publisher = normalize_publisher(publisher)
     if engine not in SUPPORTED_ENGINES:
         raise WorkflowError(f"Unsupported engine: {engine}")
     engine_error = ""
@@ -376,7 +380,7 @@ def doctor(
             True,
         )
     elif selected == "latex":
-        chinese = language == "zh" or publisher == "chinese"
+        chinese = language == "zh" or publisher == "kxtbcas"
         driver_ok = xelatex[0] if chinese else pdflatex[0] or xelatex[0]
         driver_detail = (
             f"xelatex={xelatex[1]}"
@@ -420,16 +424,22 @@ def doctor(
         DoctorCheck("Ruff", _tool_detail("ruff")[0], _tool_detail("ruff")[1], False),
         DoctorCheck("Mypy", _tool_detail("mypy")[0], _tool_detail("mypy")[1], False),
     )
-    if language == "zh" or publisher == "chinese":
+    if language == "zh" or publisher == "kxtbcas":
         cjk = (
-            probe_cjk_environment(selected)
-            if selected is not None
-            else CjkProbeResult(False, engine_error)
+            probe_kxtbcas_fonts()
+            if publisher == "kxtbcas"
+            else (
+                probe_cjk_environment(selected)
+                if selected is not None
+                else CjkProbeResult(False, engine_error)
+            )
         )
-        checks = (
-            *checks,
-            DoctorCheck("CJK compilation probe", cjk.ready, cjk.detail, True),
+        label = (
+            "KXTB-CAS exact fonts"
+            if publisher == "kxtbcas"
+            else "CJK compilation probe"
         )
+        checks = (*checks, DoctorCheck(label, cjk.ready, cjk.detail, True))
     return DoctorResult(
         all(check.available for check in checks if check.required), checks
     )
@@ -451,6 +461,7 @@ def initialize_manuscript(
     engine: str = "auto",
 ) -> LifecycleResult:
     """Initialize and compile ``path/manuscript/initial_submission``."""
+    publisher = normalize_publisher(publisher)
     if publisher not in PUBLISHERS:
         raise WorkflowError(f"Unsupported publisher: {publisher}")
     validate_publisher_language(publisher, language)

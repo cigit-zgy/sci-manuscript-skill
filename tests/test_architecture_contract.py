@@ -45,7 +45,7 @@ def _project(tmp_path: Path) -> ProjectConfig:
 
 def test_canonical_packaged_architecture_resources_exist() -> None:
     resources = resources_root()
-    for publisher in ("chinese", "elsevier", "nature", "acs"):
+    for publisher in ("kxtbcas", "elsevier", "nature", "acs"):
         assert (resources / "journal_templates" / publisher).is_dir()
     for name in ("common.tex", "zh.tex", "en.tex"):
         assert (resources / "manuscript_preamble" / name).is_file()

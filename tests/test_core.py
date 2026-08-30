@@ -456,7 +456,7 @@ def _workspace(
     publisher: str = "elsevier",
     language: str | None = None,
 ) -> ProjectConfig:
-    selected_language = language or ("zh" if publisher == "chinese" else "en")
+    selected_language = language or ("zh" if publisher == "kxtbcas" else "en")
     root = tmp_path / "existing project" / "manuscript"
     root.parent.mkdir(parents=True)
     (root.parent / "unrelated.txt").write_text("preserve", encoding="utf-8")
@@ -607,7 +607,7 @@ def test_workspace_contract_and_meta(tmp_path: Path) -> None:
 def test_chinese_workspace_has_frontmatter_and_semantic_free_body(
     tmp_path: Path,
 ) -> None:
-    config = _workspace(tmp_path, publisher="chinese", language="zh")
+    config = _workspace(tmp_path, publisher="kxtbcas", language="zh")
     initial = config.round_dir(0)
     sections = initial / "sections"
     assert {path.name for path in sections.iterdir()} == {
@@ -664,7 +664,7 @@ def test_author_library_is_role_free_and_allows_overlap(tmp_path: Path) -> None:
 def test_chinese_publisher_uses_full_width_commas_between_authors(
     tmp_path: Path,
 ) -> None:
-    metadata = _metadata(publisher="chinese", language="zh")
+    metadata = _metadata(publisher="kxtbcas", language="zh")
     selection = resolve_authors(
         metadata,
         load_author_library(_anonymous_author_library(tmp_path)),
@@ -734,10 +734,10 @@ def test_chinese_build_refuses_a_failed_real_preflight(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = _workspace(tmp_path, publisher="chinese")
+    config = _workspace(tmp_path, publisher="kxtbcas")
     monkeypatch.setattr(
-        "sci_manuscript.compile.probe_cjk_environment",
-        lambda _engine, _telemetry=None: CjkProbeResult(
+        "sci_manuscript.compile.probe_kxtbcas_fonts",
+        lambda: CjkProbeResult(
             False, "anonymous CJK probe failure"
         ),
     )
@@ -759,7 +759,7 @@ def test_chinese_init_preflight_runs_before_workspace_creation(
             project,
             title="Blocked Test",
             journal="Example Journal",
-            publisher="chinese",
+            publisher="kxtbcas",
             language="zh",
             article_type="Research Article",
             first_authors=("author_one",),
