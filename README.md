@@ -1,6 +1,6 @@
-# sci-manuscript-skill
+# sci-manuscript
 
-`sci-manuscript-skill` manages an isolated LaTeX manuscript lifecycle: project
+`sci-manuscript` manages an isolated LaTeX manuscript lifecycle: project
 initialization, journal-aware compilation, adjacent revision rounds,
 highlighted revised manuscripts, reviewer responses, and submission artifacts.
 Authors retain authority over all scientific content.
@@ -27,8 +27,8 @@ and ACS/`en`. Custom templates can be supplied during initialization.
 Python 3.11 or newer is required.
 
 ```bash
-git clone https://github.com/cigit-zgy/sci-manuscript-skill.git
-cd sci-manuscript-skill
+git clone https://github.com/cigit-zgy/sci-manuscript.git
+cd sci-manuscript
 python -m pip install .
 sci-manuscript doctor
 ```

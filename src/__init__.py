@@ -15,7 +15,7 @@ from .api import (
 from .errors import ManuscriptError
 
 try:
-    __version__ = version("sci-manuscript-skill")
+    __version__ = version("sci-manuscript")
 except PackageNotFoundError:
     __version__ = "0+unknown"
 

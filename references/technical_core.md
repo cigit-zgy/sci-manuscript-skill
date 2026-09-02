@@ -1,6 +1,6 @@
 # Technical Core
 
-本文件记录 `sci-manuscript-skill` 长期需要保持稳定和持续优化的技术子系统。它面向维护、架构审计和发布审计，不是普通稿件工作的操作指南。评价优先级固定为：正确性、确定性、可维护性、性能、功能广度。
+本文件记录 `sci-manuscript` 长期需要保持稳定和持续优化的技术子系统。它面向维护、架构审计和发布审计，不是普通稿件工作的操作指南。评价优先级固定为：正确性、确定性、可维护性、性能、功能广度。
 
 | # | Subsystem | Core problem | Current solution | Status | Optimization policy |
 |---|---|---|---|---|---|

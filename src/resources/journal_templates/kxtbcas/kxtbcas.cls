@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: MIT
 % Copyright (c) 2026 Guangyao Zhao
-% Original manuscript class developed for sci-manuscript-skill.
+% Original manuscript class developed for sci-manuscript.
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesClass{kxtbcas}[2026/03/08 CASAD-style journal template]
 
@@ -47,7 +47,7 @@
 \RequirePackage{xcolor}
 
 % Chinese journal default layout settings.
-% Managed by sci-manuscript-skill.
+% Managed by sci-manuscript.
 % Do not duplicate these settings in manuscript.tex.
 \setlength{\parindent}{2em}
 \hypersetup{

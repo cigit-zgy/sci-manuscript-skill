@@ -1,5 +1,5 @@
 ---
-name: sci-manuscript-skill
+name: sci-manuscript
 description: >
   Manage a LaTeX scientific manuscript workspace through initialization,
   selected-round builds, adjacent revisions, highlighted revised manuscripts,

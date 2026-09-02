@@ -1391,7 +1391,7 @@ def write_build_manifest(
     if selected_engine == "latex":
         _flag, driver = _latex_driver(config)
     try:
-        skill_version = importlib.metadata.version("sci-manuscript-skill")
+        skill_version = importlib.metadata.version("sci-manuscript")
     except importlib.metadata.PackageNotFoundError:
         skill_version = "unknown"
     font_paths = sorted(

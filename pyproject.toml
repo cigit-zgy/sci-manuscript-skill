@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sci-manuscript-skill"
+name = "sci-manuscript"
 version = "2.1.0"
 description = "Isolated LaTeX scientific manuscript lifecycle management."
 readme = "README.md"
@@ -25,7 +25,7 @@ dev = [
 sci-manuscript = "sci_manuscript.cli:main"
 
 [project.urls]
-Repository = "https://github.com/cigit-zgy/sci-manuscript-skill"
+Repository = "https://github.com/cigit-zgy/sci-manuscript"
 
 [tool.setuptools]
 packages = ["sci_manuscript"]

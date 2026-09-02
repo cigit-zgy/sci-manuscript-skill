@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for improving `sci-manuscript-skill`. Keep changes focused on one
+Thank you for improving `sci-manuscript`. Keep changes focused on one
 observable manuscript-workflow behavior and preserve user-owned scientific
 content.
 
